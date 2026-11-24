@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" fill="none">
+  <rect width="600" height="400" fill="#E9ECE0"/>
+  <rect x="0" y="290" width="600" height="110" fill="#C9D0B8"/>
+  <ellipse cx="300" cy="225" rx="185" ry="88" fill="#FFFCF6" stroke="#C8CEB8" stroke-width="5"/>
+  <ellipse cx="300" cy="222" rx="145" ry="64" fill="#638B46"/>
+  <!-- Fusilli spirals -->
+  <path d="M210 212c14-14 28 14 42 0s28 14 42 0" stroke="#F0C75E" stroke-width="11" stroke-linecap="round"/>
+  <path d="M280 238c14-14 28 14 42 0s28 14 42 0" stroke="#F0C75E" stroke-width="11" stroke-linecap="round"/>
+  <path d="M250 192c14-12 28 12 42 0s28 12 42 0" stroke="#E5B649" stroke-width="10" stroke-linecap="round"/>
+  <!-- Basil leaves & pine nuts -->
+  <path d="M360 196c14-16 32-12 36 0-12 10-26 10-36 0Z" fill="#466F2E"/>
+  <ellipse cx="268" cy="225" rx="6" ry="3.5" fill="#F4E2B8"/>
+  <ellipse cx="322" cy="212" rx="6" ry="3.5" fill="#F4E2B8"/>
+  <text x="24" y="372" font-family="Arial, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#536046">VISUAL DIDÁTICO · PESTO GENOVESE</text>
+</svg>

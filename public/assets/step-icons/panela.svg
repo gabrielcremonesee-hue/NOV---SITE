@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100">
+  <defs>
+    <linearGradient id="potRed" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#c93624"/>
+      <stop offset="55%" stop-color="#961c10"/>
+      <stop offset="100%" stop-color="#5a0d07"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="60" cy="84" rx="44" ry="8.5" fill="#0d0401" fill-opacity="0.6"/>
+  <!-- Handles -->
+  <path d="M22 46 C14 46, 14 56, 22 56" fill="none" stroke="#85170c" stroke-width="5" stroke-linecap="round"/>
+  <path d="M98 46 C106 46, 106 56, 98 56" fill="none" stroke="#85170c" stroke-width="5" stroke-linecap="round"/>
+  <!-- Pot body -->
+  <path d="M24 44 L96 44 L92 73 C90 80, 30 80, 28 73 Z" fill="url(#potRed)"/>
+  <!-- Lid -->
+  <path d="M22 44 C26 27, 94 27, 98 44 Z" fill="#b72919" stroke="#f07e6c" stroke-opacity="0.45" stroke-width="1.2"/>
+  <ellipse cx="60" cy="44" rx="38" ry="5.5" fill="#e8e1d7"/>
+  <!-- Brass knob -->
+  <circle cx="60" cy="27" r="6" fill="#efc56a" stroke="#8e6217" stroke-width="1"/>
+  <path d="M45 20 C47 14, 52 12, 50 7 M68 19 C70 13, 75 11, 73 6" fill="none" stroke="#fff7e2" stroke-opacity="0.45" stroke-width="2" stroke-linecap="round"/>
+</svg>

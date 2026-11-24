@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100">
+  <defs>
+    <linearGradient id="boardWood" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e3b679"/>
+      <stop offset="100%" stop-color="#b57d3e"/>
+    </linearGradient>
+    <linearGradient id="steelBowl" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f5f8fa"/>
+      <stop offset="55%" stop-color="#bfc7cf"/>
+      <stop offset="100%" stop-color="#7c8691"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="60" cy="84" rx="46" ry="8" fill="#0d0401" fill-opacity="0.55"/>
+  <!-- Prep wooden board -->
+  <rect x="16" y="48" width="88" height="32" rx="6" fill="#8d5828"/>
+  <rect x="16" y="44" width="88" height="30" rx="6" fill="url(#boardWood)" stroke="#f5d7a3" stroke-width="1"/>
+  <!-- Left bowl -->
+  <path d="M26 49 C26 60, 48 60, 48 49 Z" fill="url(#steelBowl)"/>
+  <ellipse cx="37" cy="49" rx="11" ry="4" fill="#d9e0e6" stroke="#ffffff" stroke-width="0.9"/>
+  <ellipse cx="37" cy="49" rx="8" ry="2.4" fill="#ffe184"/>
+  <!-- Center bowl -->
+  <path d="M50 45 C50 58, 76 58, 76 45 Z" fill="url(#steelBowl)"/>
+  <ellipse cx="63" cy="45" rx="13" ry="4.5" fill="#e5ebf0" stroke="#ffffff" stroke-width="0.9"/>
+  <ellipse cx="63" cy="45" rx="9" ry="2.8" fill="#63aa44"/>
+  <!-- Right bowl -->
+  <path d="M77 50 C77 60, 96 60, 96 50 Z" fill="url(#steelBowl)"/>
+  <ellipse cx="86.5" cy="50" rx="9.5" ry="3.4" fill="#dce3e8" stroke="#ffffff" stroke-width="0.8"/>
+  <ellipse cx="86.5" cy="50" rx="6.5" ry="2" fill="#e54b3c"/>
+</svg>

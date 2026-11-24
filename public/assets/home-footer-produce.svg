@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 190" fill="none">
+  <defs>
+    <radialGradient id="tom1" cx="35%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#FF6B57"/>
+      <stop offset="48%" stop-color="#D7221B"/>
+      <stop offset="100%" stop-color="#7B0B08"/>
+    </radialGradient>
+    <radialGradient id="tom2" cx="35%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#FF7F68"/>
+      <stop offset="50%" stop-color="#E02B22"/>
+      <stop offset="100%" stop-color="#8C100B"/>
+    </radialGradient>
+    <linearGradient id="leafG" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7BB046"/>
+      <stop offset="100%" stop-color="#2E5F21"/>
+    </linearGradient>
+    <linearGradient id="leafG2" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#457B2C"/>
+      <stop offset="100%" stop-color="#90C457"/>
+    </linearGradient>
+  </defs>
+  <!-- Rich basil foliage cluster -->
+  <path d="M18 112 C6 76, 36 42, 74 52 C68 88, 44 114, 18 112 Z" fill="url(#leafG)"/>
+  <path d="M22 108 C42 84, 58 68, 70 55" stroke="#A6D46C" stroke-width="1.6" stroke-linecap="round" opacity="0.6"/>
+  <path d="M44 82 C44 46, 76 16, 108 24 C102 60, 74 86, 44 82 Z" fill="url(#leafG2)"/>
+  <path d="M50 76 C68 56, 86 40, 102 28" stroke="#B7E27C" stroke-width="1.5" stroke-linecap="round" opacity="0.65"/>
+  <path d="M76 98 C90 66, 128 52, 152 68 C136 96, 104 110, 76 98 Z" fill="url(#leafG)"/>
+  <path d="M84 95 C106 82, 126 74, 144 69" stroke="#A6D46C" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
+  <path d="M108 134 C124 106, 162 96, 182 114 C162 138, 130 148, 108 134 Z" fill="url(#leafG2)"/>
+  <path d="M8 148 C14 116, 48 102, 74 118 C54 146, 26 156, 8 148 Z" fill="#356625"/>
+  <!-- Stem -->
+  <path d="M52 124 C66 106, 86 104, 102 122" stroke="#4F7E33" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- Glossy cherry tomatoes -->
+  <circle cx="54" cy="144" r="29" fill="url(#tom1)"/>
+  <ellipse cx="44" cy="133" rx="9" ry="5" transform="rotate(-24 44 133)" fill="#FFADA1" opacity="0.72"/>
+  <path d="M54 115 L48 108 L55 112 L62 107 L57 115 L63 119 L55 117 L47 120 Z" fill="#3F7427"/>
+  <circle cx="100" cy="150" r="25" fill="url(#tom2)"/>
+  <ellipse cx="91" cy="140" rx="7.5" ry="4" transform="rotate(-20 91 140)" fill="#FFB8AC" opacity="0.75"/>
+  <path d="M100 125 L95 119 L101 123 L107 118 L103 125 L108 129 L101 127 L94 129 Z" fill="#467E2B"/>
+  <circle cx="72" cy="116" r="19" fill="url(#tom2)"/>
+  <ellipse cx="66" cy="108" rx="5.5" ry="3" transform="rotate(-22 66 108)" fill="#FFB8AC" opacity="0.75"/>
+  <path d="M72 97 L68 92 L73 95 L77 92 L74 97 L78 100 L73 99 L68 100 Z" fill="#467E2B"/>
+</svg>

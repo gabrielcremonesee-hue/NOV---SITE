@@ -1,0 +1,291 @@
+/* FerveC Gastronomia — Portal Choice Screen (Isolated .fp-* styles) */
+
+body.fervec-env-portal {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(255, 250, 236, 0.72) 0%, transparent 48%),
+    radial-gradient(circle at 82% 24%, rgba(219, 185, 124, 0.36) 0%, transparent 52%),
+    linear-gradient(180deg, #f4e6c8 0%, #ead3a6 55%, #e2c58f 100%);
+  color: #36271d;
+  font-family: 'DM Sans', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.fp-shell,
+.fp-shell * {
+  box-sizing: border-box;
+}
+
+.fp-shell {
+  position: relative;
+  min-height: 100dvh;
+  width: 100%;
+  overflow-x: clip;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.fp-master-stage {
+  width: 100%;
+  max-width: 620px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: center;
+}
+
+.fp-master-canvas {
+  position: relative;
+  width: 100%;
+  line-height: 0;
+  overflow: hidden;
+  box-shadow: 0 22px 58px rgba(56, 34, 12, 0.28);
+  border-inline: 1px solid #d5bd90;
+  background: #f4e6c8;
+}
+
+.fp-master-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.fp-overlay-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.fp-hit {
+  pointer-events: auto;
+  position: absolute;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.fp-hit:hover {
+  background: rgba(255, 244, 212, 0.12);
+  box-shadow: inset 0 0 0 2px rgba(240, 198, 108, 0.65);
+}
+
+.fp-hit:active {
+  background: rgba(121, 29, 27, 0.18);
+}
+
+.fp-hit:focus-visible {
+  outline: 3px solid #f0b849;
+  outline-offset: 2px;
+}
+
+/* Exact coordinates matching 1086x1448 Portal reference */
+.fp-hit-menu {
+  top: 5.5%;
+  left: 2.3%;
+  width: 6.2%;
+  height: 4.5%;
+  border-radius: 50%;
+}
+
+.fp-hit-home {
+  top: 5.6%;
+  left: 10.2%;
+  width: 15.8%;
+  height: 4.2%;
+  border-radius: 999px;
+}
+
+.fp-hit-auth {
+  top: 5.6%;
+  left: 74.4%;
+  width: 23.2%;
+  height: 4.2%;
+  border-radius: 999px;
+}
+
+.fp-hit-card-bib {
+  top: 33.2%;
+  left: 3.2%;
+  width: 45.4%;
+  height: 46.5%;
+  border-radius: 22px;
+}
+
+.fp-hit-card-coz {
+  top: 33.2%;
+  left: 51.2%;
+  width: 45.4%;
+  height: 46.5%;
+  border-radius: 22px;
+}
+
+.fp-auth-user-pill {
+  pointer-events: none;
+  position: absolute;
+  top: 5.75%;
+  left: 74.6%;
+  width: 22.8%;
+  height: 3.9%;
+  border-radius: 999px;
+  border: 1.5px solid #e7c67f;
+  background: linear-gradient(180deg, #981c1a 0%, #630d0c 100%);
+  color: #fff9ef;
+  font-family: 'DM Sans', Arial, sans-serif;
+  font-size: clamp(0.68rem, 1.8vw, 0.85rem);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 2;
+  box-shadow: inset 0 1px 0 rgba(255, 233, 185, 0.3);
+}
+
+/* Portal Quick Drawer Menu */
+.fp-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(34, 18, 10, 0.48);
+  z-index: 60;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.fp-drawer-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.fp-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: min(320px, 86vw);
+  background: linear-gradient(180deg, #fffbf2 0%, #f3e4c3 100%);
+  border-right: 2px solid #cfa962;
+  box-shadow: 12px 0 36px rgba(34, 18, 10, 0.35);
+  z-index: 65;
+  transform: translateX(-104%);
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform 0.22s ease, visibility 0.22s ease;
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+}
+
+.fp-drawer.open {
+  transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.fp-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #dcc28c;
+  margin-bottom: 14px;
+}
+
+.fp-drawer-brand {
+  display: flex;
+  flex-direction: column;
+}
+
+.fp-drawer-brand strong {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.25rem;
+  color: #7b1614;
+}
+
+.fp-drawer-brand span {
+  font-size: 0.8rem;
+  color: #6a533c;
+}
+
+.fp-drawer-close {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid #cfb073;
+  background: #fff8eb;
+  color: #5b1815;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.fp-drawer-links {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+
+.fp-drawer-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid #dcc491;
+  background: #fffaf0;
+  color: #362519;
+  font-size: 0.94rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.fp-drawer-btn:hover {
+  background: #f8ecd0;
+  border-color: #b88b3d;
+}
+
+.fp-drawer-btn.is-primary {
+  background: linear-gradient(180deg, #8e1e1b 0%, #630f0d 100%);
+  border-color: #dfbd78;
+  color: #fff9ef;
+}
+
+.fp-drawer-btn:focus-visible,
+.fp-drawer-close:focus-visible {
+  outline: 3px solid #f0b849;
+  outline-offset: 2px;
+}
+
+.fp-drawer-foot {
+  padding-top: 12px;
+  border-top: 1px solid #dcc28c;
+  font-size: 0.8rem;
+  color: #6b543f;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .fp-shell {
+    justify-content: flex-start;
+  }
+
+  .fp-master-canvas {
+    border-inline: 0;
+    box-shadow: none;
+  }
+}

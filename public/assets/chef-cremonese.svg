@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 420" fill="none">
+  <rect width="360" height="420" rx="22" fill="#EFE4D2"/>
+  <circle cx="180" cy="180" r="136" fill="#E3D2B8"/>
+  <!-- Chef Toque Hat -->
+  <path d="M126 118c-16-8-20-32-3-45 10-8 23-6 31 2 8-14 36-16 48-2 10-7 25-6 33 4 14 14 7 35-9 41v22H126v-22Z" fill="#FFFCF6" stroke="#382F29" stroke-width="3"/>
+  <rect x="126" y="128" width="100" height="16" rx="4" fill="#F4EBDD" stroke="#382F29" stroke-width="2.5"/>
+  <!-- Face -->
+  <ellipse cx="176" cy="188" rx="46" ry="50" fill="#F0C7A5" stroke="#382F29" stroke-width="2.5"/>
+  <circle cx="158" cy="180" r="4.5" fill="#382F29"/>
+  <circle cx="194" cy="180" r="4.5" fill="#382F29"/>
+  <path d="M150 168c5-4 12-4 16 0M186 168c5-4 12-4 16 0" stroke="#382F29" stroke-width="3" stroke-linecap="round"/>
+  <!-- Mustache -->
+  <path d="M176 202c-10-8-26-4-32 6 9 6 22 4 32-3 10 7 23 9 32 3-6-10-22-14-32-6Z" fill="#4A382D"/>
+  <!-- Smile -->
+  <path d="M164 214c7 6 17 6 24 0" stroke="#7E352A" stroke-width="3" stroke-linecap="round"/>
+  <!-- Coat & Scarf -->
+  <path d="M92 380c6-72 34-116 84-116s78 44 84 116H92Z" fill="#FFFCF6" stroke="#382F29" stroke-width="3"/>
+  <path d="M148 258l28 32 28-32-12-16h-32l-12 16Z" fill="#A83D32"/>
+  <path d="M166 286l-14 44 24-12 24 12-14-44" fill="#A83D32"/>
+  <circle cx="176" cy="340" r="4" fill="#382F29"/>
+  <circle cx="176" cy="364" r="4" fill="#382F29"/>
+  <!-- Wooden spoon -->
+  <path d="M254 252l22-50" stroke="#8C5934" stroke-width="8" stroke-linecap="round"/>
+  <ellipse cx="280" cy="192" rx="14" ry="20" transform="rotate(24 280 192)" fill="#A86E42"/>
+</svg>

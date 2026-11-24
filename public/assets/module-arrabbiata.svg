@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" fill="none">
+  <rect width="600" height="400" fill="#F3E6D8"/>
+  <rect x="0" y="290" width="600" height="110" fill="#D4B59A"/>
+  <ellipse cx="300" cy="225" rx="185" ry="88" fill="#FFFCF6" stroke="#D5C2A5" stroke-width="5"/>
+  <ellipse cx="300" cy="222" rx="145" ry="64" fill="#C43B2E"/>
+  <!-- Penne tubes -->
+  <rect x="215" y="195" width="46" height="18" rx="6" transform="rotate(-18 215 195)" fill="#EFC35B" stroke="#BA8822" stroke-width="2"/>
+  <rect x="280" y="185" width="46" height="18" rx="6" transform="rotate(14 280 185)" fill="#EFC35B" stroke="#BA8822" stroke-width="2"/>
+  <rect x="335" y="210" width="46" height="18" rx="6" transform="rotate(-12 335 210)" fill="#EFC35B" stroke="#BA8822" stroke-width="2"/>
+  <rect x="248" y="232" width="46" height="18" rx="6" transform="rotate(8 248 232)" fill="#EFC35B" stroke="#BA8822" stroke-width="2"/>
+  <rect x="315" y="242" width="46" height="18" rx="6" transform="rotate(-20 315 242)" fill="#EFC35B" stroke="#BA8822" stroke-width="2"/>
+  <!-- Chili & parsley -->
+  <path d="M405 186c16 8 24 24 18 42-14-12-22-24-18-42Z" fill="#981D18"/>
+  <circle cx="290" cy="212" r="5" fill="#4D7838"/><circle cx="348" cy="228" r="5" fill="#4D7838"/>
+  <text x="24" y="372" font-family="Arial, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#766A5D">VISUAL DIDÁTICO · ARRABBIATA</text>
+</svg>

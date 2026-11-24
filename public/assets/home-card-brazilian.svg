@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 260" fill="none">
+  <rect width="360" height="260" fill="#F1E7CC"/>
+  <rect x="0" y="185" width="360" height="75" fill="#3D6B47"/>
+  <!-- Clay pot -->
+  <ellipse cx="180" cy="164" rx="92" ry="38" fill="#7D412A" stroke="#4D2416" stroke-width="3"/>
+  <ellipse cx="180" cy="144" rx="78" ry="26" fill="#C9592E"/>
+  <circle cx="152" cy="142" r="12" fill="#E6AE35"/>
+  <circle cx="190" cy="148" r="14" fill="#E6AE35"/>
+  <circle cx="215" cy="138" r="9" fill="#B52E24"/>
+  <path d="M168 128c10-12 24-10 26-2-8 7-18 7-26 2Z" fill="#5D8744"/>
+  <circle cx="80" cy="70" r="20" fill="#D99A35"/>
+  <circle cx="285" cy="74" r="16" fill="#4F8A5B"/>
+</svg>

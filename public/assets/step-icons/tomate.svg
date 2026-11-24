@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100">
+  <defs>
+    <radialGradient id="tomatoRed" cx="35%" cy="30%" r="68%">
+      <stop offset="0%" stop-color="#ff6b52"/>
+      <stop offset="48%" stop-color="#d4201a"/>
+      <stop offset="100%" stop-color="#7d0908"/>
+    </radialGradient>
+  </defs>
+  <ellipse cx="60" cy="84" rx="44" ry="8.5" fill="#0d0401" fill-opacity="0.6"/>
+  <!-- Back tomato -->
+  <ellipse cx="77" cy="52" rx="22" ry="20" fill="url(#tomatoRed)"/>
+  <ellipse cx="70" cy="44" rx="6" ry="4" transform="rotate(-20 70 44)" fill="#ffffff" fill-opacity="0.35"/>
+  <!-- Front tomato -->
+  <ellipse cx="47" cy="58" rx="26" ry="23" fill="url(#tomatoRed)"/>
+  <ellipse cx="37" cy="48" rx="8" ry="5" transform="rotate(-22 37 48)" fill="#ffffff" fill-opacity="0.45"/>
+  <!-- Calyx stems -->
+  <path d="M47 36 L41 28 M47 36 L47 26 M47 36 L55 29 M47 36 L38 35 M47 36 L56 36" stroke="#47872a" stroke-width="3" stroke-linecap="round"/>
+  <path d="M77 33 L73 26 M77 33 L82 26" stroke="#47872a" stroke-width="2.6" stroke-linecap="round"/>
+</svg>

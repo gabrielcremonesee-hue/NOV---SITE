@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" fill="none">
+  <rect width="600" height="400" fill="#F4EAD9"/>
+  <rect x="0" y="290" width="600" height="110" fill="#DFCBB0"/>
+  <ellipse cx="300" cy="225" rx="185" ry="88" fill="#FFFCF6" stroke="#D5C2A5" stroke-width="5"/>
+  <ellipse cx="300" cy="222" rx="145" ry="64" fill="#F7ECCD"/>
+  <!-- Fettuccine ribbons -->
+  <path d="M185 215c45-26 115-28 195-8 25 6 42 14 48 22M192 238c52-20 124-20 198 4M212 198c44-16 110-16 164 2" stroke="#E8C66B" stroke-width="11" stroke-linecap="round"/>
+  <!-- Butter & Parmigiano -->
+  <rect x="275" y="185" width="38" height="24" rx="5" fill="#F5D35D" stroke="#CFA533" stroke-width="2"/>
+  <path d="M352 192l34-12v22l-34 5v-15Z" fill="#F8E7B4" stroke="#D4BC82" stroke-width="2"/>
+  <text x="24" y="372" font-family="Arial, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#766A5D">VISUAL DIDÁTICO · MANTECATURA</text>
+</svg>

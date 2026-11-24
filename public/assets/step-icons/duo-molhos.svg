@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100">
+  <ellipse cx="60" cy="83" rx="48" ry="8.5" fill="#0d0401" fill-opacity="0.58"/>
+  <!-- Left bowl (Pomodoro) -->
+  <path d="M12 52 C12 72, 24 78, 38 78 C52 78, 60 72, 60 52 Z" fill="#ebe4db"/>
+  <ellipse cx="36" cy="52" rx="24" ry="7.5" fill="#ffffff"/>
+  <ellipse cx="36" cy="52" rx="20" ry="5.5" fill="#cb261c"/>
+  <!-- Right bowl (Burro & Salvia) -->
+  <path d="M60 52 C60 72, 68 78, 84 78 C98 78, 108 72, 108 52 Z" fill="#ebe4db"/>
+  <ellipse cx="84" cy="52" rx="24" ry="7.5" fill="#ffffff"/>
+  <ellipse cx="84" cy="52" rx="20" ry="5.5" fill="#f5ca52"/>
+  <ellipse cx="84" cy="51" rx="8" ry="3.2" transform="rotate(-12 84 51)" fill="#62994b"/>
+</svg>

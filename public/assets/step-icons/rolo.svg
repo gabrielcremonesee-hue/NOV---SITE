@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100">
+  <defs>
+    <linearGradient id="rollWood" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f2cc93"/>
+      <stop offset="55%" stop-color="#c68d4a"/>
+      <stop offset="100%" stop-color="#8b5922"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="60" cy="83" rx="46" ry="8" fill="#0d0401" fill-opacity="0.55"/>
+  <!-- Pasta sheet -->
+  <path d="M18 68 C32 50, 88 50, 102 68 C82 78, 38 78, 18 68 Z" fill="#f5d57d" stroke="#d4a63a" stroke-width="1"/>
+  <!-- Rolling pin -->
+  <g transform="translate(60,46) rotate(-18) translate(-60,-46)">
+    <rect x="12" y="42" width="14" height="8" rx="4" fill="#9e632b"/>
+    <rect x="94" y="42" width="14" height="8" rx="4" fill="#9e632b"/>
+    <rect x="26" y="38" width="68" height="16" rx="4" fill="url(#rollWood)"/>
+    <line x1="30" y1="42" x2="90" y2="42" stroke="#fff0d4" stroke-opacity="0.65" stroke-width="1.6" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 110">
+  <defs>
+    <linearGradient id="noodleA" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fff4b8"/>
+      <stop offset="50%" stop-color="#f4c548"/>
+      <stop offset="100%" stop-color="#b97714"/>
+    </linearGradient>
+    <linearGradient id="noodleB" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#c98617"/>
+      <stop offset="52%" stop-color="#fad05c"/>
+      <stop offset="100%" stop-color="#fff0a6"/>
+    </linearGradient>
+    <radialGradient id="noodleSh" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#090301" stop-opacity="0.72"/>
+      <stop offset="100%" stop-color="#090301" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <ellipse cx="60" cy="94" rx="46" ry="10" fill="url(#noodleSh)"/>
+  <!-- Lush coiled pasta nest -->
+  <ellipse cx="60" cy="65" rx="43" ry="24" fill="#9a5c0b"/>
+  <ellipse cx="60" cy="57" rx="42" ry="23" fill="#c98519"/>
+  <g fill="none" stroke-linecap="round">
+    <path d="M19 63 C17 44, 42 29, 69 32 C95 35, 104 51, 95 67 C85 83, 45 86, 25 74" stroke="#d9961f" stroke-width="5.8"/>
+    <path d="M21 55 C24 37, 50 26, 77 30 C98 34, 102 51, 90 65 C75 80, 38 79, 22 66" stroke="url(#noodleA)" stroke-width="5"/>
+    <path d="M26 71 C43 84, 79 81, 95 64 C102 54, 95 39, 77 33" stroke="url(#noodleB)" stroke-width="4.8"/>
+    <path d="M25 49 C36 33, 64 29, 86 40 C97 47, 94 63, 78 70 C60 77, 33 71, 27 57" stroke="#ffe180" stroke-width="4.4"/>
+    <path d="M33 45 C46 33, 71 33, 85 46 C93 54, 84 67, 66 70 C48 73, 32 63, 34 50" stroke="#f5c242" stroke-width="4.2"/>
+    <path d="M39 50 C48 40, 70 39, 81 49 C85 55, 76 64, 59 64 C44 64, 36 57, 39 50" stroke="#b97813" stroke-width="4"/>
+    <path d="M43 44 C54 37, 72 38, 80 47" stroke="#fff6c7" stroke-width="2.6" opacity="0.92"/>
+    <path d="M30 63 C46 75, 76 74, 91 61" stroke="#ffeb9f" stroke-width="2.8" opacity="0.88"/>
+    <path d="M22 57 C27 69, 42 78, 63 80" stroke="#f8cc55" stroke-width="3"/>
+    <path d="M78 71 C88 73, 98 69, 103 61" stroke="#ffd86b" stroke-width="3.8"/>
+    <path d="M46 54 C54 48, 68 48, 74 54" stroke="#8f5308" stroke-width="3.5"/>
+  </g>
+</svg>

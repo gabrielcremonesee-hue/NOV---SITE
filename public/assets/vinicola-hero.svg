@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 460" fill="none">
+  <defs>
+    <linearGradient id="winebg" x1="0" y1="0" x2="1200" y2="460" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#190C07"/>
+      <stop offset="55%" stop-color="#3B1A12"/>
+      <stop offset="100%" stop-color="#1C0E08"/>
+    </linearGradient>
+    <radialGradient id="amber" cx="72%" cy="48%" r="42%">
+      <stop offset="0%" stop-color="#D7A451" stop-opacity="0.32"/>
+      <stop offset="100%" stop-color="#D7A451" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="460" fill="url(#winebg)"/>
+  <rect width="1200" height="460" fill="url(#amber)"/>
+  <!-- Cellar oak barrels -->
+  <ellipse cx="980" cy="310" rx="115" ry="95" fill="#4B2816" stroke="#8C5932" stroke-width="5"/>
+  <ellipse cx="980" cy="310" rx="82" ry="66" fill="#3B1E10" stroke="#7A4C28" stroke-width="3"/>
+  <ellipse cx="775" cy="330" rx="95" ry="78" fill="#3E2012" stroke="#7E502D" stroke-width="4"/>
+  <!-- Wine glass -->
+  <path d="M840 165h76c0 54-16 86-38 86s-38-32-38-86Z" fill="#7D1820" opacity="0.88" stroke="#F0D7AC" stroke-width="2.5"/>
+  <line x1="878" y1="251" x2="878" y2="345" stroke="#F0D7AC" stroke-width="4"/>
+  <ellipse cx="878" cy="348" rx="34" ry="8" fill="#F0D7AC" opacity="0.85"/>
+  <!-- Grape cluster -->
+  <circle cx="670" cy="240" r="14" fill="#5D1B30"/>
+  <circle cx="694" cy="240" r="14" fill="#6F223A"/>
+  <circle cx="682" cy="260" r="14" fill="#501527"/>
+  <circle cx="706" cy="260" r="14" fill="#631C32"/>
+  <circle cx="694" cy="280" r="13" fill="#461121"/>
+</svg>

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100">
+  <defs>
+    <radialGradient id="garlic" cx="38%" cy="32%" r="65%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="65%" stop-color="#eadbc8"/>
+      <stop offset="100%" stop-color="#b99c80"/>
+    </radialGradient>
+    <linearGradient id="chili" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ff493c"/>
+      <stop offset="60%" stop-color="#c91815"/>
+      <stop offset="100%" stop-color="#7d0908"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="60" cy="83" rx="42" ry="8.5" fill="#0d0401" fill-opacity="0.58"/>
+  <!-- Garlic bulb -->
+  <path d="M44 26 C44 20, 48 20, 48 26 C56 32, 65 45, 64 60 C63 72, 54 76, 46 76 C36 76, 26 71, 25 60 C24 45, 35 32, 44 26 Z" fill="url(#garlic)"/>
+  <path d="M46 28 C41 44, 41 62, 46 76" fill="none" stroke="#c8b097" stroke-width="1.3"/>
+  <path d="M47 28 C53 44, 54 62, 49 75" fill="none" stroke="#c8b097" stroke-width="1.3"/>
+  <!-- Red chili pepper -->
+  <path d="M88 30 C92 44, 90 66, 62 79 C55 82, 51 77, 58 72 C74 61, 79 45, 78 31 C78 26, 86 25, 88 30 Z" fill="url(#chili)"/>
+  <path d="M84 36 C85 48, 80 61, 66 72" fill="none" stroke="#ff958d" stroke-width="2.2" stroke-linecap="round" opacity="0.7"/>
+  <!-- Chili green stem -->
+  <path d="M80 30 C79 22, 84 18, 91 17" fill="none" stroke="#539836" stroke-width="3.5" stroke-linecap="round"/>
+  <ellipse cx="83" cy="29" rx="6" ry="2.8" fill="#44812b"/>
+</svg>

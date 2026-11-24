@@ -1,0 +1,523 @@
+export interface SauceCard {
+  name: string;
+  intro: string;
+  ingredients: string[];
+  steps: string[];
+  tip: string;
+}
+
+export interface ExtraRecipe {
+  id: string;
+  photo?: string;
+  title: string;
+  subtitle: string;
+  region: string;
+  yield: string;
+  duration: string;
+  level: string;
+  technique: string;
+  adaptation: string;
+  ingredients: string[];
+  allergens: string;
+  editorialAlert?: string;
+  sauceCards?: SauceCard[];
+  steps: [string, string, string][];
+  techniques: string[];
+  errors: string[];
+  chefTip: string;
+  imageStatus: string;
+}
+
+export const extraRecipes: ExtraRecipe[] = [
+  {
+    id: 'alfredo',
+    title: 'Fettuccine Alfredo',
+    subtitle: 'A arte da cremosidade italiana',
+    region: 'Roma',
+    yield: '4 porções',
+    duration: '25–35 min',
+    level: 'Intermediária',
+    technique: 'Emulsificação e mantecatura',
+    adaptation:
+      'Versão de referência com manteiga, Parmigiano-Reggiano e água do cozimento; não depende de creme de leite.',
+    ingredients: [
+      '400 g de fettuccine fresco',
+      '160 g de manteiga sem sal',
+      '280 g de Parmigiano-Reggiano ralado fino',
+      'Água do cozimento da massa, quanto baste',
+      'Sal para a água',
+      'Pimenta-do-reino, opcional',
+    ],
+    allergens: 'Glúten e leite; confira os rótulos dos ingredientes.',
+    steps: [
+      [
+        'Mise en place',
+        'Separe e pese os ingredientes. Rale o queijo na hora e organize panela, escorredor e travessa ou frigideira.',
+        'Cada ingrediente merece atenção.',
+      ],
+      [
+        'Preparação da água',
+        'Coloque água em uma panela grande e leve à fervura. Salgue a água.',
+        'Fogão e água fervente exigem cuidado e supervisão.',
+      ],
+      [
+        'Cozimento do fettuccine',
+        'Cozinhe a massa fresca, que costuma levar menos tempo que a seca. Reserve água do cozimento antes de escorrer.',
+        'Confira o ponto durante o cozimento.',
+      ],
+      [
+        'Preparação da base',
+        'Coloque a manteiga em uma travessa aquecida ou frigideira fora do calor intenso.',
+        'Evite temperaturas excessivas.',
+      ],
+      [
+        'Construção da emulsão',
+        'Junte um pouco da água do cozimento à manteiga e misture. Incorpore o queijo gradualmente.',
+        'Controle o calor para evitar que o queijo empelote.',
+      ],
+      [
+        'Mantecatura',
+        'Transfira o fettuccine para a preparação e envolva os fios delicadamente. Ajuste com pequenas adições de água.',
+        'A mantecatura integra massa e molho.',
+      ],
+      [
+        'Finalização',
+        'Sirva imediatamente com queijo ralado e pimenta opcional.',
+        'Resultado esperado: molho uniforme, brilhante e cremoso, sem gordura separada.',
+      ],
+    ],
+    techniques: [
+      'Emulsificação de gordura e água',
+      'Controle de temperatura',
+      'Uso da água rica em amido',
+      'Mantecatura',
+      'Ponto da massa',
+      'Ajuste gradual da textura',
+    ],
+    errors: [
+      'Molho oleoso: ajustar gradualmente com água e rever a temperatura.',
+      'Queijo empelotado: controlar o calor e adicionar o queijo aos poucos.',
+      'Molho muito grosso: acrescentar pequenas quantidades de água.',
+      'Massa muito mole: controlar o tempo de cozimento.',
+    ],
+    chefTip:
+      'O segredo está no equilíbrio entre temperatura e água, não em acrescentar mais queijo ou manteiga.',
+    imageStatus: 'Imagem real da preparação ainda não fornecida.',
+  },
+  {
+    id: 'arrabbiata',
+    title: 'Penne all’Arrabbiata',
+    subtitle: 'O sabor intenso de Roma',
+    region: 'Roma e Lácio',
+    yield: '4 porções',
+    duration: '30–40 min',
+    level: 'Fácil',
+    technique: 'Construção e redução de molho',
+    adaptation: 'A pimenta caracteriza o prato; ajuste a quantidade ao paladar.',
+    ingredients: [
+      '320 g de penne seco',
+      '400 g de tomate pelado',
+      '40 ml de azeite extravirgem',
+      '2 dentes de alho',
+      'Pimenta calabresa a gosto',
+      'Sal a gosto',
+      '10 g de salsinha fresca',
+      'Água do cozimento, quanto baste',
+      'Pecorino Romano, opcional',
+    ],
+    allergens:
+      'Glúten; Pecorino contém leite. Confira rótulos e possível contaminação cruzada.',
+    steps: [
+      [
+        'Mise en place',
+        'Separe os ingredientes, prepare o alho e organize os utensílios. Se necessário, escorra o excesso de líquido dos tomates.',
+        'Lave as mãos e mantenha a bancada organizada.',
+      ],
+      [
+        'Preparação aromática',
+        'Pique ou fatie o alho e separe a pimenta. Ajuste a quantidade de pimenta ao paladar.',
+        'A pimenta deve aparecer sem dominar o prato.',
+      ],
+      [
+        'Infusão dos aromas',
+        'Aqueça o azeite em uma frigideira e adicione alho e pimenta. Libere os aromas sem queimar o alho.',
+        'Calor controlado evita amargor.',
+      ],
+      [
+        'Construção do molho',
+        'Adicione o tomate pelado, desmanche delicadamente e cozinhe em fogo moderado até concentrar.',
+        'Observe a consistência durante a redução.',
+      ],
+      [
+        'Ajuste de sabor',
+        'Acrescente sal e avalie o equilíbrio entre acidez do tomate e picância.',
+        'Evite mascarar o sabor do tomate.',
+      ],
+      [
+        'Cozimento do penne',
+        'Cozinhe em água fervente com sal, seguindo o tempo da embalagem e verificando o ponto al dente. Reserve um pouco da água.',
+        'Água fervente pede cuidado.',
+      ],
+      [
+        'Integração da massa',
+        'Transfira o penne ao molho, junte um pouco de água do cozimento e misture.',
+        'A água ajuda a integrar os componentes.',
+      ],
+      [
+        'Finalização',
+        'Acrescente salsinha e sirva. Pecorino pode ser oferecido como complemento opcional.',
+        'Resultado esperado: molho vermelho uniforme, picância equilibrada e boa aderência.',
+      ],
+    ],
+    techniques: [
+      'Extração de aromas pela gordura',
+      'Controle de temperatura do alho',
+      'Redução de molho',
+      'Equilíbrio entre acidez, sal e picância',
+      'Cozimento al dente',
+      'Integração da massa com o molho',
+      'Controle da consistência',
+    ],
+    errors: [
+      'Alho queimado: controle a temperatura e evite escurecer.',
+      'Pimenta excessiva: dose gradualmente.',
+      'Molho aguado: reduza em fogo moderado sem queimar.',
+      'Penne muito cozido: acompanhe o ponto e finalize junto ao molho.',
+    ],
+    chefTip:
+      'Intensidade não significa exagero: a pimenta não deve esconder o tomate.',
+    imageStatus: 'Imagem real da preparação ainda não fornecida.',
+  },
+  {
+    id: 'pesto',
+    title: 'Fusilli al Pesto Genovese',
+    subtitle: 'O frescor da cozinha da Ligúria',
+    region: 'Ligúria',
+    yield: '4 porções',
+    duration: '25–35 min',
+    level: 'Fácil a intermediária',
+    technique: 'Maceração e trituração controlada',
+    adaptation:
+      'O fusilli é uma adaptação didática. Na Ligúria, o pesto é frequentemente servido com trofie e também pode acompanhar outros formatos tradicionais.',
+    ingredients: [
+      '320 g de fusilli seco',
+      '50 g de folhas de manjericão fresco',
+      '30 g de pinoli',
+      '40 g de Parmigiano-Reggiano',
+      '20 g de Pecorino',
+      '1 dente pequeno de alho',
+      '100 ml de azeite extravirgem',
+      'Sal a gosto',
+      'Água do cozimento, quanto baste',
+    ],
+    allergens:
+      'Glúten, leite e oleaginosas (pinoli); confirme rótulos e alergênicos.',
+    steps: [
+      [
+        'Preparação do manjericão',
+        'Selecione folhas frescas e íntegras, lave cuidadosamente e seque muito bem.',
+        'Excesso de água prejudica a textura e a conservação do pesto.',
+      ],
+      [
+        'Preparação dos ingredientes',
+        'Separe pinoli, queijos, alho e azeite. O almofariz e pilão são o método tradicional; processador é uma alternativa doméstica.',
+        'Prepare o equipamento antes de começar.',
+      ],
+      [
+        'Preparação do pesto',
+        'Triture progressivamente no almofariz. No processador, use pulsos curtos para evitar aquecimento excessivo.',
+        'Não transforme a preparação em líquido excessivamente fino.',
+      ],
+      [
+        'Integração dos componentes',
+        'Adicione gradualmente os queijos e o azeite até obter uma pasta homogênea.',
+        'Ajuste a textura aos poucos.',
+      ],
+      [
+        'Cozimento do fusilli',
+        'Cozinhe em água fervente com sal até al dente e reserve um pouco da água.',
+        'Confira o ponto durante o cozimento.',
+      ],
+      [
+        'Combinação com o pesto',
+        'Escorra a massa e misture com o pesto em uma travessa. Evite calor intenso sobre o molho.',
+        'O calor pode reduzir o frescor e escurecer o manjericão.',
+      ],
+      [
+        'Ajuste da textura',
+        'Adicione pequenas quantidades da água do cozimento até o molho envolver as espirais.',
+        'Acrescente aos poucos.',
+      ],
+      [
+        'Finalização',
+        'Acrescente queijo ralado e folhas frescas de manjericão.',
+        'Resultado esperado: pesto verde, aromático e equilibrado.',
+      ],
+    ],
+    techniques: [
+      'Seleção e conservação do manjericão',
+      'Maceração',
+      'Trituração controlada',
+      'Integração de gorduras',
+      'Controle de oxidação e aquecimento',
+      'Molho sem cozimento intenso',
+      'Combinação de formato e molho',
+    ],
+    errors: [
+      'Pesto escurecido: evite aquecimento e exposição excessiva ao ar.',
+      'Molho líquido: controle azeite e água.',
+      'Folhas molhadas: seque bem.',
+      'Alho dominante: ajuste a quantidade indicada.',
+      'Pesto espesso: acrescente água gradualmente.',
+    ],
+    chefTip:
+      'Não cozinhamos o pesto: preservamos o frescor do manjericão e envolvemos as espirais.',
+    imageStatus: 'Imagem real da preparação ainda não fornecida.',
+  },
+  {
+    id: 'ragù',
+    photo: '/assets/massas-italianas.svg',
+    title: 'Tagliatelle al Ragù alla Bolognese',
+    subtitle: 'A tradição de Bolonha',
+    region: 'Emília-Romanha',
+    yield: '4 porções · pendente de teste e aprovação',
+    duration: '3 horas ou mais',
+    level: 'Intermediária a avançada',
+    technique: 'Massa fresca, soffritto, deglace e cozimento lento',
+    adaptation:
+      'Ficha didática adaptada. Rendimento e quantidades permanecem em rascunho até teste e aprovação do Chef.',
+    ingredients: [
+      'MASSA: 400 g de farinha de trigo tipo 00',
+      'MASSA: 4 ovos médios',
+      'MASSA: 1 pitada de sal',
+      'RAGÙ: 400 g de carne bovina moída',
+      'RAGÙ: 150 g de pancetta fresca',
+      'RAGÙ: 60 g de cebola',
+      'RAGÙ: 60 g de cenoura',
+      'RAGÙ: 60 g de salsão',
+      'RAGÙ: 120 ml de vinho branco ou tinto',
+      'RAGÙ: 200 g de passata de tomate',
+      'RAGÙ: 1 colher de sopa de extrato de tomate concentrado',
+      'RAGÙ: 120 ml de leite integral, opcional',
+      'RAGÙ: 45 ml de azeite extravirgem',
+      'RAGÙ: caldo leve, quanto baste',
+      'RAGÙ: sal e pimenta a gosto',
+      'Finalização: Parmigiano-Reggiano ralado na hora',
+    ],
+    allergens:
+      'Glúten, ovos e leite; confirme rótulos e possíveis contaminações cruzadas.',
+    editorialAlert:
+      'Módulo didático liberado para estudo, com os dados já registrados no projeto. Antes de produzir ou servir, valide rendimento, quantidades e corte de 8 mm com o Chef responsável.',
+    steps: [
+      [
+        'Preparação do soffritto',
+        'Pique finamente cebola, cenoura e salsão.',
+        'Soffritto é uma base aromática usada em diversas preparações italianas.',
+      ],
+      [
+        'Preparação da pancetta',
+        'Coloque pancetta e azeite na panela e permita que a gordura seja liberada gradualmente.',
+        'Controle o calor.',
+      ],
+      [
+        'Base aromática',
+        'Adicione os vegetais e cozinhe lentamente até amaciarem, sem dourar excessivamente.',
+        'Cozimento controlado desenvolve os aromas.',
+      ],
+      [
+        'Preparação da carne',
+        'Adicione a carne bovina e cozinhe, mexendo para distribuir o calor e permitir que perca o excesso de umidade.',
+        'Observe a mudança de textura.',
+      ],
+      [
+        'Deglaçagem',
+        'Adicione o vinho e permita que o álcool evapore, incorporando os sabores do fundo da panela.',
+        'Deglaçar integra os resíduos saborosos da cocção.',
+      ],
+      [
+        'Construção do ragù',
+        'Adicione extrato e passata; misture e acrescente caldo quente aos poucos.',
+        'Controle a umidade.',
+      ],
+      [
+        'Cozimento lento',
+        'Mantenha em fogo baixo por aproximadamente duas horas ou mais. Integre o leite opcional durante a cocção e ajuste com caldo.',
+        'Acompanhe periodicamente; panela quente exige cuidado.',
+      ],
+      [
+        'Preparação da massa fresca',
+        'Faça um monte de farinha, abra o centro, adicione os ovos e incorpore a farinha até obter estrutura homogênea.',
+        'Mantenha a bancada limpa.',
+      ],
+      [
+        'Sova e descanso',
+        'Sove por aproximadamente 15–20 minutos, conforme técnica e farinha. Cubra e descanse por cerca de 30 minutos.',
+        'O descanso ajuda a massa a relaxar.',
+      ],
+      [
+        'Abertura da massa',
+        'Abra gradualmente com rolo ou cilindro até uma espessura fina e uniforme. Evite ressecar.',
+        'Trabalhe sem pressa.',
+      ],
+      [
+        'Corte do tagliatelle',
+        'A ficha recebida indica tiras de aproximadamente 8 mm; largura crua sob validação editorial. Solte as tiras e deixe descansar sobre superfície levemente enfarinhada.',
+        'Não altere a medida sem aprovação do Chef.',
+      ],
+      [
+        'Cozimento',
+        'Cozinhe em água fervente com sal. Massa fresca costuma precisar de poucos minutos; verifique o ponto.',
+        'Água fervente exige cuidado.',
+      ],
+      [
+        'Integração com o ragù',
+        'Transfira a massa ao ragù e misture delicadamente. Ajuste com um pouco da água do cozimento, se necessário.',
+        'Ajuste a consistência com cuidado.',
+      ],
+      [
+        'Finalização',
+        'Sirva com Parmigiano-Reggiano ralado na hora.',
+        'Resultado esperado: tagliatelle uniforme com ragù encorpado e integrado.',
+      ],
+    ],
+    techniques: [
+      'Soffritto',
+      'Liberação gradual de gordura',
+      'Deglaçagem',
+      'Cozimento lento',
+      'Desenvolvimento de glúten',
+      'Descanso da massa',
+      'Abertura uniforme',
+      'Corte padronizado (pendente de validação)',
+      'Ponto da massa fresca',
+      'Integração com o ragù',
+    ],
+    errors: [
+      'Massa seca: avaliar hidratação; qualquer ajuste deve ser feito na cozinha sob orientação do Chef.',
+      'Massa pegajosa: controlar a farinha e respeitar o descanso.',
+      'Ragù líquido: prolongar a redução em fogo baixo.',
+      'Carne ressecada: controlar calor e umidade.',
+      'Molho sem profundidade: respeitar o tempo de cozimento.',
+      'Massa muito cozida: acompanhar o ponto.',
+    ],
+    chefTip:
+      'Um bom ragù não precisa ter pressa. A paciência é um ingrediente importante.',
+    imageStatus: 'Imagem real da preparação ainda não fornecida.',
+  },
+  {
+    id: 'sauces',
+    title: 'Molhos italianos: Pomodoro & Burro e Salvia',
+    subtitle: 'Dois molhos essenciais, aprendidos lado a lado',
+    region: 'Cozinha Italiana',
+    yield: '4 porções por molho',
+    duration: '30–40 min',
+    level: 'Iniciante',
+    technique: 'Extração de aromas, redução e emulsão',
+    adaptation:
+      'Receitas didáticas para acompanhar massa. Ajuste a textura com pequenas quantidades de água do cozimento e confira alergênicos nos rótulos.',
+    ingredients: [
+      'POMODORO: 800 g de tomate pelado em lata',
+      'POMODORO: 30 ml de azeite extravirgem',
+      'POMODORO: 1 dente de alho, opcional',
+      'POMODORO: 1/2 cebola pequena, opcional',
+      'POMODORO: sal a gosto e folhas de manjericão',
+      'BURRO E SALVIA: 100 g de manteiga sem sal',
+      'BURRO E SALVIA: 8–12 folhas de sálvia fresca',
+      'BURRO E SALVIA: água do cozimento da massa, quanto baste',
+      'BURRO E SALVIA: Parmigiano-Reggiano ralado, opcional',
+    ],
+    allergens:
+      'Burro e Salvia contém leite; confira ingredientes, rótulos e possíveis contaminações cruzadas.',
+    sauceCards: [
+      {
+        name: 'Molho 1 · Pomodoro clássico',
+        intro:
+          'Um molho de tomate simples em que o cozimento moderado concentra o sabor sem esconder o frescor do manjericão.',
+        ingredients: [
+          '800 g de tomate pelado em lata',
+          '30 ml de azeite extravirgem',
+          '1 dente de alho, opcional',
+          '1/2 cebola pequena, opcional',
+          'Sal a gosto',
+          'Folhas de manjericão fresco',
+        ],
+        steps: [
+          'Aqueça o azeite em fogo baixo e perfume com alho e/ou cebola, sem dourar demais.',
+          'Junte o tomate e esmague os pedaços maiores com uma colher.',
+          'Cozinhe em fogo baixo por cerca de 20–30 minutos, mexendo de vez em quando.',
+          'Ajuste o sal; desligue o fogo e acrescente o manjericão. Para servir com massa, misture com um pouco da água do cozimento.',
+        ],
+        tip: 'Se o tomate estiver muito ácido, cozinhe mais um pouco e ajuste o equilíbrio aos poucos; não é necessário adicionar açúcar.',
+      },
+      {
+        name: 'Molho 2 · Burro e Salvia',
+        intro:
+          'A manteiga envolve a massa e a sálvia perfuma o molho. Água do cozimento ajuda a formar uma emulsão leve.',
+        ingredients: [
+          '100 g de manteiga sem sal',
+          '8–12 folhas de sálvia fresca, lavadas e secas',
+          'Água do cozimento da massa, quanto baste',
+          'Sal a gosto',
+          'Parmigiano-Reggiano ralado, opcional',
+        ],
+        steps: [
+          'Derreta a manteiga em frigideira larga, em fogo baixo a médio.',
+          'Adicione as folhas de sálvia e deixe perfumar por alguns instantes, sem queimar a manteiga.',
+          'Junte a massa cozida e uma pequena concha de água do cozimento; misture para envolver.',
+          'Ajuste com mais água aos poucos até o molho ficar brilhante. Sirva logo, com queijo opcional.',
+        ],
+        tip: 'Mantenha o fogo moderado: manteiga muito escura pode ganhar sabor amargo. Cuidado com a frigideira quente.',
+      },
+    ],
+    steps: [
+      [
+        'Conheça os dois molhos',
+        'Neste módulo vamos preparar um molho de tomate cozido e um molho de manteiga aromatizada com sálvia. Separe os ingredientes de cada receita.',
+        'Confira os ingredientes e as observações de alergênicos antes de começar.',
+      ],
+      [
+        'Organize a bancada',
+        'Separe duas frigideiras ou prepare os molhos em momentos diferentes. Lave e seque a sálvia; mantenha utensílios e bancada organizados.',
+        'Trabalhe com calma e mantenha atenção ao fogão.',
+      ],
+      [
+        'Prepare o Pomodoro',
+        'Aqueça azeite suavemente, perfume com alho e/ou cebola opcional, junte o tomate e cozinhe em fogo baixo por cerca de 20–30 minutos. Finalize com sal e manjericão.',
+        'Mexa de tempos em tempos e evite que o alho escureça.',
+      ],
+      [
+        'Prepare o Burro e Salvia',
+        'Derreta manteiga em fogo moderado, perfume com sálvia e envolva a massa com pequenas adições de água do cozimento.',
+        'A manteiga pode queimar rapidamente: controle o calor.',
+      ],
+      [
+        'Prove e ajuste',
+        'Observe separadamente o Pomodoro e o Burro e Salvia. Ajuste sal e consistência gradualmente; sirva cada molho com massa adequada.',
+        'A água do cozimento ajuda a ligar o molho; acrescente pouco a pouco.',
+      ],
+      [
+        'Conclua a preparação',
+        'Revise a sequência, as diferenças entre os molhos e os cuidados com calor e alergênicos.',
+        'Muito bem: você estudou duas técnicas de molho no mesmo módulo.',
+      ],
+    ],
+    techniques: [
+      'Infusão aromática em gordura',
+      'Controle de calor',
+      'Redução de tomate',
+      'Uso gradual da água do cozimento',
+      'Emulsificação',
+      'Ajuste de sal e consistência',
+    ],
+    errors: [
+      'Alho escurecido: diminua o calor e comece novamente se estiver amargo.',
+      'Pomodoro muito líquido: cozinhe um pouco mais em fogo baixo.',
+      'Manteiga escurecida: controle a temperatura e evite deixá-la sem atenção.',
+      'Molho separado: adicione água do cozimento aos poucos enquanto mistura.',
+    ],
+    chefTip:
+      'Prove os dois molhos separadamente e observe como o calor e a água mudam a textura.',
+    imageStatus:
+      'Ilustração de ingredientes; fotos próprias das duas receitas ainda não fornecidas.',
+  },
+];

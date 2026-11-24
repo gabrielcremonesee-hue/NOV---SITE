@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100">
+  <defs>
+    <radialGradient id="doughBall" cx="38%" cy="32%" r="65%">
+      <stop offset="0%" stop-color="#fff2bd"/>
+      <stop offset="55%" stop-color="#eec86c"/>
+      <stop offset="100%" stop-color="#b8842a"/>
+    </radialGradient>
+  </defs>
+  <ellipse cx="60" cy="83" rx="40" ry="8.5" fill="#0d0401" fill-opacity="0.58"/>
+  <ellipse cx="60" cy="56" rx="36" ry="25" fill="url(#doughBall)"/>
+  <ellipse cx="47" cy="43" rx="11" ry="6" transform="rotate(-18 47 43)" fill="#ffffff" fill-opacity="0.35"/>
+</svg>

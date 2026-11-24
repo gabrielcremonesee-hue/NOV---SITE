@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 420" fill="none">
+  <rect width="640" height="420" fill="#EFE4D2"/>
+  <circle cx="320" cy="215" r="142" fill="#FFFCF6" stroke="#D8C8B0" stroke-width="6"/>
+  <circle cx="320" cy="215" r="115" fill="#F2C95A"/>
+  <!-- Swirl & black pepper -->
+  <path d="M260 215c0-33 27-60 60-60s60 27 60 60-27 60-60 60" stroke="#DEAA34" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="290" cy="195" r="4" fill="#382F29"/>
+  <circle cx="332" cy="182" r="3.5" fill="#382F29"/>
+  <circle cx="352" cy="222" r="4" fill="#382F29"/>
+  <circle cx="310" cy="245" r="3.5" fill="#382F29"/>
+  <circle cx="280" cy="230" r="3" fill="#382F29"/>
+  <!-- Whisk -->
+  <path d="M350 185l115-105" stroke="#8C837A" stroke-width="8" stroke-linecap="round"/>
+  <ellipse cx="332" cy="202" rx="34" ry="18" transform="rotate(-42 332 202)" stroke="#8C837A" stroke-width="3"/>
+</svg>
