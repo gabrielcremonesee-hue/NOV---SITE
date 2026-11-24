@@ -67,12 +67,12 @@ img { display: block; max-width: 100%; }
   flex: none;
 }
 .brand img {
-  width: 132px;
-  height: 86px;
-  object-fit: cover;
-  object-position: center 45%;
-  mix-blend-mode: multiply;
-  filter: contrast(1.18);
+  width: auto;
+  height: 58px;
+  max-width: 120px;
+  object-fit: contain;
+  mix-blend-mode: normal;
+  filter: none;
 }
 .site-nav {
   display: flex;
@@ -844,9 +844,9 @@ img { display: block; max-width: 100%; }
   display: flex;
   align-items: center;
   width: 100%;
-  min-height: 158px;
+  min-height: 176px;
   margin: 0;
-  padding: 72px 30px 28px;
+  padding: 72px 24px 52px;
   overflow: visible;
   border: 0;
   background: linear-gradient(180deg, transparent 94px, #040b15 94px);
@@ -951,7 +951,7 @@ img { display: block; max-width: 100%; }
 .page-wrap {
   width: min(1140px, calc(100% - 36px));
   margin: 0 auto;
-  padding: 28px 0 68px;
+  padding: 28px 0 36px;
 }
 .page-intro { margin: 12px 0 24px; }
 .page-intro h1, .progress-page-head h1 {
@@ -1576,9 +1576,11 @@ img { display: block; max-width: 100%; }
   position: absolute;
   top: 4px;
   left: 0;
-  width: 44px;
-  height: 44px;
-  background: url('/assets/chef-mark.svg') center/contain no-repeat;
+  width: 48px;
+  height: 36px;
+  background: url('/assets/fervec-logo-black.png') center / contain no-repeat;
+  mix-blend-mode: normal;
+  filter: none;
 }
 .lesson-main-heading h2 { font: 600 clamp(22px, 2.2vw, 30px)/1.1 var(--serif); margin: 4px 0; }
 .lesson-main-heading p { font-size: 13px; line-height: 1.5; color: #746657; margin: 0; }
@@ -2680,7 +2682,7 @@ body.is-wine-route { background: #1e0907; color: #f8edd8; }
 .wine-note { margin: 16px 0; padding: 16px 20px; border-left: 3px solid #d3a354; background: #2d1a10; color: #f3dec0; }
 .wine-switch { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .wine-switch button { border: 1px solid #956c3d; border-radius: 22px; background: transparent; color: #f2dbb5; padding: 8px 14px; font-size: 11px; }
-.wine-disclaimer { text-align: center; font-size: 10px; color: #bda789; padding: 14px 12px 20px; margin: 0; }
+.wine-disclaimer { text-align: center; font-size: 10.5px; color: #bda789; padding: 14px 16px 84px; margin: 0; }
 
 /* Modals */
 .modal-backdrop {
@@ -2926,11 +2928,11 @@ body.is-wine-route { background: #1e0907; color: #f8edd8; }
 .footer-meta-bar {
   width: min(1180px, calc(100% - 36px));
   margin: 12px auto 0;
-  padding: 0 0 84px;
+  padding: 6px 0 84px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 .footer-meta-bar .local-note {
   margin: 12px auto 4px;
@@ -3763,14 +3765,13 @@ body.is-wine-route { background: #1e0907; color: #f8edd8; }
   display: inline-flex;
   background: transparent;
   padding: 0;
-  isolation: isolate;
 }
 .wine-footer-brand img {
   width: 108px;
   height: 70px;
   object-fit: cover;
-  object-position: center 45%;
-  filter: invert(1) contrast(3.2) brightness(0.95);
+  object-position: center 47%;
+  filter: grayscale(1) contrast(4) invert(1) brightness(1.06);
   mix-blend-mode: screen;
 }
 .wine-footer-seal {
@@ -3911,15 +3912,15 @@ body.is-wine-route { background: #1e0907; color: #f8edd8; }
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
-.cuisine-offer-brand img,
-.cuisine-offer-brand svg {
-  width: 22px;
-  height: 20px;
+.cuisine-offer-brand img.cuisine-offer-brand-logo {
+  width: auto;
+  height: 38px;
   flex: none;
   object-fit: contain;
-  color: #b81820;
+  mix-blend-mode: normal;
+  filter: none;
   display: block;
 }
 .cuisine-offer-brand span {
@@ -4189,7 +4190,7 @@ body.is-wine-route { background: #1e0907; color: #f8edd8; }
 .cockpit-kitchen-backdrop {
   background: radial-gradient(circle at 50% 0%, #4a2815 0%, #2b150a 52%, #180a04 100%);
   min-height: calc(100vh - 77px);
-  padding: 18px 0 46px;
+  padding: 18px 0 18px;
   overflow-x: clip;
 }
 .lesson-cockpit-shell {
@@ -4200,10 +4201,11 @@ body.is-wine-route { background: #1e0907; color: #f8edd8; }
 .cockpit-folio-sheet {
   position: relative;
   overflow: visible;
-  border-radius: 14px;
+  border-radius: 14px 14px 0 0;
   background-color: #fbf0d6;
   background-image: var(--parchment-grain), linear-gradient(180deg, #fff8e7 0%, #f5e2ba 52%, #ecd2a2 100%);
   border: 1px solid #d5ba8e;
+  border-bottom: 0;
   box-shadow: 0 22px 48px #0a040199;
   color: #26180e;
 }
@@ -4383,8 +4385,8 @@ body.is-wine-route { background: #1e0907; color: #f8edd8; }
   max-height: 100%;
   display: block;
   object-fit: contain;
-  mix-blend-mode: multiply;
-  filter: contrast(1.16);
+  mix-blend-mode: normal;
+  filter: none;
 }
 .cockpit-banner-copy .eyebrow {
   color: #9a161d;
@@ -6634,12 +6636,11 @@ body.is-wine-route { background: #1e0907; color: #f8edd8; }
   justify-items: center;
 }
 .memorial-brand-box img {
-  width: 104px;
-  height: 70px;
-  object-fit: cover;
-  object-position: center 45%;
-  mix-blend-mode: multiply;
-  filter: contrast(1.18);
+  width: auto;
+  height: 58px;
+  object-fit: contain;
+  mix-blend-mode: normal;
+  filter: none;
 }
 .memorial-brand-box em {
   font: italic 600 13px var(--serif);
@@ -6820,7 +6821,7 @@ body.is-wine-route { background: #1e0907; color: #f8edd8; }
 
 @media (max-width: 760px) {
   .topbar { height: auto; flex-wrap: wrap; padding: 8px 12px; z-index: 25; }
-  .brand img { width: 106px; height: 70px; }
+  .brand img { width: auto; height: 46px; }
   .site-nav {
     order: 3;
     flex: 1 0 100%;
@@ -8304,8 +8305,8 @@ body:has(.home-page) .chef-chat-root {
     gap: 8px;
   }
   .brand img {
-    width: 110px;
-    height: 72px;
+    width: auto;
+    height: 48px;
   }
   .nav-link {
     min-width: 56px;
@@ -8447,7 +8448,7 @@ body:has(.home-page) .chef-chat-root {
 
 .payments-stage {
   position: relative;
-  padding: 0 18px 66px;
+  padding: 0 18px 88px;
   background:
     radial-gradient(circle at 50% 0%, #2b1309 0%, #170a05 56%, #110703 100%);
 }
@@ -9385,11 +9386,11 @@ body:has(.home-page) .chef-chat-root {
   border-radius: 0;
 }
 .topbar.wine-topbar .brand img {
-  width: 96px;
-  height: 54px;
-  object-fit: cover;
-  object-position: center 45%;
-  mix-blend-mode: multiply;
+  width: auto;
+  height: 48px;
+  object-fit: contain;
+  mix-blend-mode: normal;
+  filter: none;
 }
 .wine-top-back-pill {
   justify-self: center;
@@ -9432,11 +9433,24 @@ body:has(.home-page) .chef-chat-root {
 }
 .home-hero-brand {
   display: inline-flex;
-  flex-direction: column;
   align-items: center;
+  justify-content: center;
   color: #ffffff;
   text-decoration: none;
-  gap: 2px;
+  flex: none;
+}
+.fervec-logo-on-dark {
+  display: block;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.36));
+}
+.fervec-logo-on-light {
+  display: block;
+  object-fit: contain;
+}
+.home-hero-brand-logo {
+  width: auto;
+  height: 64px;
 }
 .home-hero-brand svg {
   width: 54px;
@@ -10009,16 +10023,14 @@ body:has(.home-page) .chef-chat-root {
   flex-wrap: wrap;
   gap: 16px;
   padding-left: clamp(144px, 14.5vw, 210px);
+  padding-right: 245px;
 }
 .footer-brand-emblem {
   flex: none;
 }
-.footer-brand-emblem svg {
-  width: 48px;
-  height: 36px;
-}
-.footer-brand-emblem .home-hero-brand-copy strong {
-  font-size: 24px;
+.footer-brand-logo {
+  width: auto;
+  height: 62px;
 }
 .footer-socials {
   display: flex;
@@ -10090,15 +10102,11 @@ body:has(.home-page) .chef-chat-root {
 .cuisines-hero-brand {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  color: #ffd978;
-  font: 700 12px var(--sans);
-  letter-spacing: .12em;
+  margin-bottom: 4px;
 }
-.cuisines-hero-brand img {
-  width: 22px;
-  height: 22px;
-  filter: brightness(0) invert(1) sepia(1) saturate(3) hue-rotate(5deg);
+.cuisines-hero-brand-logo {
+  width: auto;
+  height: 62px;
 }
 .cuisine-offer-brand small {
   font-size: 9px;
@@ -10189,6 +10197,7 @@ body:has(.home-page) .chef-chat-root {
 }
 .cuisines-azulejo-page .cuisines-bottom-bar {
   padding: 24px 124px;
+  margin: 26px auto 22px;
 }
 .cuisines-bottom-produce {
   position: absolute;
@@ -10201,8 +10210,8 @@ body:has(.home-page) .chef-chat-root {
 .cuisines-bottom-produce.is-right { right: -12px; transform: scaleX(-1); }
 .cuisines-bottom-azulejo {
   width: 100%;
-  height: 52px;
-  background: url('/assets/portal-azulejo-strip.jpg') repeat-x center / auto 54px;
+  height: 36px;
+  background: url('/assets/portal-azulejo-strip.jpg') repeat-x center center / auto 36px;
   border-top: 2px solid #d3b27e;
   border-bottom: 2px solid #8a5b35;
 }
@@ -10237,14 +10246,6 @@ body:has(.home-page) .chef-chat-root {
 }
 .cockpit-azulejo-side.is-left { left: 0; }
 .cockpit-azulejo-side.is-right { right: 0; }
-.lesson-cockpit-shell:has(.cockpit-folio-sheet[data-active-tab="review"]) .cockpit-azulejo-side,
-.lesson-cockpit-shell:has(.cockpit-folio-sheet[data-active-tab="review"]) .cockpit-azulejo-footer {
-  display: none;
-}
-.cockpit-folio-sheet[data-active-tab="review"] {
-  border-radius: 14px;
-  border-bottom: 1px solid #d5ba8e;
-}
 .cockpit-folio-sheet {
   position: relative;
   z-index: 2;
@@ -10492,33 +10493,41 @@ body:has(.home-page) .chef-chat-root {
   z-index: 2;
   margin: 0 18px;
   border-radius: 0 0 14px 14px;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid #d5ba8e;
-  border-top: 0;
+  border-top: 1px solid #d5ba8e;
+  background: #f5e2ba;
+  box-shadow: 0 14px 28px rgba(10, 4, 1, 0.45);
 }
 .cockpit-azulejo-strip {
   width: 100%;
-  height: 46px;
-  background: url('/assets/portal-azulejo-strip.jpg') repeat-x center / auto 52px;
+  height: 36px;
+  overflow: hidden;
+  background: url('/assets/portal-azulejo-strip.jpg') repeat-x center center / auto 36px;
 }
 .cockpit-wood-edge {
   position: relative;
-  height: 18px;
+  height: 22px;
+  border-radius: 0 0 13px 13px;
   background: linear-gradient(180deg, #562c16 0%, #2b1409 100%);
+  border-top: 2px solid #8a5b35;
 }
 .cockpit-edge-produce {
   position: absolute;
-  left: -12px;
-  bottom: 0;
-  width: 112px;
+  left: -14px;
+  bottom: -6px;
+  width: 82px;
+  height: auto;
+  z-index: 5;
   pointer-events: none;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.45));
 }
 .cockpit-outside-meta,
 .cert-outside-meta,
 .progress-outside-meta,
 .cuisines-outside-meta {
   width: min(1140px, calc(100% - 36px));
-  margin: 10px auto 0;
+  margin: 14px auto 0;
 }
 .cockpit-outside-meta .footer-meta-bar,
 .cert-outside-meta .footer-meta-bar {
@@ -10543,7 +10552,13 @@ body:has(.home-page) .chef-chat-root {
   color: #98151b;
 }
 .cuisines-outside-meta {
-  padding-bottom: 14px;
+  padding-bottom: 0;
+}
+.cockpit-outside-meta .footer-meta-bar,
+.cert-outside-meta .footer-meta-bar,
+.progress-outside-meta .footer-meta-bar,
+.cuisines-outside-meta .footer-meta-bar {
+  padding-bottom: 84px;
 }
 
 /* 5. Unified REVISÃO Section (All 6 Modules) */
@@ -10996,12 +11011,15 @@ body:has(.home-page) .chef-chat-root {
 }
 .progress-rolling-footer {
   width: 100%;
-  margin-top: 8px;
+  margin-top: 12px;
+  border-top: 2px solid #d3b27e;
 }
 .progress-wood-scene {
   position: relative;
   overflow: hidden;
-  height: 176px;
+  height: 168px;
+  border-top: 2px solid #8a5b35;
+  border-bottom: 2px solid #6b4324;
 }
 .progress-wood-scene > img:first-child {
   width: 100%;
@@ -11142,7 +11160,33 @@ body:has(.home-page) .chef-chat-root {
 /* 10. Responsive Breakpoints for Reconstructed Views */
 @media (max-width: 1120px) {
   .storefront-grid.storefront-grid-6 {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .storefront-grid-6 .storefront-card {
+    min-height: 248px;
+  }
+  .storefront-grid-6 .storefront-card-copy {
+    padding: 8px 6px 10px;
+    gap: 5px;
+  }
+  .storefront-grid-6 .cuisine-card-head strong span {
+    font-size: 10.5px;
+  }
+  .storefront-grid-6 .cuisine-card-head strong em {
+    font-size: 12.5px;
+  }
+  .storefront-grid-6 .portal-card-title {
+    font-size: 11.5px;
+    min-height: 28px;
+  }
+  .storefront-grid-6 .cuisine-status-pill {
+    font-size: 10px;
+    padding: 3px 6px;
+  }
+  .storefront-grid-6 .cuisine-red-cta {
+    font-size: 10px;
+    padding: 6px 6px;
   }
   .home-quick-pill-bar {
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -11154,7 +11198,8 @@ body:has(.home-page) .chef-chat-root {
   .cockpit-azulejo-side {
     width: 20px;
   }
-  .cockpit-folio-sheet {
+  .cockpit-folio-sheet,
+  .cockpit-azulejo-footer {
     margin: 0 10px;
   }
   .cockpit-stage-frame {
@@ -11332,12 +11377,9 @@ body:has(.home-page) .chef-chat-root {
 .wine-footer-emblem {
   flex: none;
 }
-.wine-footer-emblem svg {
-  width: 48px;
-  height: 36px;
-}
-.wine-footer-emblem .home-hero-brand-copy strong {
-  font-size: 20px;
+.wine-footer-logo {
+  width: 104px;
+  height: 68px;
 }
 .progress-showcase-backdrop.is-light-parchment .progress-hero-metrics {
   align-items: center;
@@ -11428,16 +11470,9 @@ body:has(.home-page) .chef-chat-root {
   .home-hero-topbar {
     padding: 10px 12px 0;
   }
-  .home-hero-brand svg {
-    width: 38px;
-    height: 29px;
-  }
-  .home-hero-brand-copy strong {
-    font-size: 20px;
-  }
-  .home-hero-brand-copy small {
-    font-size: 7px;
-    letter-spacing: .2em;
+  .home-hero-brand-logo {
+    width: auto;
+    height: 46px;
   }
   .home-hero-top-actions {
     gap: 6px;
@@ -11604,17 +11639,17 @@ body:has(.home-page) .chef-chat-root {
     height: 2.5px;
   }
 
-  /* Storefront Section Heading + 6-Card Horizontal Strip */
+  /* Storefront Section Heading + All 6 Cards Side-by-Side (No Horizontal Scroll) */
   .storefront-section {
-    width: calc(100% - 16px);
-    margin: 14px auto 14px;
+    width: calc(100% - 10px);
+    margin: 12px auto 14px;
   }
   .home-section-heading {
     flex-direction: row;
     align-items: flex-end;
     justify-content: space-between;
     gap: 8px;
-    margin: 0 2px 12px;
+    margin: 0 2px 10px;
   }
   .home-section-heading > div {
     min-width: 0;
@@ -11646,76 +11681,104 @@ body:has(.home-page) .chef-chat-root {
     flex-shrink: 0;
   }
   .storefront-grid.storefront-grid-6 {
-    display: flex;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    overflow-y: hidden;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior-x: contain;
-    scroll-snap-type: x proximity;
-    gap: 7px;
-    padding: 2px 1px 6px;
-    scrollbar-width: none;
-  }
-  .storefront-grid.storefront-grid-6::-webkit-scrollbar {
-    display: none;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 4px;
+    overflow: visible;
+    padding: 2px 0 4px;
   }
   .storefront-grid-6 .storefront-card {
-    flex: 0 0 clamp(114px, 31vw, 130px);
-    min-width: 114px;
-    min-height: 204px;
-    border-radius: 13px;
-    scroll-snap-align: start;
+    flex: none;
+    width: 100%;
+    min-width: 0;
+    min-height: 156px;
+    border-radius: 9px;
+    border-width: 1px;
   }
   .storefront-grid-6 .storefront-card > img {
-    height: 60%;
+    height: 50%;
+  }
+  .storefront-grid-6 .storefront-card-overlay {
+    background: linear-gradient(
+      180deg,
+      rgba(20, 9, 4, 0) 0%,
+      rgba(20, 9, 4, 0.1) 34%,
+      rgba(24, 10, 4, 0.92) 48%,
+      rgba(16, 6, 2, 1) 58%
+    );
   }
   .storefront-grid-6 .storefront-card-copy {
-    padding: 8px 7px 9px;
-    gap: 6px;
+    padding: 4px 2.5px 5px;
+    gap: 3px;
+    width: 100%;
+    min-width: 0;
   }
   .storefront-grid-6 .cuisine-card-head {
-    gap: 5px;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    width: 100%;
   }
   .storefront-grid-6 .cuisine-flag-svg {
-    width: 17px;
-    height: 17px;
+    width: 13px;
+    height: 13px;
+  }
+  .storefront-grid-6 .cuisine-card-head strong {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
   }
   .storefront-grid-6 .cuisine-card-head strong span {
-    font-size: 9.5px;
+    font-size: clamp(6.4px, 1.75vw, 8px);
+    line-height: 1;
   }
   .storefront-grid-6 .cuisine-card-head strong em {
-    font-size: 11.5px;
+    font-size: clamp(7.2px, 2.05vw, 9.5px);
+    line-height: 1.05;
   }
   .storefront-grid-6 .storefront-portal-icon {
-    width: 22px;
-    height: 22px;
+    width: 15px;
+    height: 15px;
   }
   .storefront-grid-6 .storefront-portal-icon svg {
-    width: 20px;
-    height: 20px;
+    width: 14px;
+    height: 14px;
   }
   .storefront-grid-6 .portal-card-title {
-    font-size: 11px;
-    min-height: 28px;
+    font-size: clamp(5.8px, 1.55vw, 7.6px);
+    line-height: 1.12;
+    min-height: 24px;
+    overflow-wrap: normal;
+    word-break: normal;
+    hyphens: none;
   }
-  .cuisine-status-pill {
-    padding: 3px 6px;
-    font-size: 9.5px;
-    gap: 4px;
+  .storefront-grid-6 .cuisine-status-pill {
+    padding: 2px 3px;
+    font-size: clamp(5.3px, 1.45vw, 7.2px);
+    gap: 2px;
     max-width: 100%;
     white-space: nowrap;
   }
-  .cuisine-status-dot {
-    width: 11px;
-    height: 11px;
-    font-size: 8px;
+  .storefront-grid-6 .cuisine-status-dot {
+    width: 8px;
+    height: 8px;
+    font-size: 5.5px;
+    flex: none;
   }
-  .cuisine-red-cta {
-    padding: 5.5px 7px;
-    font-size: 9.5px;
+  .storefront-grid-6 .cuisine-red-cta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 22px;
+    padding: 3px 2px;
+    font-size: clamp(5.1px, 1.38vw, 7px);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
     border-radius: 999px;
     white-space: nowrap;
+    width: 100%;
     max-width: 100%;
   }
 
@@ -11911,8 +11974,8 @@ body:has(.home-page) .chef-chat-root {
 
   /* Signature Footer */
   .home-page > .site-footer {
-    min-height: 116px;
-    padding: 46px 12px 58px;
+    min-height: 128px;
+    padding: 46px 12px 68px;
     background: linear-gradient(180deg, transparent 42px, #040b15 42px);
   }
   .home-page > .site-footer:before {
@@ -11939,17 +12002,12 @@ body:has(.home-page) .chef-chat-root {
     justify-content: space-between;
     gap: 10px;
     padding-left: 0;
+    padding-right: 0;
     padding-bottom: 0;
   }
-  .footer-brand-emblem svg {
-    width: 32px;
-    height: 24px;
-  }
-  .footer-brand-emblem .home-hero-brand-copy strong {
-    font-size: 16.5px;
-  }
-  .footer-brand-emblem .home-hero-brand-copy small {
-    font-size: 6.5px;
+  .footer-brand-logo {
+    width: auto;
+    height: 44px;
   }
   .footer-brand-divider {
     display: none;
@@ -12013,11 +12071,40 @@ body:has(.home-page) .chef-chat-root {
   .page-wrap,
   .memorial-wrap {
     width: calc(100% - 20px);
-    padding: 18px 0 68px;
+    padding: 18px 0 32px;
+  }
+  .chef-page,
+  .wine-profile-page {
+    padding-bottom: 84px;
   }
   .footer-meta-bar {
     width: calc(100% - 20px);
-    padding-bottom: 64px;
+    padding: 6px 0 80px;
+  }
+  .cockpit-outside-meta .footer-meta-bar,
+  .cert-outside-meta .footer-meta-bar,
+  .progress-outside-meta .footer-meta-bar,
+  .cuisines-outside-meta .footer-meta-bar {
+    padding-bottom: 80px;
+  }
+  .cockpit-azulejo-strip {
+    height: 32px;
+    background-size: auto 32px;
+  }
+  .cockpit-edge-produce {
+    width: 64px;
+    left: -8px;
+    bottom: -4px;
+  }
+  .cuisines-bottom-azulejo {
+    height: 32px;
+    background-size: auto 32px;
+  }
+  .progress-wood-scene {
+    height: 118px;
+  }
+  .cockpit-review-wood-sill {
+    height: 36px;
   }
   .sauce-compare-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -12166,8 +12253,8 @@ body:has(.home-page) .chef-chat-root {
     gap: 8px;
   }
   .brand img {
-    width: 92px;
-    height: 56px;
+    width: auto;
+    height: 40px;
   }
   .account-chip {
     padding-left: 10px;

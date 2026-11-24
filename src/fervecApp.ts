@@ -747,7 +747,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   function wineHeader(): string {
     return `<header class="topbar wine-topbar">
       <a class="brand" href="#/" data-action="home" aria-label="FerveC Gastronomia, início">
-        <img src="/assets/aistudio/WhatsApp_Image_2026-11-14_at_04.00.46_a8cb794e.jpeg" alt="FerveC Gastronomia">
+        <img src="/assets/fervec-logo-black.png" alt="FerveC Gastronomia" draggable="false">
       </a>
       <button type="button" class="wine-top-back-pill" data-action="back-to-cuisines">← Voltar para a Cozinha</button>
       <div class="wine-header-actions">
@@ -800,7 +800,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       : 'Perfil local';
     return `<header class="topbar">
       <a class="brand" href="#/" data-action="home" aria-label="FerveC Gastronomia, início">
-        <img src="/assets/aistudio/WhatsApp_Image_2026-11-14_at_04.00.46_a8cb794e.jpeg" alt="FerveC Gastronomia">
+        <img src="/assets/fervec-logo-black.png" alt="FerveC Gastronomia" draggable="false">
       </a>
       <nav class="site-nav" aria-label="Menu principal">
         <button type="button" class="nav-link" data-action="open-library" aria-label="Biblioteca Interativa" title="Biblioteca Interativa">
@@ -1051,15 +1051,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       <section class="home-hero home-hero-ref">
         <header class="home-hero-topbar">
           <a class="home-hero-brand" href="#/" data-action="home" aria-label="FerveC Gastronomia, início">
-            <svg viewBox="0 0 64 48" aria-hidden="true">
-              <path d="M18.5 31h27v9.5a2 2 0 0 1-2 2h-23a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linejoin="round"/>
-              <path d="M18.5 31c-6.2 0-10.5-4.9-9.5-11 .8-5 5.4-8.2 10.3-7.5A13.4 13.4 0 0 1 32 4.5a13.4 13.4 0 0 1 12.7 8c4.9-.7 9.5 2.5 10.3 7.5 1 6.1-3.3 11-9.5 11" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
-              <path d="M25.5 32.5v6.5M32 32.5v6.5M38.5 32.5v6.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
-            </svg>
-            <span class="home-hero-brand-copy">
-              <strong>FerveC</strong>
-              <small>GASTRONOMIA</small>
-            </span>
+            <img class="fervec-logo-on-dark home-hero-brand-logo" src="/assets/fervec-logo-white.png" alt="FerveC Gastronomia" draggable="false">
           </a>
           <div class="home-hero-top-actions">
             <button type="button" class="home-hero-account-pill" data-action="toggle-account-menu" aria-expanded="${accountMenuOpen}" aria-haspopup="menu">
@@ -1216,15 +1208,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         <div class="footer-stack">
           <div class="footer-content">
             <a class="home-hero-brand footer-brand-emblem" href="#/" data-action="home" aria-label="FerveC Gastronomia, início">
-              <svg viewBox="0 0 64 48" aria-hidden="true">
-                <path d="M18.5 31h27v9.5a2 2 0 0 1-2 2h-23a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linejoin="round"/>
-                <path d="M18.5 31c-6.2 0-10.5-4.9-9.5-11 .8-5 5.4-8.2 10.3-7.5A13.4 13.4 0 0 1 32 4.5a13.4 13.4 0 0 1 12.7 8c4.9-.7 9.5 2.5 10.3 7.5 1 6.1-3.3 11-9.5 11" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M25.5 32.5v6.5M32 32.5v6.5M38.5 32.5v6.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
-              </svg>
-              <span class="home-hero-brand-copy">
-                <strong>FerveC</strong>
-                <small>GASTRONOMIA</small>
-              </span>
+              <img class="fervec-logo-on-dark footer-brand-logo" src="/assets/fervec-logo-white.png" alt="FerveC Gastronomia" draggable="false">
             </a>
             <span class="footer-brand-divider" aria-hidden="true"></span>
             <p class="footer-message">Mais que um curso,<br><em>uma experiência culinária completa!</em></p>
@@ -1278,7 +1262,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             <div class="cockpit-banner-thumb cert-banner-thumb">
               <img src="${MEDIA.fervecKitchen}" alt="Cozinha profissional da FerveC Gastronomia">
               <span class="cockpit-banner-logo-plaque">
-                <img src="/assets/aistudio/WhatsApp_Image_2026-11-14_at_04.00.46_a8cb794e.jpeg" alt="FerveC Gastronomia">
+                <img src="/assets/fervec-logo-black.png" alt="FerveC Gastronomia" draggable="false">
               </span>
             </div>
             <div>
@@ -1617,7 +1601,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
               <div class="cockpit-banner-thumb">
                 <img src="${MEDIA.fervecKitchen}" alt="Cozinha FerveC Gastronomia">
                 <span class="cockpit-banner-logo-plaque">
-                  <img src="/assets/aistudio/WhatsApp_Image_2026-11-14_at_04.00.46_a8cb794e.jpeg" alt="FerveC Gastronomia">
+                  <img src="/assets/fervec-logo-black.png" alt="FerveC Gastronomia" draggable="false">
                 </span>
               </div>
               <div class="cockpit-banner-copy">
@@ -1738,8 +1722,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
                 </div>
                 <span class="dock-sep" aria-hidden="true"></span>
                 <span class="cockpit-step-badge">${esc(currentStep.tag)}</span>
-              </div>
-              <div class="cockpit-inside-meta">${footerNote()}</div>`
+              </div>`
         }
       </div>
       <div class="cockpit-azulejo-footer" aria-hidden="true">
@@ -1749,19 +1732,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         </div>
       </div>
     </main>
-    ${
-      activeTab === 'lesson'
-        ? `<div class="cockpit-outside-meta">${footerNote()}</div>`
-        : ''
-    }
-    ${
-      activeTab === 'review'
-        ? `<div class="cockpit-review-wood-sill" aria-hidden="true">
-            <img class="review-sill-produce-left" src="/assets/foliage/footer-produce.png" alt="" draggable="false">
-            <img class="review-sill-produce-right" src="/assets/foliage/footer-produce.png" alt="" draggable="false">
-          </div>`
-        : ''
-    }
+    <div class="cockpit-outside-meta">${footerNote()}</div>
     </div>`;
   }
 
@@ -3037,8 +3008,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         <div class="cuisines-hero-shade"></div>
         <div class="cuisines-hero-inner">
           <div class="cuisines-hero-brand">
-            <img src="/assets/chef-mark.svg" alt="" aria-hidden="true">
-            <span>FerveC | GASTRONOMIA</span>
+            <img class="fervec-logo-on-dark cuisines-hero-brand-logo" src="/assets/fervec-logo-white.png" alt="FerveC Gastronomia" draggable="false">
           </div>
           <h1>Cursos em<br><em>Destaque<svg class="hero-destaque-swoosh" viewBox="0 0 245 14" aria-hidden="true"><path d="M4 11 C78 2, 168 1, 241 8" fill="none" stroke="#efc84f" stroke-width="3.4" stroke-linecap="round"/></svg></em></h1>
           <p>Aprenda com quem entende de gastronomia e leve suas habilidades para o próximo nível.</p>
@@ -3058,8 +3028,8 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             return `<article class="cuisine-offer-card ${c.available ? 'is-available' : 'is-upcoming'}">
               <div class="cuisine-offer-copy">
                 <div class="cuisine-offer-brand">
-                  <svg viewBox="0 0 28 24" aria-hidden="true"><path d="M6.5 14.5h15v4.2a1 1 0 0 1-1 1h-13a1 1 0 0 1-1-1v-4.2Z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6.5 14.5a4.2 4.2 0 0 1-1.4-8 5 5 0 0 1 9.8-1.6 4.6 4.6 0 0 1 6.4 4.2 4 4 0 0 1-2.4 5.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M10.5 15.2v2.4M14 15.2v2.4M17.5 15.2v2.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-                  <span>FerveC <small>GASTRONOMIA</small> <b>|</b> ${esc(c.cuisineLabel)}</span>
+                  <img class="fervec-logo-on-light cuisine-offer-brand-logo" src="/assets/fervec-logo-black.png" alt="FerveC Gastronomia" draggable="false">
+                  <span><b>|</b> ${esc(c.cuisineLabel)}</span>
                 </div>
                 <h2>${esc(c.title)}</h2>
                 <p>${esc(c.desc)}</p>
@@ -3804,15 +3774,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         <img class="wine-footer-vine" src="/assets/wine-foliage/vine-4.png" alt="" aria-hidden="true">
         <div class="wine-footer-left">
           <a class="home-hero-brand wine-footer-emblem" href="#/" data-action="home" aria-label="FerveC Gastronomia, início">
-            <svg viewBox="0 0 64 50" aria-hidden="true">
-              <path d="M18 33h28v9H18z" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round"/>
-              <path d="M18 33c-6.5 0-11-5.2-10-11.5.9-5.3 5.7-8.7 10.9-7.9A13.8 13.8 0 0 1 32 5a13.8 13.8 0 0 1 13.1 8.6c5.2-.8 10 2.6 10.9 7.9 1 6.3-3.5 11.5-10 11.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
-              <path d="M25 33v6M32 33v6M39 33v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-            <span class="home-hero-brand-copy">
-              <strong>FerveC</strong>
-              <small>GASTRONOMIA</small>
-            </span>
+            <img class="fervec-logo-on-dark wine-footer-logo" src="/assets/fervec-logo-white.png" alt="FerveC Gastronomia" draggable="false">
           </a>
           <span class="wine-footer-seal" aria-hidden="true"><span>FerveC</span></span>
         </div>
@@ -3953,7 +3915,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
               <p>O percurso reúne <strong>6 módulos didáticos</strong> (${totalSteps} etapas ao todo), combinando orientações passo a passo, cuidados de segurança na cozinha, trabalhos formativos, revisão e avaliação por módulo.</p>
             </div>
             <aside class="memorial-brand-box">
-              <img src="/assets/aistudio/WhatsApp_Image_2026-11-14_at_04.00.46_a8cb794e.jpeg" alt="FerveC Gastronomia">
+              <img src="/assets/fervec-logo-black.png" alt="FerveC Gastronomia" draggable="false">
               <em>Conhecimento que transforma sua cozinha.</em>
               <small>Modalidade digital · prévia demonstrativa</small>
             </aside>

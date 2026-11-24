@@ -599,16 +599,7 @@ function iconButton(label, act, icon, cls = '') {
 function fervecBrandLogoSvg() {
   return (
     '<div class="fervec-brand-lockup" aria-label="FerveC Gastronomia">' +
-    '<svg class="fervec-logo-emblem" viewBox="0 0 64 46" width="44" height="32" aria-hidden="true">' +
-    '<path d="M18 28c-4.4 0-8-3.4-8-7.6 0-3.7 2.8-6.8 6.4-7.4C18 8.3 24.4 5 32 5s14 3.3 15.6 8c3.6.6 6.4 3.7 6.4 7.4 0 4.2-3.6 7.6-8 7.6H18Z" fill="#fffaf0" stroke="#791d1b" stroke-width="2.1"/>' +
-    '<path d="M21 28v7c0 1.4 1.1 2.5 2.5 2.5h17c1.4 0 2.5-1.1 2.5-2.5v-7" fill="#f7ead0" stroke="#791d1b" stroke-width="2.1"/>' +
-    '<path d="M25 14c1.8-2.2 4.3-3.2 7-3.2M32 13v7M39 14c-1.8-2.2-4.3-3.2-7-3.2" stroke="#b89858" stroke-width="1.8" stroke-linecap="round"/>' +
-    '<path d="M13 41h38" stroke="#49633c" stroke-width="2.4" stroke-linecap="round"/>' +
-    '</svg>' +
-    '<div class="fervec-logo-words">' +
-    '<span class="fervec-logo-main">FerveC</span>' +
-    '<span class="fervec-logo-sub">GASTRONOMIA</span>' +
-    '</div>' +
+    '<img class="fervec-logo-img" src="/assets/fervec-logo-black.png" alt="FerveC Gastronomia" draggable="false">' +
     '</div>'
   );
 }
@@ -616,12 +607,7 @@ function fervecBrandLogoSvg() {
 function fervecInlineLogoMarkup() {
   return (
     '<div class="fervec-inline-logo" aria-label="FerveC Gastronomia">' +
-    '<svg class="fervec-inline-emblem" viewBox="0 0 40 30" width="24" height="18" aria-hidden="true">' +
-    '<path d="M10 19c-2.8 0-5-2.1-5-4.7 0-2.3 1.7-4.2 4-4.6C10.1 6.7 14.6 4.5 20 4.5s9.9 2.2 11 5.2c2.3.4 4 2.3 4 4.6 0 2.6-2.2 4.7-5 4.7H10Z" fill="#fffaf0" stroke="#791d1b" stroke-width="2"/>' +
-    '<path d="M12.5 19v4.5c0 .9.7 1.6 1.6 1.6h11.8c.9 0 1.6-.7 1.6-1.6V19" fill="#f7ead0" stroke="#791d1b" stroke-width="2"/>' +
-    '<path d="M8 27.5h24" stroke="#49633c" stroke-width="2.1" stroke-linecap="round"/>' +
-    '</svg>' +
-    '<span class="fervec-inline-text"><strong>FerveC</strong><small>GASTRONOMIA</small></span>' +
+    '<img class="fervec-inline-img" src="/assets/fervec-logo-black.png" alt="FerveC Gastronomia" draggable="false">' +
     '</div>'
   );
 }
@@ -922,7 +908,7 @@ function drawerMarkup() {
     (state.menuOpen ? 'false' : 'true') +
     '">' +
     '<div class="drawer-head">' +
-    '<div class="top-brand"><span class="brand-mark">F</span><span>FerveC <small>' +
+    '<div class="top-brand"><img class="top-brand-logo" src="/assets/fervec-logo-black.png" alt="FerveC Gastronomia" draggable="false"><span><small>' +
     (demo ? 'Modo Demonstração' : escapeHtml(state.currentUser?.name || 'Gastronomia')) +
     '</small></span></div>' +
     '<button type="button" class="drawer-close" data-action="close-menu" aria-label="Fechar menu">×</button>' +
