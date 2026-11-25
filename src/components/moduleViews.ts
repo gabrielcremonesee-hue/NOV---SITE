@@ -21,6 +21,108 @@ export function shouldUseWineHeader(route: string): boolean {
   return route === 'wine' || route === 'category-vinicola';
 }
 
+export interface ModuleStageNotificationBannerOptions {
+  iconType?: 'lesson' | 'work' | 'review';
+  title: string;
+  description: string;
+  isDone: boolean;
+  isReady?: boolean;
+  doneLabel?: string;
+  progressLabel?: string;
+}
+
+export function renderModuleStageNotificationBanner(
+  opts: ModuleStageNotificationBannerOptions
+): string {
+  const {
+    iconType = 'review',
+    title,
+    description,
+    isDone,
+    isReady = false,
+    doneLabel = 'Concluído',
+    progressLabel = 'Em andamento',
+  } = opts;
+
+  const iconSvg =
+    iconType === 'lesson'
+      ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 14.5h11v4a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-4Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M6.5 14.5a3.8 3.8 0 0 1-1.3-7.3 4.5 4.5 0 0 1 8.8-1.4 4.2 4.2 0 0 1 5.6 3.9 3.6 3.6 0 0 1-2.1 4.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`
+      : iconType === 'work'
+        ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 4h11a1 1 0 0 1 1 1v15.5l-6.5-4.2-6.5 4.2V5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>`
+        : `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H12v17H6.5A2.5 2.5 0 0 0 4 22zM20 5.5A2.5 2.5 0 0 0 17.5 3H12v17h5.5A2.5 2.5 0 0 1 20 22z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>`;
+
+  const toneClass = isDone ? 'is-done' : isReady ? 'is-ready' : 'is-progress';
+  const statusText = isDone ? doneLabel : progressLabel;
+
+  return `<div class="review-banner-card stage-std-banner" data-stage-status="${isDone ? 'completed' : 'in_progress'}">
+    <span class="review-ribbon-bookmark" aria-hidden="true">${iconSvg}</span>
+    <div class="review-banner-copy">
+      <h2>${escHtml(title)}</h2>
+      <p>${escHtml(description)}</p>
+    </div>
+    <span class="review-status-pill ${toneClass}">
+      <i aria-hidden="true">${isDone ? '✓' : '•'}</i>
+      <span>${escHtml(statusText)}</span>
+    </span>
+  </div>`;
+}
+
+export interface StandardCompletionActionOptions {
+  isDone: boolean;
+  buttonLabel: string;
+  actionName: string;
+  doneText: string;
+  disabled?: boolean;
+  disabledHint?: string;
+  extraAttrs?: string;
+  nextCtaLabel?: string;
+  nextCtaAction?: string;
+  nextCtaAttrs?: string;
+}
+
+export function renderStandardCompletionAction(opts: StandardCompletionActionOptions): string {
+  const {
+    isDone,
+    buttonLabel,
+    actionName,
+    doneText,
+    disabled = false,
+    disabledHint,
+    extraAttrs = '',
+    nextCtaLabel,
+    nextCtaAction,
+    nextCtaAttrs = '',
+  } = opts;
+
+  if (isDone) {
+    return `<div class="review-bottom-actions stage-std-bottom-actions">
+      <div class="review-done-confirm-pill" role="status">
+        <span>✓</span>
+        <span>${escHtml(doneText)}</span>
+      </div>
+      ${
+        nextCtaLabel && nextCtaAction
+          ? `<button type="button" class="btn btn-red review-gold-done-btn" data-action="${escHtml(nextCtaAction)}" ${nextCtaAttrs}>${escHtml(nextCtaLabel)}</button>`
+          : ''
+      }
+    </div>`;
+  }
+
+  return `<div class="review-bottom-actions stage-std-bottom-actions">
+    <button
+      type="button"
+      class="review-gold-pill-btn ${disabled ? 'is-disabled' : ''}"
+      data-action="${escHtml(actionName)}"
+      ${extraAttrs}
+      ${disabled ? 'disabled aria-disabled="true"' : ''}
+    >
+      <span class="review-pill-check" aria-hidden="true">✓</span>
+      <span>${escHtml(buttonLabel)}</span>
+    </button>
+    ${disabled && disabledHint ? `<span class="stage-completion-hint">${escHtml(disabledHint)}</span>` : ''}
+  </div>`;
+}
+
 export function renderOlhoDoChefCard(quote: string, speaker = 'Chef Cremonese.'): string {
   return `<section class="cockpit-chef-eye-box" aria-label="Olho do Chef">
     <div class="cockpit-chef-eye-rivets" aria-hidden="true">
@@ -101,30 +203,21 @@ export function renderUnifiedReviewSection(opts: UnifiedReviewRenderOptions): st
     blockedExamText,
   } = opts;
 
-  const ribbonIcon =
-    moduleId === 'carbonara' || moduleId === 'alfredo'
-      ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 14.5h11v4a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-4Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M6.5 14.5a3.8 3.8 0 0 1-1.3-7.3 4.5 4.5 0 0 1 8.8-1.4 4.2 4.2 0 0 1 5.6 3.9 3.6 3.6 0 0 1-2.1 4.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`
-      : moduleId === 'ragù'
-        ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 4h11a1 1 0 0 1 1 1v15.5l-6.5-4.2-6.5 4.2V5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>`
-        : `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H12v17H6.5A2.5 2.5 0 0 0 4 22zM20 5.5A2.5 2.5 0 0 0 17.5 3H12v17h5.5A2.5 2.5 0 0 1 20 22z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>`;
-
   const headingTitle =
     moduleId === 'carbonara'
       ? 'Revisão do módulo • Uma olhadinha antes da prova.'
       : `Revisão do módulo • ${moduleTitle}`;
 
   return `<section class="review-page review-unified-page" data-testid="module-review-section">
-    <div class="review-banner-card">
-      <span class="review-ribbon-bookmark" aria-hidden="true">${ribbonIcon}</span>
-      <div class="review-banner-copy">
-        <h2>${escHtml(headingTitle)}</h2>
-        <p>${escHtml(chefTip)}</p>
-      </div>
-      <span class="review-status-pill ${reviewDone ? 'is-done' : isCompleteSteps ? 'is-ready' : 'is-progress'}">
-        <i aria-hidden="true">✓</i>
-        <span>${reviewDone ? 'Revisão concluída' : isCompleteSteps ? 'Etapas concluídas' : 'Em andamento'}</span>
-      </span>
-    </div>
+    ${renderModuleStageNotificationBanner({
+      iconType: 'review',
+      title: headingTitle,
+      description: chefTip,
+      isDone: reviewDone,
+      isReady: isCompleteSteps,
+      doneLabel: 'Concluído',
+      progressLabel: isCompleteSteps ? 'Etapas concluídas · Em andamento' : 'Em andamento',
+    })}
 
     ${
       heroPhoto
@@ -180,18 +273,17 @@ export function renderUnifiedReviewSection(opts: UnifiedReviewRenderOptions): st
       </div>
     </div>
 
-    <div class="review-bottom-actions">
-      ${
-        reviewDone
-          ? canStartExam && examCtaAction
-            ? `<button type="button" class="btn btn-red review-gold-done-btn" data-action="${escHtml(examCtaAction)}">Ir para a prova →</button>`
-            : `<div class="review-done-confirm-pill"><span>✓</span> Revisão concluída! ${escHtml(blockedExamText || 'Conclua todas as etapas da aula para liberar a prova.')}</div>`
-          : `<button type="button" class="review-gold-pill-btn" data-action="${escHtml(completeAction)}">
-              <span class="review-pill-check" aria-hidden="true">✓</span>
-              <span>Marcar revisão concluída</span>
-            </button>`
-      }
-    </div>
+    ${renderStandardCompletionAction({
+      isDone: reviewDone,
+      buttonLabel: 'Marcar revisão como concluída',
+      actionName: completeAction,
+      doneText: canStartExam
+        ? 'Revisão concluída! Avaliação final liberada.'
+        : `Revisão concluída! ${blockedExamText || 'Conclua todas as etapas da aula para liberar a prova.'}`,
+      nextCtaLabel: canStartExam && examCtaAction ? 'Ir para a prova →' : undefined,
+      nextCtaAction: canStartExam && examCtaAction ? examCtaAction : undefined,
+      nextCtaAttrs: moduleId !== 'carbonara' ? 'data-tab="exam"' : '',
+    })}
   </section>`;
 }
 
@@ -209,6 +301,12 @@ export interface UnifiedTrabalhoRenderOptions {
   nextAction: string;
   backAction?: string;
   showNavButtons?: boolean;
+  bannerTitle?: string;
+  bannerSubtitle?: string;
+  workCompleted?: boolean;
+  answeredCount?: number;
+  completeAction?: string;
+  canCompleteWork?: boolean;
 }
 
 export function renderUnifiedTrabalhoSection(opts: UnifiedTrabalhoRenderOptions): string {
@@ -226,13 +324,30 @@ export function renderUnifiedTrabalhoSection(opts: UnifiedTrabalhoRenderOptions)
     nextAction,
     backAction,
     showNavButtons = false,
+    bannerTitle = 'Trabalho prático • Perguntas de aprendizagem',
+    bannerSubtitle = 'Responda todas as perguntas obrigatórias para concluir esta etapa e consolidar a técnica.',
+    workCompleted = false,
+    answeredCount,
+    completeAction,
+    canCompleteWork = false,
   } = opts;
 
   const pct = totalQuestions > 0 ? Math.round((currentIndex / totalQuestions) * 100) : 0;
   const hasAnswer = selectedAnswer !== null && selectedAnswer !== undefined;
   const modeAttr = answerModeAttr ? `data-mode="${escHtml(answerModeAttr)}"` : '';
+  const answeredTotal = typeof answeredCount === 'number' ? answeredCount : hasAnswer ? currentIndex + 1 : currentIndex;
 
   return `<section class="quiz-wrap trabalho-unified-wrap" data-testid="module-work-section">
+    ${renderModuleStageNotificationBanner({
+      iconType: 'work',
+      title: bannerTitle,
+      description: bannerSubtitle,
+      isDone: workCompleted,
+      isReady: canCompleteWork,
+      doneLabel: 'Concluído',
+      progressLabel: 'Em andamento',
+    })}
+
     <div class="quiz-heading trabalho-heading">
       <span class="eyebrow">TRABALHO · APRENDA BRINCANDO</span>
       <h2>Vamos ver o que ficou?</h2>
@@ -241,7 +356,7 @@ export function renderUnifiedTrabalhoSection(opts: UnifiedTrabalhoRenderOptions)
 
     <div class="quiz-progress trabalho-progress">
       <div class="progress-track"><span style="width:${pct}%"></span></div>
-      <span>Pergunta ${currentIndex + 1} de ${totalQuestions}</span>
+      <span>Pergunta ${currentIndex + 1} de ${totalQuestions} (${answeredTotal}/${totalQuestions} respondidas)</span>
     </div>
 
     <article class="quiz-card trabalho-quiz-card">
@@ -301,5 +416,18 @@ export function renderUnifiedTrabalhoSection(opts: UnifiedTrabalhoRenderOptions)
             : ''
       }
     </article>
+
+    ${
+      completeAction
+        ? renderStandardCompletionAction({
+            isDone: workCompleted,
+            buttonLabel: 'Marcar trabalho como concluído',
+            actionName: completeAction,
+            doneText: 'Trabalho concluído com sucesso! Seu progresso foi atualizado.',
+            disabled: !canCompleteWork,
+            disabledHint: `Responda todas as ${totalQuestions} perguntas obrigatórias (${answeredTotal}/${totalQuestions}) para habilitar a conclusão do trabalho.`,
+          })
+        : ''
+    }
   </section>`;
 }

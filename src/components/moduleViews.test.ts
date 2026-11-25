@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   computeStepProgressPct,
+  renderModuleStageNotificationBanner,
   renderOlhoDoChefCard,
+  renderStandardCompletionAction,
   renderUnifiedReviewSection,
   renderUnifiedTrabalhoSection,
   shouldUseWineHeader,
@@ -63,10 +65,11 @@ test('renderUnifiedReviewSection produces uniform numbered cards & errors across
   assert.ok(html.includes('01'));
   assert.ok(html.includes('Erros comuns e correções'));
   assert.ok(html.includes('Molho oleoso: ajustar com água.'));
+  assert.ok(html.includes('Marcar revisão como concluída'));
   assert.ok(html.includes('data-action="recipe-review-complete"'));
 });
 
-test('renderUnifiedTrabalhoSection renders PERGUNTA card and options across modules', () => {
+test('renderUnifiedTrabalhoSection renders PERGUNTA card and disabled work completion when incomplete', () => {
   const html = renderUnifiedTrabalhoSection({
     currentIndex: 1,
     totalQuestions: 6,
@@ -81,6 +84,9 @@ test('renderUnifiedTrabalhoSection renders PERGUNTA card and options across modu
     nextAction: 'recipe-question-next',
     backAction: 'recipe-question-back',
     showNavButtons: true,
+    answeredCount: 2,
+    completeAction: 'recipe-work-mark-complete',
+    canCompleteWork: false,
   });
 
   assert.ok(html.includes('TRABALHO · APRENDA BRINCANDO'));
@@ -89,4 +95,25 @@ test('renderUnifiedTrabalhoSection renders PERGUNTA card and options across modu
   assert.ok(html.includes('PERGUNTA 2'));
   assert.ok(html.includes('Al dente'));
   assert.ok(html.includes('Isso mesmo!'));
+  assert.ok(html.includes('Marcar trabalho como concluído'));
+  assert.ok(html.includes('disabled aria-disabled="true"'));
+});
+
+test('renderModuleStageNotificationBanner and renderStandardCompletionAction reflect Concluído state', () => {
+  const banner = renderModuleStageNotificationBanner({
+    iconType: 'lesson',
+    title: 'Aula · Carbonara',
+    description: 'Etapas concluídas.',
+    isDone: true,
+  });
+  const action = renderStandardCompletionAction({
+    isDone: true,
+    buttonLabel: 'Marcar aula como concluída',
+    actionName: 'lesson-mark-complete',
+    doneText: 'Aula concluída com sucesso!',
+  });
+
+  assert.ok(banner.includes('Concluído'));
+  assert.ok(banner.includes('is-done'));
+  assert.ok(action.includes('Aula concluída com sucesso!'));
 });

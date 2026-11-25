@@ -90,6 +90,44 @@ const PASTA_TOMATO_ART_URL = 'uploads/WhatsApp_Image_2026-11-19_at_06.24.25__1_.
 const BOOKSHELF_IMG_URL = '/assets/aistudio/image_ca300c8c.png';
 const LIBRARY_MODULES_ART_URL = '/assets/aistudio/WhatsApp_Image_2026-11-14_at_00.43.15_14d8a7c9.jpeg';
 
+const PROVISIONAL_ACCOUNTS_KEY = 'fervec-accounts-v1';
+
+function findProvisionalAccountByEmail(email = '') {
+  const clean = String(email || '').trim().toLowerCase();
+  if (!clean) return null;
+  try {
+    const raw = JSON.parse(localStorage.getItem(PROVISIONAL_ACCOUNTS_KEY) || '[]');
+    if (!Array.isArray(raw)) return null;
+    return raw.find((a) => String(a?.email || '').trim().toLowerCase() === clean) || null;
+  } catch {
+    return null;
+  }
+}
+
+async function digestPasswordProvisionalLocal(email = '', password = '') {
+  const normalized = `fervec-p1:${String(email || '').trim().toLowerCase()}:${String(password || '')}`;
+  if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.subtle) {
+    const encoded = new TextEncoder().encode(normalized);
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', encoded);
+    return Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+  let hash = 2166136261;
+  for (let i = 0; i < normalized.length; i += 1) {
+    hash ^= normalized.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fnv-${(hash >>> 0).toString(16)}`;
+}
+
+function hasLibraryEntitlement(account) {
+  if (!account || typeof account !== 'object') return false;
+  const cleanEmail = String(account.email || '').trim().toLowerCase();
+  if (account.role === 'admin' || cleanEmail === 'fervecrgastronomia@gmail.com') return true;
+  return Array.isArray(account.entitledCourses) && account.entitledCourses.length > 0;
+}
+
 const _autostartParam = new URLSearchParams(location.search).get('autostart');
 const _portalEmbedded = Boolean(window.__fervecPortalEmbedded);
 const _portalInitAction = window.__fervecLibraryInitialAction || 'default';
@@ -106,7 +144,8 @@ const state = {
   view: _initialView,
   authMode: _initialAuthMode,
   currentUser: _bootAuthUser,
-  loginTab: _portalInitAction === 'auth-register' ? 'register' : 'login',
+  loginTab: 'login',
+  loginGateCta: '',
   demoLockNotice: '',
   page: 1,
   total: 74,
@@ -443,13 +482,14 @@ function redirectToRegister(featureMsg = '') {
   state.speechInterim = '';
   state.chefWelcomeActive = false;
   state.view = 'login';
-  state.loginTab = 'register';
+  state.loginTab = 'login';
+  state.loginGateCta = 'register';
   state.menuOpen = false;
   state.demoLockNotice =
     featureMsg ||
-    'Modo Demonstração permite apenas visualizar as telas. Crie sua conta gratuita para usar e salvar todos os recursos.';
+    'O modo demonstração permite apenas visualizar as telas. Faça seu cadastro no site FerveC e entre com o e-mail que possui o curso adquirido.';
   render();
-  toast('Modo Demonstração: faça seu cadastro para desbloquear.', true);
+  toast('Entre com sua conta após adquirir o curso no site FerveC.', true);
 }
 
 function loadData(isDemo = false, email = '') {
@@ -521,7 +561,7 @@ function mergeServerUserData(serverData) {
 function syncDataToServer(immediate = false) {
   if (isDemoMode()) return;
   const token = getSessionToken();
-  if (!token) return;
+  if (!token || String(state.currentUser?.id || '').startsWith('perfil-') || state.currentUser?.isProvisional) return;
   clearTimeout(_dbSyncTimer);
   const run = async () => {
     try {
@@ -542,7 +582,7 @@ function syncDataToServer(immediate = false) {
 async function hydrateServerSession() {
   if (isDemoMode()) return;
   const token = getSessionToken();
-  if (!token) return;
+  if (!token || String(state.currentUser?.id || '').startsWith('perfil-') || state.currentUser?.isProvisional) return;
   try {
     const res = await fetch('/api/auth/session', {
       headers: { Authorization: 'Bearer ' + token },
@@ -896,7 +936,7 @@ function globalTimerMarkup() {
 function drawerMarkup() {
   const demo = isDemoMode();
   const footBtn = demo
-    ? '<button type="button" class="btn btn-primary btn-small" data-action="go-register" style="width:100%;margin-bottom:6px">Criar conta gratuita</button><button type="button" class="btn btn-soft btn-small" data-action="logout" style="width:100%">Voltar ao login</button>'
+    ? '<button type="button" class="btn btn-primary btn-small" data-action="go-site-register" style="width:100%;margin-bottom:6px">Cadastre-se no site FerveC</button><button type="button" class="btn btn-soft btn-small" data-action="logout" style="width:100%">Entrar com login</button>'
     : '<button type="button" class="btn btn-soft btn-small" data-action="logout" style="width:100%">Sair da conta</button>';
   return (
     '<div class="drawer-backdrop ' +
@@ -1072,7 +1112,7 @@ function appShell() {
   document.body.classList.toggle('book-fullscreen-active', isFs);
   const demoBanner =
     demo && !isHome && !isMasterSub && !isFs
-      ? '<aside class="demo-lock-banner" role="note"><span>🔒 <strong>Modo Demonstração (Visualização)</strong> — cadastre-se para usar esta função.</span><button type="button" class="btn btn-primary btn-small" data-action="go-register">Fazer cadastro</button></aside>'
+      ? '<aside class="demo-lock-banner" role="note"><span>🔒 <strong>Modo Demonstração (Visualização)</strong> — entre com uma conta que adquiriu o curso para liberar.</span><button type="button" class="btn btn-primary btn-small" data-action="go-site-register">Cadastre-se no site</button></aside>'
       : '';
   const header =
     isHome || isMasterSub || isFs
@@ -1090,7 +1130,7 @@ function appShell() {
         globalTimerMarkup() +
         '</span>' +
         (demo
-          ? '<button type="button" class="btn btn-primary btn-small" data-action="go-register">Cadastrar</button>'
+          ? '<button type="button" class="btn btn-primary btn-small" data-action="go-login">Entrar</button>'
           : '<button type="button" class="btn btn-soft btn-small" data-action="logout">Sair</button>') +
         '</div></header>';
   return (
@@ -1108,55 +1148,47 @@ function appShell() {
 }
 
 function loginMarkup() {
-  const isReg = state.loginTab === 'register';
   const noticeHtml = state.demoLockNotice
     ? '<div class="login-lock-notice" role="status">' + escapeHtml(state.demoLockNotice) + '</div>'
     : '';
-  const badgeText = isReg ? 'Crie sua conta' : 'Acesse sua conta';
-  const formHtml = isReg
-    ? '<form id="register-form"><div class="login-pill-field"><span class="pill-field-ico" aria-hidden="true">' +
-      appIcon('user') +
-      '</span><input id="reg-name" type="text" autocomplete="name" placeholder="Nome completo" aria-label="Nome completo" required></div><div class="login-pill-field"><span class="pill-field-ico" aria-hidden="true">' +
-      appIcon('mail') +
-      '</span><input id="reg-email" type="email" autocomplete="email" placeholder="E-mail" aria-label="E-mail" required></div><div class="login-pill-field"><span class="pill-field-ico" aria-hidden="true">' +
-      appIcon('lock') +
-      '</span><input id="reg-password" type="password" autocomplete="new-password" placeholder="Senha (mín. 6 dígitos)" aria-label="Senha" required></div><div class="login-pill-field"><span class="pill-field-ico" aria-hidden="true">' +
-      appIcon('lock') +
-      '</span><input id="reg-confirm" type="password" autocomplete="new-password" placeholder="Confirmar senha" aria-label="Confirmar senha" required></div><div class="login-actions"><button class="login-enter-btn" type="submit"><span aria-hidden="true">' +
-      appIcon('loginArrow') +
-      '</span><span>Cadastrar e entrar</span></button><button class="login-demo-btn" type="button" data-action="demo">Acessar demonstração (visualização)</button></div></form>'
-    : '<form id="login-form"><div class="login-pill-field"><span class="pill-field-ico" aria-hidden="true">' +
-      appIcon('mail') +
-      '</span><input id="email" type="email" autocomplete="username" placeholder="E-mail" aria-label="E-mail" required></div><div class="login-pill-field"><span class="pill-field-ico" aria-hidden="true">' +
-      appIcon('lock') +
-      '</span><input id="password" type="password" autocomplete="current-password" placeholder="Senha" aria-label="Senha" required><button type="button" class="pill-eye-btn" data-action="password" aria-label="Mostrar senha" aria-pressed="false">' +
-      appIcon('eyeOff') +
-      '</button></div><div class="login-actions"><button class="login-enter-btn" type="submit"><span aria-hidden="true">' +
-      appIcon('loginArrow') +
-      '</span><span>Entrar</span></button><button class="login-demo-btn" type="button" data-action="demo">Acessar demonstração (visualização)</button></div></form>';
+  const gateCtaHtml =
+    state.loginGateCta === 'payments'
+      ? '<button type="button" class="login-gate-cta" data-action="go-site-payments">Ir para Pagamentos e Adquirir Curso →</button>'
+      : state.loginGateCta === 'register'
+        ? '<button type="button" class="login-gate-cta" data-action="go-site-register">Fazer cadastro no site principal →</button>'
+        : '';
+
+  const formHtml =
+    '<form id="login-form">' +
+    '<div class="login-pill-field"><span class="pill-field-ico" aria-hidden="true">' +
+    appIcon('mail') +
+    '</span><input id="email" type="email" autocomplete="username" placeholder="E-mail" aria-label="E-mail" required></div>' +
+    '<div class="login-pill-field"><span class="pill-field-ico" aria-hidden="true">' +
+    appIcon('lock') +
+    '</span><input id="password" type="password" autocomplete="current-password" placeholder="Senha" aria-label="Senha" required><button type="button" class="pill-eye-btn" data-action="password" aria-label="Mostrar senha" aria-pressed="false">' +
+    appIcon('eyeOff') +
+    '</button></div>' +
+    '<div class="login-actions">' +
+    '<button class="login-enter-btn" type="submit"><span aria-hidden="true">' +
+    appIcon('loginArrow') +
+    '</span><span>Entrar na Biblioteca</span></button>' +
+    gateCtaHtml +
+    '<button class="login-demo-btn" type="button" data-action="demo">Acessar demonstração (visualização)</button>' +
+    '<button class="login-site-link" type="button" data-action="go-site-register">Ainda não tem cadastro? Cadastre-se no site FerveC →</button>' +
+    '</div>' +
+    '</form>';
+
   return (
-    '<div class="login-shell login-portrait"><div class="login-art"><img src="/assets/aistudio/Tela_de_Login_Gastron_mica_Toscana__1__13f08628.png" alt="FerveC Gastronomia — Descubra, aprenda e crie na cozinha."></div><section class="login-box" aria-label="' +
-    badgeText +
-    '"><div class="login-pill-badge"><span class="login-pill-ico" aria-hidden="true">' +
+    '<div class="login-shell login-portrait"><div class="login-art"><img src="/assets/aistudio/Tela_de_Login_Gastron_mica_Toscana__1__13f08628.png" alt="FerveC Gastronomia — Descubra, aprenda e crie na cozinha."></div>' +
+    '<section class="login-box" aria-label="Entrar na Biblioteca FerveC">' +
+    '<div class="login-pill-badge"><span class="login-pill-ico" aria-hidden="true">' +
     appIcon('lockSolid') +
-    '</span><span>' +
-    badgeText +
-    '</span></div><div class="login-mode-tabs" role="tablist" aria-label="Acesso ou cadastro"><button type="button" role="tab" aria-selected="' +
-    (!isReg ? 'true' : 'false') +
-    '" class="login-mode-tab ' +
-    (!isReg ? 'is-active' : '') +
-    '" data-action="switch-login-tab" data-tab="login">Entrar</button><button type="button" role="tab" aria-selected="' +
-    (isReg ? 'true' : 'false') +
-    '" class="login-mode-tab ' +
-    (isReg ? 'is-active' : '') +
-    '" data-action="switch-login-tab" data-tab="register">Criar conta</button></div>' +
+    '</span><span>Biblioteca FerveC · Entrar</span></div>' +
     noticeHtml +
     formHtml +
-    '<p class="login-note">' +
-    (isReg
-      ? 'Ao criar sua conta, todas as ferramentas do livro, receitas, mapas e Chefe ficam liberadas.'
-      : 'A demonstração permite visualizar as telas; crie sua conta para interagir e salvar seu progresso.') +
-    '</p></section><footer class="login-footer-art"><img src="/assets/aistudio/Tela_de_Login_Gastron_mica_Toscana__1__13f08628.png" alt="Sua jornada na gastronomia começa aqui."></footer></div>'
+    '<p class="login-note">O acesso completo à Biblioteca Interativa é exclusivo para alunos cadastrados no site cujo e-mail possua o curso adquirido.</p>' +
+    '</section>' +
+    '<footer class="login-footer-art"><img src="/assets/aistudio/Tela_de_Login_Gastron_mica_Toscana__1__13f08628.png" alt="Sua jornada na gastronomia começa aqui."></footer></div>'
   );
 }
 
@@ -1220,54 +1252,14 @@ function stopActiveTtsAudio() {
   } catch {}
 }
 
-async function speakWithGeminiTts(text, voiceName = state.voiceName || 'Kore', { resumeHandsFree = false } = {}) {
+async function speakWithGeminiTts(text, _voiceName = state.voiceName || 'Kore', { resumeHandsFree = false } = {}) {
   const clean = String(text || '')
     .replace(/[*_`#>]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   if (!clean) return false;
   stopActiveTtsAudio();
-  try {
-    const res = await fetch('/api/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: clean.slice(0, 750), voiceName }),
-    });
-    if (!res.ok) throw new Error('tts-http-' + res.status);
-    const data = await res.json();
-    if (!data?.audioBase64) throw new Error('tts-empty');
-    const binary = atob(data.audioBase64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-    const blob = new Blob([bytes], { type: data.mimeType || 'audio/wav' });
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    activeTtsAudio = audio;
-    activeTtsUrl = url;
-    const finish = () => {
-      if (activeTtsAudio === audio) activeTtsAudio = null;
-      if (activeTtsUrl === url) {
-        try {
-          URL.revokeObjectURL(url);
-        } catch {}
-        activeTtsUrl = '';
-      }
-      if (resumeHandsFree && state.handsFreeMode && state.active === 'assistant') {
-        setTimeout(() => {
-          if (state.handsFreeMode && !state.speechListening && speechCtrl?.isSupported()) {
-            speechCtrl.start({ handsFree: true });
-          }
-        }, 250);
-      }
-    };
-    audio.onended = finish;
-    audio.onerror = finish;
-    await audio.play();
-    return true;
-  } catch {
-    speechCtrl.speakResponse(clean, { resumeHandsFree });
-    return false;
-  }
+  return speechCtrl.speakResponse(clean, { resumeHandsFree });
 }
 
 async function toggleMicFallbackRecording() {
@@ -1431,7 +1423,7 @@ function startHomePromoCarousel() {
     }
     state.promoSlide = (state.promoSlide + 1) % 2;
     applyPromoSlideDom(state.promoSlide);
-  }, 6000);
+  }, 5000);
 }
 
 function setView(id) {
@@ -1765,7 +1757,7 @@ function openAccountModal() {
       '<button type="button" class="btn btn-primary" data-action="go" data-view="library" style="width:100%">📚 Ir para Minha Biblioteca (Trocar livro)</button>' +
       '<button type="button" class="btn btn-outline" data-action="return-portal" style="width:100%">⇄ Voltar ao Portal FerveC</button>' +
       (demo
-        ? '<button type="button" class="btn btn-outline" data-action="go-register" style="width:100%">Criar conta gratuita</button>'
+        ? '<button type="button" class="btn btn-outline" data-action="go-site-register" style="width:100%">Cadastre-se no site FerveC →</button>'
         : '<button type="button" class="btn btn-soft" data-action="logout" style="width:100%">Sair da conta</button>') +
       '</div>'
   );
@@ -1846,11 +1838,44 @@ function homeView() {
     /* Minha Biblioteca / Ver todos */
     '<button type="button" class="interactive-hit library-see-all-hit" data-action="go" data-view="library" aria-label="Ver todos os livros"></button>' +
 
-    /* Bookshelf & Vinícola */
+    /* Bookshelf & Carrossel Vinícola / Massas Italianas */
     '<button type="button" class="interactive-hit shelf-book-1" data-action="go" data-view="book" aria-label="Massas Italianas em Casa"></button>' +
     '<button type="button" class="interactive-hit shelf-book-2" data-action="book-coming-soon" data-title="Cozinha Francesa" aria-label="Cozinha Francesa"></button>' +
     '<button type="button" class="interactive-hit shelf-book-3" data-action="book-coming-soon" data-title="Cozinha Brasileira" aria-label="Cozinha Brasileira"></button>' +
-    '<button type="button" class="interactive-hit vinicola-card-hit" data-action="go" data-view="vinicola" aria-label="Ir para Vinícola"></button>' +
+    '<div id="home-promo-carousel" class="home-promo-carousel" aria-label="Destaques Vinícola e Curso Massas Italianas">' +
+    '<div class="promo-slide ' +
+    (state.promoSlide !== 1 ? 'is-active' : '') +
+    '" data-slide-idx="0">' +
+    '<button type="button" class="promo-slide-hit promo-vinicola-slide" data-action="go" data-view="vinicola" aria-label="Ir para Vinícola">' +
+    '<span class="promo-vinicola-chip">🍷 Vinícola · Abrir</span>' +
+    '</button>' +
+    '</div>' +
+    '<div class="promo-slide ' +
+    (state.promoSlide === 1 ? 'is-active' : '') +
+    '" data-slide-idx="1">' +
+    '<div class="promo-course-card">' +
+    '<img src="/assets/aistudio/WhatsApp_Image_2026-11-14_at_03.20.34_e9928f28.jpeg" alt="Curso Massas Italianas FerveC" class="promo-course-img">' +
+    '<div class="promo-course-overlay">' +
+    '<span class="promo-course-eyebrow">CURSO COMPLETO</span>' +
+    '<strong>Massas Italianas</strong>' +
+    '<small>Do preparo ao prato!</small>' +
+    '<button type="button" class="promo-course-cta" data-action="open-site-course-sales">Saber Mais →</button>' +
+    '</div>' +
+    '</div>' +
+    '</div>' +
+    '<div class="promo-dots" role="tablist" aria-label="Alternar destaque">' +
+    '<button type="button" class="promo-dot ' +
+    (state.promoSlide !== 1 ? 'is-active' : '') +
+    '" data-action="set-promo-slide" data-slide="0" aria-pressed="' +
+    (state.promoSlide !== 1 ? 'true' : 'false') +
+    '" aria-label="Ver Vinícola"></button>' +
+    '<button type="button" class="promo-dot ' +
+    (state.promoSlide === 1 ? 'is-active' : '') +
+    '" data-action="set-promo-slide" data-slide="1" aria-pressed="' +
+    (state.promoSlide === 1 ? 'true' : 'false') +
+    '" aria-label="Ver Curso Massas Italianas"></button>' +
+    '</div>' +
+    '</div>' +
 
     '</div>' +
     '</div>' +
@@ -4711,10 +4736,41 @@ function renderDelegatedAction(action, el) {
       break;
     }
     case 'go-register':
-      redirectToRegister('Crie sua conta gratuita para desbloquear todas as funções do FerveC Gastronomia.');
+      redirectToRegister(
+        'O cadastro de novos alunos agora é realizado no site principal do FerveC. Cadastre-se lá e volte para entrar após adquirir o curso.'
+      );
+      break;
+    case 'go-login':
+      state.view = 'login';
+      state.loginTab = 'login';
+      state.loginGateCta = '';
+      state.demoLockNotice = '';
+      state.menuOpen = false;
+      render();
+      break;
+    case 'go-site-register':
+      closeModal();
+      state.menuOpen = false;
+      document.querySelector('#app-drawer')?.classList.remove('open');
+      document.querySelector('.drawer-backdrop')?.classList.remove('open');
+      window.__fervecSetEnv?.('site', { targetRoute: 'create-profile' });
+      break;
+    case 'go-site-payments':
+      closeModal();
+      state.menuOpen = false;
+      document.querySelector('#app-drawer')?.classList.remove('open');
+      document.querySelector('.drawer-backdrop')?.classList.remove('open');
+      window.__fervecSetEnv?.('site', { targetRoute: 'payments' });
+      break;
+    case 'open-site-course-sales':
+      closeModal();
+      state.menuOpen = false;
+      document.querySelector('#app-drawer')?.classList.remove('open');
+      document.querySelector('.drawer-backdrop')?.classList.remove('open');
+      window.__fervecSetEnv?.('site', { targetRoute: 'sales' });
       break;
     case 'switch-login-tab':
-      state.loginTab = el.dataset.tab === 'register' ? 'register' : 'login';
+      state.loginTab = 'login';
       state.demoLockNotice = '';
       render();
       break;
@@ -5250,44 +5306,50 @@ document.addEventListener('submit', async (e) => {
       toast(check.error, true);
       return;
     }
-    let res = null;
-    try {
-      const resp = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: check.email, password: check.password }),
-      });
-      res = await resp.json().catch(() => null);
-      if ((!res || !res.ok) && (resp.status === 401 || resp.status === 404)) {
-        const localRes = await authenticateAccount(localStorage, check);
-        if (localRes.ok) {
-          const legacyData = loadData(false, localRes.user.email);
-          const migrateResp = await fetch('/api/auth/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: localRes.user.name,
-              email: check.email,
-              password: check.password,
-              initialData: legacyData,
-            }),
-          });
-          res = await migrateResp.json().catch(() => null);
-        }
+
+    const unifiedAccount = findProvisionalAccountByEmail(check.email);
+    if (!unifiedAccount) {
+      state.loginGateCta = 'register';
+      state.demoLockNotice =
+        'Conta não encontrada neste navegador. Faça seu cadastro no site principal do FerveC primeiro.';
+      render();
+      toast('Faça seu cadastro no site principal do FerveC.', true);
+      return;
+    }
+
+    if (unifiedAccount.passwordDigest) {
+      const incomingDigest = await digestPasswordProvisionalLocal(check.email, check.password);
+      if (incomingDigest !== unifiedAccount.passwordDigest) {
+        state.loginGateCta = '';
+        state.demoLockNotice = 'Senha incorreta. Confira seus dados e tente novamente.';
+        render();
+        toast('Senha incorreta.', true);
+        return;
       }
-    } catch {
-      res = await authenticateAccount(localStorage, check);
     }
-    if (!res?.ok || !res.user) {
-      toast(res?.error || 'Não foi possível entrar agora.', true);
+
+    if (!hasLibraryEntitlement(unifiedAccount)) {
+      state.loginGateCta = 'payments';
+      state.demoLockNotice =
+        'Este e-mail ainda não possui curso adquirido. Conclua a aquisição em Pagamentos (ou utilize um cupom de 100% na Fase 1) para liberar a Biblioteca.';
+      render();
+      toast('Acesso exclusivo para e-mails com curso adquirido.', true);
       return;
     }
-    saveSession(localStorage, res.user, res.token || '');
+
+    const userObj = {
+      id: unifiedAccount.id,
+      name: unifiedAccount.fullName || 'Chef FerveC',
+      email: unifiedAccount.email,
+      role: unifiedAccount.role,
+      isProvisional: true,
+    };
+    saveSession(localStorage, userObj, '');
     state.authMode = 'user';
-    state.currentUser = { ...res.user, token: res.token || '' };
+    state.currentUser = { ...userObj, token: '' };
     state.demoLockNotice = '';
-    state.data = loadData(false, res.user.email);
-    if (res.data) mergeServerUserData(res.data);
+    state.loginGateCta = '';
+    state.data = loadData(false, userObj.email);
     state.chat = sanitizeStoredChat(state.data.chat, 40);
     state.chatRole = state.data.chatRole || 'chef-tutor';
     state.chatIncludeContext = state.data.chatIncludeContext ?? true;
@@ -5299,58 +5361,7 @@ document.addEventListener('submit', async (e) => {
     syncTimers();
     ensureTimerLoop();
     window.dispatchEvent(new CustomEvent('fervec:library-auth-change'));
-    toast('Bem-vindo(a), ' + res.user.name + '!');
-    return;
-  }
-  if (e.target.id === 'register-form') {
-    e.preventDefault();
-    const name = document.querySelector('#reg-name')?.value || '';
-    const email = document.querySelector('#reg-email')?.value || '';
-    const password = document.querySelector('#reg-password')?.value || '';
-    const confirmPassword = document.querySelector('#reg-confirm')?.value || '';
-    const check = validateRegistration({ name, email, password, confirmPassword });
-    if (!check.ok) {
-      toast(check.error, true);
-      return;
-    }
-    let res = null;
-    try {
-      const resp = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: check.name,
-          email: check.email,
-          password: check.password,
-          initialData: freshData(),
-        }),
-      });
-      res = await resp.json().catch(() => null);
-    } catch {
-      res = await registerAccount(localStorage, check);
-    }
-    if (!res?.ok || !res.user) {
-      toast(res?.error || 'Não foi possível criar a conta.', true);
-      return;
-    }
-    saveSession(localStorage, res.user, res.token || '');
-    state.authMode = 'user';
-    state.currentUser = { ...res.user, token: res.token || '' };
-    state.demoLockNotice = '';
-    state.data = loadData(false, res.user.email);
-    if (res.data) mergeServerUserData(res.data);
-    state.chat = sanitizeStoredChat(state.data.chat, 40);
-    state.chatRole = state.data.chatRole || 'chef-tutor';
-    state.chatIncludeContext = state.data.chatIncludeContext ?? true;
-    state.voiceTranscripts = Array.isArray(state.data.voiceTranscripts) ? [...state.data.voiceTranscripts] : [];
-    state.page = state.data.lastPage || 1;
-    state.view = 'app';
-    state.active = 'home';
-    render();
-    syncTimers();
-    ensureTimerLoop();
-    window.dispatchEvent(new CustomEvent('fervec:library-auth-change'));
-    toast('Conta criada! Bem-vindo(a) à Biblioteca FerveC.');
+    toast('Bem-vindo(a), ' + userObj.name + '!');
     return;
   }
   if (state.view === 'app' && isDemoMode()) {
@@ -5675,9 +5686,10 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 window.__fervecLibraryControl = {
-  openAuth(tab = 'login') {
+  openAuth() {
     state.view = 'login';
-    state.loginTab = tab === 'register' ? 'register' : 'login';
+    state.loginTab = 'login';
+    state.loginGateCta = '';
     state.demoLockNotice = '';
     render();
   },

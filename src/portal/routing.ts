@@ -7,6 +7,7 @@ export interface InitialEnvResolution {
 
 const SITE_DEEP_HASH_PREFIXES = [
   '#/cozinhas',
+  '#/vendas',
   '#/cursos',
   '#/curso',
   '#/aula',
@@ -21,6 +22,7 @@ const SITE_DEEP_HASH_PREFIXES = [
   '#/progresso',
   '#/minha-conta',
   '#/admin',
+  '#/painel-admin',
   '#/criar-perfil',
   '#/memorial',
   '#/chef',

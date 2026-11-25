@@ -1,0 +1,677 @@
+PROMPT MESTRE — FERVEC GASTRONOMIA
+
+Reestruturação, melhorias e evolução da plataforma
+
+VERSÃO ATUALIZADA — FASE 1: DESENVOLVIMENTO SEM CONEXÃO COM SUPABASE
+
+------------------------------------------------------------------------
+
+1. PAPEL E OBJETIVO
+
+Atue como uma equipe sênior multidisciplinar, composta por: - Arquiteto
+de software. - Desenvolvedor Full Stack. - Especialista em Supabase e
+banco de dados (para planejamento futuro, sem conexão nesta fase). -
+Especialista em UX/UI. - Diretor de arte digital. - Especialista em
+segurança e autenticação. - Especialista em plataformas educacionais. -
+Especialista em pagamentos e experiência de compra. - Especialista em
+acessibilidade e responsividade. - Especialista em arquitetura de
+sistemas escaláveis.
+
+Sua missão é aprimorar o projeto existente FerveC Gastronomia,
+implementando as funcionalidades descritas neste documento.
+
+REGRA FUNDAMENTAL: NÃO RECRIE O SITE DO ZERO.
+
+Trabalhe sobre o projeto atual, preservando sua identidade, estrutura,
+funcionalidades existentes, conteúdos, imagens, navegação e integrações
+que já estejam funcionando.
+
+Não substitua componentes existentes sem necessidade. Não elimine
+funcionalidades para simplificar o desenvolvimento.
+
+Antes de modificar qualquer coisa, examine a arquitetura atual e
+identifique como cada funcionalidade está implementada.
+
+------------------------------------------------------------------------
+
+2. REGRA FUNDAMENTAL — NÃO CONECTAR O SUPABASE NESTA PRIMEIRA FASE
+
+O projeto utilizará Supabase futuramente, mas NÃO queremos realizar a
+integração agora.
+
+Nesta primeira fase: - Não conectar o Supabase. - Não executar operações
+de leitura ou escrita no banco de dados. - Não criar tabelas. - Não
+alterar tabelas. - Não executar migrações. - Não modificar estruturas
+existentes. - Não solicitar credenciais ou chaves de conexão. - Não
+modificar políticas RLS. - Não conectar autenticação ou armazenamento do
+Supabase.
+
+O que deverá ser feito agora?
+
+Desenvolver toda a estrutura do FerveC Gastronomia utilizando uma
+arquitetura independente do banco de dados.
+
+Criar uma camada provisória de armazenamento de dados, separada da
+lógica das funcionalidades. Essa camada poderá utilizar armazenamento
+local, dados temporários ou dados de demonstração, conforme a
+necessidade de cada recurso.
+
+Arquitetura preparada para o futuro
+
+Organizar o projeto para que, posteriormente, possamos conectar o
+Supabase sem precisar reconstruir o site.
+
+Para isso: - Separar a lógica de negócio da camada de armazenamento. -
+Criar interfaces de acesso aos dados. - Centralizar operações de
+cadastro, consulta, atualização e exclusão. - Evitar chamadas diretas ao
+banco espalhadas pelos componentes. - Documentar quais estruturas
+precisarão ser conectadas futuramente. - Manter os identificadores e
+relacionamentos necessários para a futura integração. - Permitir
+substituir a camada provisória pela integração definitiva.
+
+IMPORTANTE: Não confundir preparação arquitetural com integração real.
+Nesta fase, o Supabase deverá permanecer completamente desconectado.
+
+Identificação dos dados provisórios
+
+Toda funcionalidade que utilizar dados temporários deverá ser
+identificada como provisória.
+
+Não apresentar cadastros, pagamentos, compras, cupons ou progressos
+simulados como se fossem registros definitivos.
+
+Não prometer sincronização entre dispositivos nesta fase.
+
+------------------------------------------------------------------------
+
+3. CADASTRO ÚNICO — SITE E BIBLIOTECA INTERATIVA
+
+Atualmente existem dois cadastros diferentes: o cadastro completo do
+site e o cadastro simplificado da Biblioteca Interativa.
+
+Precisamos eliminar essa duplicidade.
+
+Cadastro principal
+
+Manter o cadastro completo que já existe no site, com: - Nome
+completo. - CPF. - Data de nascimento. - E-mail. - Idade. - Telefone. -
+Senha. - Confirmação de senha. - Aceite dos termos. - Preferência para
+recebimento de mensagens por WhatsApp. - Preferência para recebimento de
+mensagens por e-mail.
+
+Preservar a estrutura e os dados dos usuários existentes. Nesta fase,
+não conectar autenticação definitiva.
+
+Biblioteca Interativa
+
+Remover somente a funcionalidade de criação de contas própria da
+biblioteca.
+
+Manter a tela de login com: - E-mail. - Senha. - Botão Entrar. - Botão
+Acessar demonstração de visualização.
+
+A biblioteca deverá ser projetada para utilizar futuramente a mesma
+conta principal do FerveC.
+
+Nesta fase, implementar o fluxo de interface e a lógica provisória, sem
+afirmar que existe autenticação definitiva.
+
+Demonstração
+
+Preservar o mecanismo de demonstração atual.
+
+Visitantes poderão conhecer a biblioteca, mas, quando tentarem utilizar
+uma funcionalidade exclusiva, deverão receber a orientação adequada de
+acesso.
+
+Liberação de acesso futura
+
+Preparar a estrutura para reconhecer as permissões de cada aluno e
+associar uma compra à conta correta.
+
+A liberação definitiva deverá depender futuramente da confirmação real
+do pagamento. Não liberar conteúdo exclusivo apenas porque alguém
+digitou um e-mail.
+
+------------------------------------------------------------------------
+
+4. MEU PROGRESSO — INTEGRAÇÃO COM TODOS OS CURSOS
+
+A área Meu Progresso deverá funcionar como um painel central de
+acompanhamento da evolução do aluno.
+
+Porcentagem de conclusão
+
+Calcular automaticamente a porcentagem utilizando os dados reais das
+atividades concluídas na camada provisória.
+
+Não utilizar porcentagens fixas, decorativas ou baseadas somente no
+módulo selecionado.
+
+Módulos
+
+No curso Chef Cremonese Massas Italianas, existem seis módulos.
+
+O sistema deverá apresentar: - Módulos disponíveis. - Módulos em
+andamento. - Módulos concluídos. - Módulos bloqueados.
+
+Os cadeados deverão atualizar conforme o aluno cumprir os requisitos de
+cada módulo.
+
+Integração das etapas
+
+Integrar corretamente: - AULA. - TRABALHO. - REVISÃO. - PROVA. -
+CERTIFICADO.
+
+Cada etapa deverá atualizar o progresso geral e o progresso individual
+do módulo.
+
+Certificado
+
+Quando o aluno cumprir os requisitos e for aprovado, o certificado
+deverá ser liberado conforme as regras do curso.
+
+Ao clicar no certificado dentro de Meu Progresso, direcionar diretamente
+para a aba CERTIFICADO.
+
+Compatibilidade com novos cursos
+
+Não desenvolver essa lógica exclusivamente para Massas Italianas.
+
+Criar uma estrutura reutilizável para que novos cursos, módulos e etapas
+sejam reconhecidos automaticamente, respeitando os requisitos próprios
+de cada curso.
+
+Persistência provisória
+
+Utilizar armazenamento local quando apropriado, permitindo testar a
+navegação e o progresso durante o desenvolvimento.
+
+Deixar explícito que a persistência definitiva na nuvem será
+implementada somente na segunda fase.
+
+------------------------------------------------------------------------
+
+5. PADRONIZAÇÃO DOS BOTÕES DE CONCLUSÃO
+
+Nas abas AULA, TRABALHO e REVISÃO, padronizar os botões utilizando como
+referência o modelo que já existe na aba REVISÃO.
+
+As três áreas deverão ter: - Mesmo padrão visual. - Mesmo
+posicionamento. - Mesma identidade de cores. - Mesma hierarquia. - Mesmo
+comportamento. - Mesmo sistema de notificações.
+
+Botões
+
+-   AULA: Marcar aula como concluída.
+-   TRABALHO: Marcar trabalho como concluído.
+-   REVISÃO: Marcar revisão como concluída.
+
+O botão existente Concluir etapa e seguir também deverá seguir o mesmo
+padrão.
+
+Não criar botões duplicados quando já existir uma função equivalente.
+
+Regra do trabalho
+
+A conclusão do trabalho deverá respeitar todas as atividades
+obrigatórias.
+
+Não considerar o trabalho inteiro concluído apenas porque o aluno clicou
+em um botão antes de finalizar as atividades exigidas.
+
+Notificações
+
+Manter o sistema de notificações existente.
+
+Exemplo: - Título: Revisão do Módulo 1. - Descrição: Uma olhadinha antes
+da prova. - Status inicial: Em andamento.
+
+Depois da conclusão, atualizar automaticamente: - Notificação superior:
+Concluído. - Notificação inferior: confirmação da conclusão.
+
+Aplicar o mesmo comportamento nas três áreas.
+
+A atualização deverá refletir o estado real salvo na camada provisória
+de dados.
+
+------------------------------------------------------------------------
+
+6. GERENCIAMENTO DE CUPONS DE DESCONTO
+
+Criar uma funcionalidade importante dentro do painel administrativo
+chamada GERENCIAR CUPONS.
+
+Essa funcionalidade deverá ter destaque entre as ferramentas
+administrativas, sem ocupar espaço excessivo.
+
+Gerador de cupons
+
+O administrador deverá conseguir: 1. Clicar em Gerar novo cupom. 2.
+Gerar automaticamente um código exclusivo de seis dígitos. 3. Escolher o
+percentual de desconto. 4. Definir a validade. 5. Definir a quantidade
+de utilizações permitidas. 6. Salvar o cupom na camada provisória. 7.
+Copiar o código para compartilhar.
+
+Percentuais disponíveis
+
+10%, 20%, 30%, 40%, 50%, 60%, 70%, 80%, 90% e 100%.
+
+O percentual deverá ser associado ao código gerado.
+
+Exemplo: - Código: 091100. - Desconto: 90%.
+
+O código deverá aplicar o percentual correspondente sobre o valor do
+produto adquirido.
+
+Cupom de 100%
+
+Quando o administrador selecionar 100%, o curso deverá ficar totalmente
+gratuito no fluxo demonstrativo.
+
+O sistema deverá registrar a utilização demonstrativa e a aquisição
+provisória, respeitando as regras de identificação do aluno.
+
+Não deverá exigir pagamento de valor zero por meio de gateway.
+
+Validade
+
+Validade padrão: 7 dias a partir da criação.
+
+Permitir ao administrador escolher outros prazos: - 1 dia. - 3 dias. - 7
+dias. - 15 dias. - 30 dias.
+
+Controle administrativo
+
+Permitir: - Consultar cupons. - Consultar percentuais. - Consultar
+validade. - Consultar quantidade de utilizações. - Consultar utilizações
+demonstrativas. - Consultar em qual pedido demonstrativo foi
+utilizado. - Desativar cupons. - Identificar cupons expirados. -
+Identificar cupons utilizados.
+
+Os códigos deverão ser únicos.
+
+Implementar as regras de validação na camada de negócio, deixando a
+validação definitiva no servidor para a futura integração.
+
+Identificar claramente que os dados ainda são provisórios. Não
+apresentar a validação local como proteção antifraude ou validação
+segura em servidor.
+
+------------------------------------------------------------------------
+
+7. CAMPO DE CUPOM NA TELA DE PAGAMENTO
+
+Manter o card de pagamento existente e sua identidade visual.
+
+Não redesenhar desnecessariamente toda a página.
+
+Dentro do card Resumo do Pedido, adicionar um campo discreto para
+inserir o código de desconto, próximo ao subtotal.
+
+A tipografia deverá ter aproximadamente o mesmo tamanho das informações
+de preço.
+
+Funcionamento
+
+-   Campo para digitar o código.
+-   Botão Aplicar.
+-   Validação do código na camada provisória.
+-   Exibição do percentual aplicado.
+-   Exibição do valor descontado.
+-   Atualização automática do total.
+
+Exemplo: - Subtotal: R$ 12,90. - Cupom: 90%. - Desconto: R$ 11,61. -
+Total: R$ 1,29.
+
+Os valores acima são apenas ilustrativos. O cálculo deverá utilizar o
+preço real configurado para o curso e o percentual associado ao cupom.
+
+Opções de pagamento
+
+Manter as três opções existentes: - Pix. - Cartão de crédito. - Boleto
+bancário.
+
+IMPORTANTE: nesta etapa, não desenvolver a integração financeira
+definitiva com o Asaas.
+
+A intenção agora é organizar e preparar a experiência de compra e o
+gerenciamento dos cupons.
+
+Não simular pagamentos aprovados. Não apresentar uma integração como
+funcional se as credenciais não estiverem configuradas.
+
+------------------------------------------------------------------------
+
+8. PAINEL ADMINISTRATIVO — NOVA IDENTIDADE VISUAL
+
+Reformular visualmente o painel administrativo, utilizando uma
+identidade escura, moderna, sofisticada e futurista.
+
+Direção visual
+
+Inspirar-se em painéis de controle de jogos modernos, interfaces
+tecnológicas cinematográficas e sistemas profissionais de monitoramento.
+
+Características: - Fundo predominantemente preto e grafite. -
+Superfícies em tons escuros. - Detalhes em azul elétrico e ciano. -
+Pequenos destaques em âmbar ou laranja. - Bordas finas. - Iluminação
+discreta. - Ícones modernos. - Tipografia nítida. - Gráficos
+elegantes. - Boa separação entre seções.
+
+Não exagerar nos efeitos neon.
+
+O resultado deverá transmitir tecnologia, controle, profissionalismo e
+sofisticação.
+
+Não transformar o painel em uma interface infantil ou excessivamente
+carregada.
+
+Organização
+
+Manter ou organizar as áreas administrativas existentes: - Visão
+Geral. - Alunos. - Cursos. - Provas. - Certificados. - Relatórios. -
+Cupons de Desconto. - Configurações.
+
+A área Cupons de Desconto deverá ter destaque como ferramenta
+administrativa importante.
+
+Dashboard
+
+Organizar indicadores como: - Total de alunos. - Alunos ativos. - Cursos
+cadastrados. - Provas pendentes. - Certificados emitidos. - Atividades
+recentes.
+
+Exibir informações reais quando disponíveis na camada provisória. Não
+inventar números ou dados de demonstração na versão publicada sem
+identificá-los como demonstração.
+
+Integrações
+
+Criar uma área para visualizar o estado das integrações futuras.
+
+Exemplos: - Supabase: aguardando integração. - Asaas: aguardando
+configuração.
+
+Não mostrar serviços como conectados sem confirmação técnica.
+
+------------------------------------------------------------------------
+
+9. ÁREA PRECISA DE AJUDA?
+
+Simplificar todas as áreas de ajuda existentes no site.
+
+Atualmente existem textos e orientações que não precisam mais aparecer.
+
+Remover: - “Não ouvi o áudio”. - “Uma etapa por vez”. - “Sobre seus
+dados do certificado”. - Outras instruções antigas que não sejam canais
+de contato.
+
+Manter somente dois canais oficiais:
+
+E-mail: fervecrgastronomia@gmail.com
+
+O clique deverá abrir o aplicativo de e-mail do dispositivo, utilizando
+o endereço oficial.
+
+Instagram: @fervecgastronomia
+
+Direcionar para: https://www.instagram.com/fervecgastronomia/
+
+Aplicar a alteração em todas as áreas Precisa de Ajuda? do site,
+mantendo o mesmo padrão visual.
+
+------------------------------------------------------------------------
+
+10. VOZ DA EXPERIÊNCIA EDUCACIONAL
+
+A voz atual da plataforma apresenta uma característica artificial,
+semelhante à voz tradicional de GPS.
+
+Queremos uma experiência mais agradável e natural.
+
+Direção desejada
+
+Uma voz de chef professor.
+
+Características: - Português brasileiro. - Voz natural e humana. - Tom
+firme, mas acolhedor. - Personalidade de professor de gastronomia. - Boa
+dicção. - Entonação expressiva. - Ritmo confortável. - Pronúncia clara
+dos ingredientes e técnicas culinárias. - Sem entonação mecânica de
+GPS. - Sem voz excessivamente infantil ou artificial.
+
+Queremos uma voz que transmita experiência, confiança e autoridade, como
+um chef ensinando alguém na cozinha.
+
+Identidade única
+
+Utilizar a mesma identidade de voz nas aulas e nas orientações de
+navegação.
+
+Configuração administrativa
+
+Preparar uma configuração para: - Selecionar vozes disponíveis. - Ouvir
+demonstrações. - Ajustar velocidade. - Testar a pronúncia. - Salvar a
+voz escolhida.
+
+Verificar quais recursos de voz e síntese de fala estão disponíveis na
+arquitetura atual.
+
+Não prometer uma qualidade de voz que o mecanismo utilizado não consiga
+oferecer.
+
+Caso seja necessário um serviço externo de síntese de voz, preparar a
+estrutura para integração posterior.
+
+Não interromper nem prejudicar o funcionamento atual do áudio enquanto a
+nova solução não estiver configurada.
+
+------------------------------------------------------------------------
+
+11. BIBLIOTECA INTERATIVA — PROPAGANDA ROTATIVA DO CURSO
+
+Na parte inferior da Biblioteca Interativa já existem elementos
+relacionados à vinícola e aos três livros.
+
+Manter todos esses elementos.
+
+Não remover nem substituir os cards atuais.
+
+Existe também um card de propaganda animada/rotativa.
+
+Queremos aproveitar esse mesmo espaço publicitário e adicionar a
+propaganda do curso FerveC Gastronomia.
+
+Funcionamento
+
+O card deverá alternar automaticamente entre: - As propagandas e
+conteúdos que já existem. - A propaganda do curso disponível na página
+principal do site.
+
+A troca deverá acontecer a cada 5 segundos.
+
+Utilizar uma transição suave e profissional.
+
+Imagem
+
+Reaproveitar a imagem promocional existente do curso na página
+principal.
+
+Não criar uma propaganda com identidade visual diferente.
+
+A intenção é manter a comunicação visual consistente entre a página
+principal e a biblioteca.
+
+Clique
+
+Quando o visitante clicar na propaganda do curso, deverá ser direcionado
+à página de apresentação do curso e suas informações comerciais.
+
+Responsividade
+
+Adaptar a propaganda para celular e computador.
+
+Preservar o funcionamento do card atual.
+
+Não criar um segundo banner separado se o card rotativo existente puder
+executar essa função.
+
+------------------------------------------------------------------------
+
+12. PAGAMENTOS — PREPARAÇÃO PARA INTEGRAÇÃO FUTURA
+
+O projeto já possui as opções de pagamento: - Pix. - Cartão de
+crédito. - Boleto bancário.
+
+Nesta etapa, preservar as opções e organizar a experiência de compra.
+
+Preparar a arquitetura para uma integração futura com o Asaas, sem
+executar agora a conexão definitiva.
+
+Quando as novas credenciais estiverem disponíveis, a integração poderá
+ser realizada em uma etapa posterior.
+
+Não remover nem substituir configurações existentes.
+
+Não expor credenciais.
+
+Não simular transações reais.
+
+------------------------------------------------------------------------
+
+13. SEGURANÇA, ARQUITETURA E QUALIDADE
+
+Todas as funcionalidades deverão respeitar: - Separação entre interface
+e lógica de negócio. - Organização modular do código. - Validação de
+dados. - Tratamento de erros. - Proteção de informações pessoais. -
+Identificação de dados provisórios. - Preparação para autenticação
+futura. - Preparação para permissões por usuário. - Preparação para
+integração com banco de dados. - Proteção contra duplicidade de
+operações na lógica provisória.
+
+Não colocar senhas ou informações pessoais reais em dados
+demonstrativos.
+
+Não utilizar dados fictícios como se fossem dados reais.
+
+Não criar botões que não executam suas funções.
+
+Não criar telas desconectadas da lógica correspondente.
+
+Não substituir a lógica existente por demonstrações visuais sem
+funcionamento.
+
+Lembrar que armazenamento local pode ser apagado, alterado pelo usuário
+e não é seguro para dados sensíveis. Não utilizá-lo como substituto de
+autenticação ou validação de servidor.
+
+------------------------------------------------------------------------
+
+14. RESPONSIVIDADE
+
+Todo o FerveC Gastronomia deverá continuar funcionando perfeitamente
+em: - Celulares Android. - iPhones. - Tablets. - Computadores. -
+Diferentes tamanhos de tela.
+
+A versão mobile deverá ter sua própria organização responsiva.
+
+Não basta reduzir a versão de computador.
+
+Evitar: - Elementos cortados. - Textos sobrepostos. - Botões pequenos. -
+Cards ultrapassando a largura da tela. - Rolagem horizontal indevida. -
+Imagens deformadas.
+
+Preservar a identidade visual entre as versões.
+
+------------------------------------------------------------------------
+
+15. METODOLOGIA DE IMPLEMENTAÇÃO
+
+Não faça alterações desordenadas.
+
+Antes de começar:
+
+1.  Examine o projeto completo.
+2.  Identifique os componentes relacionados a cada solicitação.
+3.  Verifique quais funcionalidades já existem.
+4.  Identifique o que está funcionando e o que precisa de correção.
+5.  Identifique dependências externas.
+6.  Verifique como separar a lógica de negócio do armazenamento.
+7.  Apresente um plano de implementação.
+
+Depois, implemente as alterações sem eliminar recursos existentes.
+
+Não se limite a descrever o que seria feito: execute as modificações no
+projeto.
+
+Testes obrigatórios
+
+Testar, conforme a funcionalidade: - Cadastro e fluxo de login
+provisório. - Biblioteca e demonstração. - Navegação. - Progresso dos
+módulos. - Atualização das porcentagens. - Botões de conclusão. -
+Notificações. - Regras de liberação de certificados. - Geração de
+cupons. - Aplicação dos descontos. - Validade dos cupons. - Limites de
+utilização. - Desativação de cupons. - Persistência provisória. -
+Propaganda rotativa. - Links de contato. - Responsividade.
+
+Não considerar uma funcionalidade concluída apenas porque sua tela foi
+criada.
+
+Restrições técnicas desta fase
+
+É obrigatório: - Não conectar o Supabase. - Não executar consultas ao
+Supabase. - Não criar ou alterar tabelas. - Não executar migrações. -
+Não conectar gateways de pagamento. - Não modificar credenciais ou
+configurações externas.
+
+Toda a implementação deverá funcionar de forma independente dessas
+integrações.
+
+------------------------------------------------------------------------
+
+16. REGRA FINAL — PRESERVAR O PROJETO
+
+O FerveC Gastronomia já possui uma identidade, uma estrutura e
+funcionalidades desenvolvidas.
+
+Não queremos começar novamente.
+
+Queremos evoluir o que já existe.
+
+Preserve: - Layouts aprovados. - Imagens existentes. - Conteúdos. -
+Cursos. - Módulos. - Navegação. - Identidade visual. - Estrutura do
+projeto. - Recursos que já funcionam. - Banco de dados e configurações
+existentes sem modificá-los nesta fase.
+
+Antes de qualquer alteração estrutural, verifique os impactos e proteja
+os dados.
+
+Não apagar, substituir ou recriar informações sem necessidade.
+
+RELATÓRIO FINAL OBRIGATÓRIO
+
+Ao terminar, apresentar:
+
+1.  O que foi implementado.
+2.  O que foi corrigido.
+3.  Quais funcionalidades estão funcionando.
+4.  Quais funcionalidades utilizam dados provisórios.
+5.  Como foi organizada a arquitetura para integração futura.
+6.  Quais pontos dependerão do Supabase.
+7.  Quais pontos dependerão do Asaas.
+8.  Quais funcionalidades foram efetivamente testadas.
+9.  Quais limitações ainda existem.
+
+RESULTADO ESPERADO:
+
+Um FerveC Gastronomia mais profissional, moderno, funcional e preparado
+para crescer, mantendo sua estrutura atual e oferecendo uma experiência
+de qualidade tanto para os alunos quanto para a administração.
+
+FASE 1: desenvolver e testar as funcionalidades sem conectar o Supabase
+ou o Asaas.
+
+FASE 2: conectar o Supabase, implementar autenticação e persistência
+definitiva, sincronizar os dados e, posteriormente, integrar os
+pagamentos com o Asaas, preservando tudo o que foi desenvolvido na
+primeira fase.

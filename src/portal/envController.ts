@@ -13,6 +13,7 @@ export interface LibraryAuthSummary {
 
 interface EnvOptions {
   libraryAction?: 'default' | 'demo' | 'auth-login' | 'auth-register';
+  targetRoute?: string;
 }
 
 declare global {
@@ -192,7 +193,17 @@ export function switchEnvironment(nextEnv: ActiveEnvironment, opts: EnvOptions =
   if (resolvedEnv === 'library') {
     void ensureLibraryBooted(opts.libraryAction || 'default');
   } else if (prevEnv === 'library' && resolvedEnv === 'site' && typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('fervec:navigate-home'));
+    if (opts.targetRoute) {
+      window.dispatchEvent(
+        new CustomEvent('fervec:navigate-route', { detail: { route: opts.targetRoute } })
+      );
+    } else {
+      window.dispatchEvent(new CustomEvent('fervec:navigate-home'));
+    }
+  } else if (resolvedEnv === 'site' && opts.targetRoute && typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('fervec:navigate-route', { detail: { route: opts.targetRoute } })
+    );
   }
 
   if (typeof window !== 'undefined' && prevEnv !== resolvedEnv) {

@@ -14,9 +14,11 @@ export interface QuestionAttempt {
 export interface RecipeProgressEntry {
   stage: number;
   done: number[];
+  lessonCompleted?: boolean;
   workAnswers: number[];
   workCurrent: number;
   workFinished: boolean;
+  workCompleted?: boolean;
   workAttempts: QuestionAttempt[];
   examAnswers: (number | null)[];
   examCurrent: number;
@@ -33,6 +35,7 @@ export interface CourseState {
   miseChecks: number[];
   questionsAnswers: number[];
   questionsFinished: boolean;
+  questionsCompleted?: boolean;
   questionAttempts: QuestionAttempt[];
   examAnswers: (number | null)[];
   examCurrent: number;

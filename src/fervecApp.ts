@@ -107,12 +107,64 @@ import { installGlobalErrorHandlers, reportAppError } from './utils/errorReporte
 import { switchEnvironment } from './portal/envController';
 import {
   computeStepProgressPct,
+  renderModuleStageNotificationBanner,
   renderOlhoDoChefCard,
+  renderStandardCompletionAction,
   renderUnifiedReviewSection,
   renderUnifiedTrabalhoSection,
   ReviewErrorCardInput,
   ReviewTechniqueCardInput,
 } from './components/moduleViews';
+import {
+  PHASE_1_OFFLINE_ONLY,
+  SUPABASE_CONNECTED,
+} from './config/integrationPhase';
+import {
+  applyCouponDiscount,
+  CouponRecord,
+  DEFAULT_COUPON_VALIDITY_DAYS,
+  generateUniqueSixDigitCode,
+  normalizeCouponCode,
+  validateCouponForCourse,
+} from './utils/coupons';
+import {
+  canCompleteModuleWork,
+  CourseBlueprint,
+  EvaluatedCourseProgress,
+  evaluateCourseProgress,
+  ModuleRuntimeProgress,
+} from './utils/courseProgressEngine';
+import {
+  authenticateUnifiedProvisional,
+  createProvisionalCoupon,
+  grantProvisionalCourseEntitlement,
+  hasProvisionalCourseEntitlement,
+  isPhase1AdminPreviewEnabled,
+  listProvisionalActivities,
+  listProvisionalCoupons,
+  listProvisionalDemoOrders,
+  listUnifiedAccounts,
+  recordProvisionalCouponRedemption,
+  saveProvisionalDemoOrder,
+  setPhase1AdminPreviewEnabled,
+  toggleProvisionalCouponActive,
+  upsertUnifiedAccountFromProfile,
+} from './services/provisionalStore';
+import {
+  CHEF_VOICE_TEST_PHRASE,
+  DEFAULT_CHEF_VOICE_CONFIG,
+  loadChefVoiceConfig,
+  saveChefVoiceConfig,
+} from './utils/voiceProfile';
+import {
+  AdminAssessmentAttemptView,
+  AdminCouponDraftView,
+  AdminTabId,
+  renderAdminDashboard,
+} from './components/adminView';
+import { AppliedPaymentCouponView } from './components/paymentsView';
+import { listAvailablePtBrVoices, previewChefVoice } from './utils/audio';
+import { createStoredProfile } from './utils/profile';
 
 interface WineProfile {
   id: string;
@@ -329,6 +381,23 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   let sessionBillingCustomer: CheckoutCustomerPayload | null = null;
   let adminAuditRoot: Root | null = null;
 
+  // Phase 1 Admin Control Center & Coupon Checkout state
+  let paymentCouponInput = '';
+  let appliedPaymentCoupon: AppliedPaymentCouponView | null = null;
+  let paymentCouponFeedback: { ok: boolean; message: string } | null = null;
+  let adminActiveTab: AdminTabId = 'overview';
+  let adminMobileMenuOpen = false;
+  let adminCouponDraft: AdminCouponDraftView = {
+    code: generateUniqueSixDigitCode(listProvisionalCoupons().map((c) => c.code)),
+    discountPercent: 100,
+    validityDays: DEFAULT_COUPON_VALIDITY_DAYS,
+    maxUses: 10,
+    courseScope: 'massas-italianas',
+  };
+  let adminVoiceConfig = loadChefVoiceConfig();
+  let adminVoiceTestPhrase = CHEF_VOICE_TEST_PHRASE;
+  let adminVoiceStatusLabel = 'Configuração local salva';
+
   function createInitialProfileDraft(profile: StoredUserProfile | null): ProfileFormValues {
     return {
       fullName: profile?.fullName || '',
@@ -351,6 +420,10 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
 
   function parseRouteFromHash(): void {
     const rawHash = window.location.hash || '';
+    if (rawHash === '#/vendas' || rawHash === '#/cozinhas') {
+      route = 'sales';
+      return;
+    }
     if (rawHash === '#/criar-perfil' || rawHash === '#/cadastro') {
       route = 'create-profile';
       return;
@@ -409,6 +482,10 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       if (window.location.hash !== target) {
         window.history.replaceState(null, '', target);
       }
+    } else if (nextRoute === 'sales') {
+      if (window.location.hash !== '#/vendas') {
+        window.history.replaceState(null, '', '#/vendas');
+      }
     } else if (
       window.location.hash.startsWith('#/memorial') ||
       window.location.hash === '#/criar-perfil' ||
@@ -418,7 +495,9 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       window.location.hash === '#/pagamentos' ||
       window.location.hash === '#/pagamento' ||
       window.location.hash === '#/admin' ||
-      window.location.hash === '#/painel-admin'
+      window.location.hash === '#/painel-admin' ||
+      window.location.hash === '#/vendas' ||
+      window.location.hash === '#/cozinhas'
     ) {
       window.history.replaceState(null, '', '#/');
     }
@@ -521,24 +600,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     return map[r.id] || r.subtitle || '';
   }
 
-  function getAllModulesSummary(): {
-    modules: ModuleDescriptor[];
-    totalSteps: number;
-    completedSteps: number;
-    overallPct: number;
-    activeModule: ModuleDescriptor;
-  } {
-    const carbDone = state.done.length;
-    const carbPassed = state.examAttempts.some((x) => x.passed);
-    const carbStatus: ModuleStatusType =
-      carbDone >= stages.length && state.reviewDone && carbPassed
-        ? 'done'
-        : carbDone >= stages.length
-          ? 'done'
-          : carbDone > 0
-            ? 'progress'
-            : 'available';
-
+  function evaluateMainCourseProgress(): EvaluatedCourseProgress {
     const curriculumTitles: Record<string, string> = {
       carbonara: 'Tipos de Massas Italianas',
       alfredo: 'Massas Frescas',
@@ -548,83 +610,122 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       sauces: 'Receitas Especiais',
     };
 
-    const carbDescriptor: ModuleDescriptor = {
-      id: 'carbonara',
-      index: 1,
-      title: curriculumTitles.carbonara,
-      recipeTitle: 'Spaghetti alla Carbonara',
-      subtitle: 'Preparo prático: Spaghetti alla Carbonara',
-      desc: 'Aprenda a controlar o cozimento, preparar a mistura de ovos e queijo e construir uma emulsão cremosa sem creme de leite.',
-      photo: MEDIA.pastaCarbonaraHero,
-      totalSteps: stages.length,
-      doneSteps: carbDone,
-      duration: course.duration,
-      level: course.level,
-      status: carbStatus,
-      statusLabel:
-        carbStatus === 'done'
-          ? 'Concluído'
-          : carbStatus === 'progress'
-            ? 'Em andamento'
-            : 'Disponível',
-      reviewDone: !!state.reviewDone,
-      examPassed: carbPassed,
+    const blueprint: CourseBlueprint = {
+      slug: 'massas-italianas',
+      title: 'Massas Italianas',
+      subtitle: course.subtitle,
+      available: true,
+      requiresEnrollment: false,
+      isEnrolled: true,
+      modules: [
+        {
+          id: 'carbonara',
+          index: 1,
+          title: curriculumTitles.carbonara,
+          recipeTitle: 'Spaghetti alla Carbonara',
+          desc: 'Aprenda a controlar o cozimento, preparar a mistura de ovos e queijo e construir uma emulsão cremosa sem creme de leite.',
+          photo: MEDIA.pastaCarbonaraHero,
+          duration: course.duration,
+          level: course.level,
+          totalLessonSteps: stages.length,
+          totalWorkQuestions: questions.length,
+          passingScorePercent: PASSING_SCORE_PERCENT,
+        },
+        ...extraRecipes.map((r, idx) => ({
+          id: r.id,
+          index: idx + 2,
+          title: curriculumTitles[r.id] || r.title,
+          recipeTitle: r.title,
+          desc: recipeShortDescription(r),
+          photo: recipeVisual(r.id),
+          duration: r.duration,
+          level: r.level,
+          totalLessonSteps: r.steps.length,
+          totalWorkQuestions: 6,
+          passingScorePercent: PASSING_SCORE_PERCENT,
+        })),
+      ],
     };
 
-    const rest: ModuleDescriptor[] = extraRecipes.map((r, idx) => {
+    const carbAnswered = state.questionsAnswers.filter(
+      (v) => v !== null && v !== undefined
+    ).length;
+    const carbExamLatest = state.examAttempts[state.examAttempts.length - 1];
+    const progressByModuleId: Record<string, ModuleRuntimeProgress> = {
+      carbonara: {
+        doneLessonSteps: state.done,
+        lessonCompleted: Boolean(state.lessonFinished || state.done.length >= stages.length),
+        workAnsweredCount: state.questionsFinished ? questions.length : carbAnswered,
+        workCompleted: Boolean(state.questionsFinished),
+        workScore: state.questionAttempts[state.questionAttempts.length - 1]?.score,
+        reviewCompleted: Boolean(state.reviewDone),
+        examPassed: state.examAttempts.some((x) => x.passed),
+        latestExamScore: carbExamLatest?.score,
+      },
+    };
+
+    for (const r of extraRecipes) {
       const p = state.recipeProgress?.[r.id];
-      const done = p?.done?.length || 0;
-      const total = r.steps.length;
-      const passed = !!p?.examAttempts?.some((x) => x.passed);
-      const rev = !!p?.reviewDone;
-      const st: ModuleStatusType =
-        done >= total
-          ? 'done'
-          : done > 0
-            ? 'progress'
-            : state.demo
-              ? 'available'
-              : 'idle';
-      const stLabel =
-        st === 'done'
-          ? 'Concluído'
-          : st === 'progress'
-            ? 'Em andamento'
-            : st === 'available'
-              ? 'Disponível'
-              : 'Não iniciado';
-
-      return {
-        id: r.id,
-        index: idx + 2,
-        title: curriculumTitles[r.id] || r.title,
-        recipeTitle: r.title,
-        subtitle: `Preparo prático: ${r.title}`,
-        desc: recipeShortDescription(r),
-        photo: recipeVisual(r.id),
-        totalSteps: total,
-        doneSteps: done,
-        duration: r.duration,
-        level: r.level,
-        status: st,
-        statusLabel: stLabel,
-        reviewDone: rev,
-        examPassed: passed,
+      const workAns = (p?.workAnswers || []).filter((v) => v !== null && v !== undefined).length;
+      const examLatest = p?.examAttempts?.[p.examAttempts.length - 1];
+      progressByModuleId[r.id] = {
+        doneLessonSteps: p?.done || [],
+        lessonCompleted: Boolean(p?.lessonCompleted || (p?.done?.length || 0) >= r.steps.length),
+        workAnsweredCount: p?.workFinished ? 6 : workAns,
+        workCompleted: Boolean(p?.workCompleted || p?.workFinished),
+        workScore: p?.workAttempts?.[p.workAttempts.length - 1]?.score,
+        reviewCompleted: Boolean(p?.reviewDone),
+        examPassed: Boolean(p?.examAttempts?.some((x) => x.passed)),
+        latestExamScore: examLatest?.score,
       };
-    });
+    }
 
-    const modules = [carbDescriptor, ...rest];
-    const totalSteps = modules.reduce((acc, m) => acc + m.totalSteps, 0);
-    const completedSteps = modules.reduce((acc, m) => acc + m.doneSteps, 0);
-    const overallPct = totalSteps ? Math.round((completedSteps / totalSteps) * 100) : 0;
+    return evaluateCourseProgress(blueprint, progressByModuleId, state.lastModuleId || 'carbonara');
+  }
 
-    const preferredId = state.lastModuleId || 'carbonara';
+  function getAllModulesSummary(): {
+    modules: ModuleDescriptor[];
+    totalSteps: number;
+    completedSteps: number;
+    overallPct: number;
+    activeModule: ModuleDescriptor;
+  } {
+    const evaluated = evaluateMainCourseProgress();
+    const modules: ModuleDescriptor[] = evaluated.modules.map((m) => ({
+      id: m.id,
+      index: m.index,
+      title: m.title,
+      recipeTitle: m.recipeTitle,
+      subtitle: `Preparo prático: ${m.recipeTitle}`,
+      desc: m.desc,
+      photo: m.photo,
+      totalSteps: m.totalLessonSteps,
+      doneSteps: m.doneStepsCount,
+      duration: m.duration,
+      level: m.level,
+      status:
+        m.status === 'completed'
+          ? 'done'
+          : m.status === 'in_progress'
+            ? 'progress'
+            : m.status === 'locked'
+              ? 'locked'
+              : 'available',
+      statusLabel: m.statusLabel,
+      reviewDone: m.reviewCompleted,
+      examPassed: m.examPassed,
+    }));
+
     const activeModule =
-      modules.find((m) => m.id === preferredId) ||
-      modules.find((m) => m.status === 'progress') ||
-      modules[0];
+      modules.find((m) => m.id === evaluated.activeModule.id) || modules[0];
 
-    return { modules, totalSteps, completedSteps, overallPct, activeModule };
+    return {
+      modules,
+      totalSteps: evaluated.totalUnits,
+      completedSteps: evaluated.completedUnits,
+      overallPct: evaluated.overallPct,
+      activeModule,
+    };
   }
 
   function qrSvgForMemorial(slug: string): string {
@@ -670,38 +771,45 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     </svg>`;
   }
 
+  function canShowAdminPanelLink(): boolean {
+    if (PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED) {
+      return Boolean(
+        isPhase1AdminPreviewEnabled() ||
+          userProfile?.email?.toLowerCase() === 'fervecrgastronomia@gmail.com'
+      );
+    }
+    return Boolean(
+      userProfile?.authSource === 'supabase' && workspaceData?.permissions?.canAccessAdminPanel
+    );
+  }
+
   function accountDropdownHtml(): string {
     if (!accountMenuOpen) return '';
     const firstName = userProfile?.fullName.split(' ')[0] || '';
+    const showAdminEntry = canShowAdminPanelLink();
     return `<div class="nav-dropdown account-dropdown" role="menu" aria-label="Menu do perfil">
       <button type="button" data-action="create-profile" role="menuitem">
         <span class="account-dropdown-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9.5" cy="8.2" r="3.4"/><path d="M3 19.5a6.5 6.5 0 0 1 13 0"/><path d="M18.5 7.5v5M16 10h5"/></svg></span>
-        <span>${userProfile ? 'Criar / Editar Perfil' : 'Criar Perfil'}</span>
+        <span>${userProfile ? 'Criar / Editar Perfil' : 'Cadastro'}</span>
       </button>
       <button type="button" data-action="account" role="menuitem">
         <span class="account-dropdown-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></span>
         <span>${firstName ? `Minha conta (${esc(firstName)})` : 'Minha conta'}</span>
       </button>
-      ${
-        userProfile?.authSource === 'supabase' && workspaceData?.permissions?.canAccessAdminPanel
-          ? `<button type="button" data-action="admin" role="menuitem">
-              <span class="account-dropdown-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 4.5 6.5v5.4c0 4.6 3.1 8.6 7.5 9.8 4.4-1.2 7.5-5.2 7.5-9.8V6.5L12 3Z"/><path d="m9 12 2 2 4-4"/></svg></span>
-              <span>Painel Administrativo</span>
-            </button>`
-          : ''
-      }
+      <button type="button" data-action="admin" role="menuitem">
+        <span class="account-dropdown-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 4.5 6.5v5.4c0 4.6 3.1 8.6 7.5 9.8 4.4-1.2 7.5-5.2 7.5-9.8V6.5L12 3Z"/><path d="m9 12 2 2 4-4"/></svg></span>
+        <span>${showAdminEntry ? 'Painel Administrativo' : 'Painel Administrativo (Prévia Fase 1)'}</span>
+      </button>
       ${
         userProfile
           ? `<button type="button" data-action="clear-profile" role="menuitem">
               <span class="account-dropdown-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></span>
-              <span>${userProfile.authSource === 'supabase' ? 'Sair da conta' : 'Sair do perfil local'}</span>
+              <span>Sair da conta local</span>
             </button>`
-          : isSupabaseConfigured()
-            ? `<button type="button" data-action="open-login-modal" role="menuitem">
-                <span class="account-dropdown-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/></svg></span>
-                <span>Entrar na conta</span>
-              </button>`
-            : ''
+          : `<button type="button" data-action="open-login-modal" role="menuitem">
+              <span class="account-dropdown-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/></svg></span>
+              <span>Entrar na conta</span>
+            </button>`
       }
     </div>`;
   }
@@ -795,9 +903,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       ? esc(userProfile.fullName.split(' ')[0])
       : state.demo
       ? 'Demonstração'
-      : isSupabaseConfigured()
-      ? 'Entrar ou criar'
-      : 'Perfil local';
+      : 'Entrar ou cadastrar';
     return `<header class="topbar">
       <a class="brand" href="#/" data-action="home" aria-label="FerveC Gastronomia, início">
         <img src="/assets/fervec-logo-black.png" alt="FerveC Gastronomia" draggable="false">
@@ -835,7 +941,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           .join('')}
       </nav>
       ${
-        userProfile?.authSource === 'supabase' && workspaceData?.permissions?.canAccessAdminPanel
+        canShowAdminPanelLink()
           ? `<button type="button" class="nav-link admin-top-tab ${route === 'admin' ? 'is-active' : ''}" data-action="admin">
               <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 4.5 6.5v5.4c0 4.6 3.1 8.6 7.5 9.8 4.4-1.2 7.5-5.2 7.5-9.8V6.5L12 3Z"/><path d="m9 12 2 2 4-4"/></svg></span>
               <span>Painel Administrativo</span>
@@ -1764,7 +1870,17 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       : '';
 
     const stagePhoto = getStageVisual('carbonara', lessonStage);
-    const tabBody = `<div class="cockpit-two-col">
+    const lessonIsDone = Boolean(state.lessonFinished || state.done.length >= stages.length);
+    const tabBody = `${renderModuleStageNotificationBanner({
+      iconType: 'lesson',
+      title: 'Aula prática • Spaghetti alla Carbonara',
+      description: `Etapa ${lessonStage + 1} de ${stages.length}: ${s.title}`,
+      isDone: lessonIsDone,
+      isReady: state.done.length >= stages.length,
+      doneLabel: 'Concluído',
+      progressLabel: 'Em andamento',
+    })}
+    <div class="cockpit-two-col">
       <div class="cockpit-left-col">
         ${renderStageMediaPlayer({
           moduleId: 'carbonara',
@@ -1821,6 +1937,14 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       </div>
     </div>
     ${timerWidget}
+    ${renderStandardCompletionAction({
+      isDone: lessonIsDone,
+      buttonLabel: 'Marcar aula como concluída',
+      actionName: 'lesson-mark-complete',
+      doneText: 'Aula concluída! Você já pode seguir para Trabalho ou Revisão.',
+      nextCtaLabel: 'Ir para Trabalho →',
+      nextCtaAction: 'questions',
+    })}
     <details class="cockpit-auxiliary-drawer">
       <summary>Segurança na cozinha e orientações complementares</summary>
       <div class="safety-note cockpit-safety-note">
@@ -1947,9 +2071,19 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       score: 0,
       answers: state.questionsAnswers,
     };
+    const isDone = Boolean(state.questionsFinished);
     return renderCarbonaraTabCockpit(
       'questions',
-      `<section class="result-card">
+      `${renderModuleStageNotificationBanner({
+        iconType: 'work',
+        title: 'Trabalho prático • Spaghetti alla Carbonara',
+        description: 'Responda todas as perguntas obrigatórias para consolidar a técnica.',
+        isDone,
+        isReady: true,
+        doneLabel: 'Concluído',
+        progressLabel: 'Em andamento',
+      })}
+      <section class="result-card">
         <span class="eyebrow">PERGUNTAS CONCLUÍDAS</span>
         <div class="result-medal">${a.score || 0}/${questions.length}</div>
         <h2>Você está indo muito bem!</h2>
@@ -1969,9 +2103,16 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             )
             .join('')}
         </div>
-        <div class="lesson-actions" style="justify-content:flex-start;flex-wrap:wrap;">
+        ${renderStandardCompletionAction({
+          isDone,
+          buttonLabel: 'Marcar trabalho como concluído',
+          actionName: 'questions-mark-complete',
+          doneText: 'Trabalho concluído com sucesso! Seu progresso foi atualizado.',
+          nextCtaLabel: 'Ir para revisão →',
+          nextCtaAction: 'review',
+        })}
+        <div class="lesson-actions" style="justify-content:flex-start;flex-wrap:wrap;margin-top:12px;">
           ${btn('Responder novamente', 'questions-retry', 'btn btn-outline-dark')}
-          ${btn('Ir para revisão', 'review', 'btn btn-red')}
         </div>
       </section>`
     );
@@ -1979,7 +2120,8 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
 
   function questionView(): string {
     const finished = state.questionsFinished && state.questionAttempts.length > 0;
-    if (finished || state.questionsAnswers.length >= questions.length) return questionResults();
+    const answeredCount = state.questionsAnswers.filter((v) => v !== null && v !== undefined).length;
+    if (finished || answeredCount >= questions.length) return questionResults();
     const q = questions[qIndex];
     const answer = state.questionsAnswers[qIndex];
     return renderCarbonaraTabCockpit(
@@ -1995,7 +2137,13 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         chefTip: q.tip,
         answerAction: 'question-answer',
         nextAction: 'question-next',
+        backAction: 'question-back',
         showNavButtons: false,
+        bannerTitle: 'Trabalho prático • Spaghetti alla Carbonara',
+        workCompleted: Boolean(state.questionsFinished),
+        answeredCount,
+        completeAction: 'questions-mark-complete',
+        canCompleteWork: canCompleteModuleWork(answeredCount, questions.length),
       })
     );
   }
@@ -2541,14 +2689,15 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   }
 
   function progressPage(): string {
+    const evaluated = evaluateMainCourseProgress();
     const { modules, totalSteps, completedSteps, overallPct, activeModule } = getAllModulesSummary();
     const carbPassed = state.examAttempts.some((x) => x.passed);
     const latestCarbExam = state.examAttempts[state.examAttempts.length - 1];
     const radius = 38;
     const circ = 2 * Math.PI * radius;
     const offset = circ - (overallPct / 100) * circ;
-
     const currentModuleIdx = activeModule ? activeModule.index : 1;
+
     return `<div class="progress-showcase-backdrop is-light-parchment">
       <div class="progress-top-azulejo-tl" aria-hidden="true"></div>
       <div class="progress-top-azulejo-tr" aria-hidden="true"></div>
@@ -2571,13 +2720,13 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             </div>
             <div class="progress-pct-summary">
               <strong>${overallPct}%</strong>
-              <span>do curso concluído</span>
+              <span>do curso concluído (${completedSteps}/${totalSteps} entregas)</span>
             </div>
             <div class="progress-metrics-divider" aria-hidden="true"></div>
             <div class="progress-stage-pill">
               <svg viewBox="0 0 32 32" width="32" height="32" aria-hidden="true"><path d="M9 6h14v7a7 7 0 0 1-14 0z" fill="#efc84f" stroke="#7d4f0a" stroke-width="1.5"/><path d="M9 8H6c0 4 2 6 3 6M23 8h3c0 4-2 6-3 6" fill="none" stroke="#efc84f" stroke-width="1.8"/><path d="M16 20v5M11 27h10" stroke="#7d4f0a" stroke-width="2" stroke-linecap="round"/></svg>
               <div>
-                <small>Etapa atual (${completedSteps}/${totalSteps})</small>
+                <small>Módulo em foco (${evaluated.completedModulesCount}/6 concluídos)</small>
                 <strong>${currentModuleIdx} de 6</strong>
               </div>
             </div>
@@ -2585,19 +2734,43 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         </div>
       </section>
 
+      <section class="progress-multicourse-grid" aria-label="Visão geral dos cursos FerveC">
+        <article class="progress-course-card is-active-course">
+          <div>
+            <span class="eyebrow">COZINHA ITALIANA · ATIVO</span>
+            <h3>Massas Italianas (6 Módulos)</h3>
+            <p>${evaluated.completedModulesCount} concluído(s) · ${evaluated.inProgressModulesCount} em andamento · ${evaluated.availableModulesCount} disponível(is)</p>
+          </div>
+          <div class="progress-course-meter">
+            <strong>${evaluated.overallPct}%</strong>
+            <button type="button" class="btn btn-red" data-action="certificate">Certificados</button>
+          </div>
+        </article>
+        <article class="progress-course-card is-planned-course">
+          <div>
+            <span class="eyebrow">EXPANSÃO MULTI-CURSOS · FASE 2</span>
+            <h3>Cozinha Francesa, Japonesa &amp; Brasileira</h3>
+            <p>Arquitetura modular pronta para novos cursos mantendo as regras de Aula, Trabalho, Revisão, Prova e Certificado.</p>
+          </div>
+          <span class="progress-state-badge is-locked">🔒 Em breve</span>
+        </article>
+      </section>
+
       <section class="progress-accordion-list" aria-label="Lista de progresso por módulo">
         ${modules
           .map((m) => {
+            const evalMod = evaluated.modules.find((x) => x.id === m.id);
             const isExpanded = expandedProgressId === m.id;
             const isCarb = m.id === 'carbonara';
             const rec = !isCarb ? extraRecipes.find((r) => r.id === m.id) : null;
             const recProg = rec ? recipeProgressFor(rec) : null;
 
-            const examUnlocked = isCarb
-              ? state.lessonFinished && !!state.reviewDone
-              : (recProg?.done.length || 0) >= m.totalSteps && !!recProg?.reviewDone;
-
-            const certUnlocked = isCarb ? state.lessonFinished && carbPassed : (recProg?.done.length || 0) >= m.totalSteps && !!recProg?.examAttempts.some((x) => x.passed);
+            const lessonDone = Boolean(evalMod?.lessonCompleted);
+            const workDone = Boolean(evalMod?.workCompleted);
+            const revDone = Boolean(evalMod?.reviewCompleted);
+            const examUnlocked = Boolean(evalMod?.examUnlocked);
+            const certUnlocked = Boolean(evalMod?.certificateUnlocked);
+            const isLocked = Boolean(evalMod?.isLocked);
 
             let subPanel = '';
             if (isExpanded) {
@@ -2605,21 +2778,27 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
                 subPanel = `<div class="progress-expanded-card">
                   <img class="crop-pasta-right" src="${esc(m.photo)}" alt="${esc(m.title)}">
                   <div class="progress-expanded-body">
-                    <h3>${esc(m.recipeTitle)} · ${m.doneSteps} de ${m.totalSteps} etapas</h3>
+                    <h3>${esc(m.recipeTitle)} · ${evalMod?.modulePct ?? 0}% (${m.doneSteps} de ${m.totalSteps} etapas)</h3>
                     <p>${esc(m.desc)}</p>
+                    <div class="progress-module-pillars">
+                      <span class="pillar-chip ${lessonDone ? 'is-done' : ''}">Aula: ${lessonDone ? 'Concluída' : `${m.doneSteps}/${m.totalSteps}`}</span>
+                      <span class="pillar-chip ${workDone ? 'is-done' : ''}">Trabalho: ${workDone ? 'Concluído' : `${evalMod?.workAnsweredCount || 0}/${questions.length}`}</span>
+                      <span class="pillar-chip ${revDone ? 'is-done' : ''}">Revisão: ${revDone ? 'Concluída' : 'Pendente'}</span>
+                      <span class="pillar-chip ${carbPassed ? 'is-done' : !examUnlocked ? 'is-locked' : ''}">Prova: ${carbPassed ? 'Aprovada' : examUnlocked ? 'Liberada' : '🔒 Bloqueada'}</span>
+                    </div>
                     <div class="progress-sub-actions">
                       <button type="button" class="progress-sub-chip" data-action="questions">
                         <span>?</span>
-                        <div><strong>Perguntas de Aprendizagem</strong><small>${
-                          state.questionAttempts.length
-                            ? `${state.questionAttempts[state.questionAttempts.length - 1].score}/${questions.length} acertos`
-                            : 'Disponível'
+                        <div><strong>Trabalho (Perguntas)</strong><small>${
+                          workDone
+                            ? `Concluído (${state.questionAttempts[state.questionAttempts.length - 1]?.score || questions.length}/${questions.length})`
+                            : `${evalMod?.workAnsweredCount || 0}/${questions.length} respondidas`
                         }</small></div>
                       </button>
                       <button type="button" class="progress-sub-chip" data-action="review">
                         <span>▶</span>
                         <div><strong>Revisão da Carbonara</strong><small>${
-                          state.reviewDone ? 'Concluída' : state.lessonFinished ? 'Disponível' : 'Em andamento'
+                          state.reviewDone ? 'Concluída' : lessonDone ? 'Disponível' : 'Em andamento'
                         }</small></div>
                       </button>
                       <button type="button" class="progress-sub-chip ${!examUnlocked ? 'is-locked' : ''}" data-action="exam">
@@ -2633,9 +2812,9 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
                         }</small></div>
                       </button>
                       <button type="button" class="progress-sub-chip ${!certUnlocked ? 'is-locked' : ''}" data-action="certificate">
-                        <span>${certUnlocked ? '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="9" r="5" fill="none" stroke="currentColor" stroke-width="2.1"/><path d="M9.5 13.5 8 21l4-2 4 2-1.5-7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>' : '🔒'}</span>
-                        <div><strong>Certificado da Carbonara</strong><small>${
-                          certUnlocked ? 'Prévia disponível' : 'Bloqueado até aprovação'
+                        <span>${certUnlocked ? '🎓' : '🔒'}</span>
+                        <div><strong>Certificado</strong><small>${
+                          certUnlocked ? 'Desbloqueado' : 'Bloqueado até aprovação'
                         }</small></div>
                       </button>
                     </div>
@@ -2646,8 +2825,14 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
                 subPanel = `<div class="progress-expanded-card">
                   <img src="${esc(m.photo)}" alt="${esc(m.title)}">
                   <div class="progress-expanded-body">
-                    <h3>${esc(m.recipeTitle)} · ${m.doneSteps} de ${m.totalSteps} etapas</h3>
+                    <h3>${esc(m.recipeTitle)} · ${evalMod?.modulePct ?? 0}% (${m.doneSteps} de ${m.totalSteps} etapas)</h3>
                     <p>${esc(m.desc)}</p>
+                    <div class="progress-module-pillars">
+                      <span class="pillar-chip ${lessonDone ? 'is-done' : ''}">Aula: ${lessonDone ? 'Concluída' : `${m.doneSteps}/${m.totalSteps}`}</span>
+                      <span class="pillar-chip ${workDone ? 'is-done' : ''}">Trabalho: ${workDone ? 'Concluído' : `${evalMod?.workAnsweredCount || 0}/6`}</span>
+                      <span class="pillar-chip ${revDone ? 'is-done' : ''}">Revisão: ${revDone ? 'Concluída' : 'Pendente'}</span>
+                      <span class="pillar-chip ${m.examPassed ? 'is-done' : !examUnlocked ? 'is-locked' : ''}">Prova: ${m.examPassed ? 'Aprovada' : examUnlocked ? 'Liberada' : '🔒 Bloqueada'}</span>
+                    </div>
                     ${
                       rec.id === 'sauces'
                         ? `<p class="sauces-pair-note"><strong>Receitas integradas neste módulo:</strong> Molho 1 · Pomodoro clássico e Molho 2 · Burro e Salvia.</p>`
@@ -2661,9 +2846,9 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
                       <button type="button" class="progress-sub-chip" data-action="open-recipe-tab" data-recipe="${esc(rec.id)}" data-tab="work">
                         <span>?</span>
                         <div><strong>Trabalho Prático</strong><small>${
-                          recProg.workAttempts.length
-                            ? `${recProg.workAttempts[recProg.workAttempts.length - 1].score}/6 acertos`
-                            : 'Disponível'
+                          workDone
+                            ? `Concluído (${recProg.workAttempts[recProg.workAttempts.length - 1]?.score || 6}/6)`
+                            : `${evalMod?.workAnsweredCount || 0}/6 respondidas`
                         }</small></div>
                       </button>
                       <button type="button" class="progress-sub-chip" data-action="open-recipe-tab" data-recipe="${esc(rec.id)}" data-tab="review">
@@ -2692,17 +2877,17 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
                 <span class="progress-num-circle">${m.index}</span>
                 <div class="progress-item-info">
                   <strong>${esc(m.recipeTitle)}</strong>
-                  <small>${esc(m.title)} · ${m.doneSteps}/${m.totalSteps} etapas</small>
+                  <small>${esc(m.title)} · ${m.doneSteps}/${m.totalSteps} etapas · ${evalMod?.modulePct ?? 0}% total</small>
                 </div>
-                <span class="progress-state-badge is-${m.status}">
+                <span class="progress-state-badge is-${isLocked ? 'locked' : m.status}">
                   ${
-                    m.status === 'done'
-                      ? '✓ Concluída'
-                      : m.status === 'progress'
-                        ? '▶ Em andamento'
-                        : m.status === 'available'
-                          ? '🔒 Disponível'
-                          : '○ Não iniciado'
+                    isLocked
+                      ? '🔒 Bloqueado'
+                      : m.status === 'done'
+                        ? '✓ Concluído'
+                        : m.status === 'progress'
+                          ? '▶ Em andamento'
+                          : '• Disponível'
                   }
                 </span>
                 <button type="button" class="progress-expand-btn ${isExpanded ? 'is-open' : ''}" data-action="toggle-progress-item" data-module="${esc(m.id)}" aria-expanded="${isExpanded}" aria-label="Expandir ou recolher detalhes de ${esc(m.title)}">
@@ -2739,19 +2924,71 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     </div>`;
   }
 
-  function adminPage(): string {
-    const isSupabase = userProfile?.authSource === 'supabase';
-    const isAdmin = Boolean(isSupabase && workspaceData?.permissions?.canAccessAdminPanel);
+  function collectLocalAssessments(): AdminAssessmentAttemptView[] {
+    const rows: AdminAssessmentAttemptView[] = [];
+    for (const w of state.questionAttempts) {
+      rows.push({
+        moduleTitle: 'Spaghetti alla Carbonara',
+        kind: 'Trabalho',
+        scoreLabel: `${w.score}/${questions.length}`,
+        passedLabel: 'Concluído',
+        dateIso: w.date || '',
+      });
+    }
+    for (const e of state.examAttempts) {
+      rows.push({
+        moduleTitle: 'Spaghetti alla Carbonara',
+        kind: 'Prova',
+        scoreLabel: `${e.score}%`,
+        passedLabel: e.passed ? 'Aprovado' : 'Refazer',
+        dateIso: e.date || '',
+      });
+    }
+    for (const r of extraRecipes) {
+      const p = state.recipeProgress?.[r.id];
+      if (!p) continue;
+      for (const w of p.workAttempts || []) {
+        rows.push({
+          moduleTitle: r.title,
+          kind: 'Trabalho',
+          scoreLabel: `${w.score}/6`,
+          passedLabel: 'Concluído',
+          dateIso: w.date || '',
+        });
+      }
+      for (const e of p.examAttempts || []) {
+        rows.push({
+          moduleTitle: r.title,
+          kind: 'Prova',
+          scoreLabel: `${e.score}%`,
+          passedLabel: e.passed ? 'Aprovado' : 'Refazer',
+          dateIso: e.date || '',
+        });
+      }
+    }
+    return rows.sort((a, b) => Date.parse(b.dateIso || '') - Date.parse(a.dateIso || ''));
+  }
 
-    if (!isSupabase) {
+  function adminPage(): string {
+    const canEnterPhase1 =
+      PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED
+        ? Boolean(
+            isPhase1AdminPreviewEnabled() ||
+              userProfile?.email?.toLowerCase() === 'fervecrgastronomia@gmail.com'
+          )
+        : Boolean(
+            userProfile?.authSource === 'supabase' && workspaceData?.permissions?.canAccessAdminPanel
+          );
+
+    if (!canEnterPhase1) {
       return `<main class="page-wrap">
         <section class="account-page">
           <div class="account-avatar">⚙</div>
-          <span class="eyebrow">PAINEL ADMINISTRATIVO</span>
-          <h1>Autenticação necessária</h1>
-          <p>Entre com a sua conta administrativa cadastrada no Supabase para acessar o painel de auditoria da FerveC Gastronomia.</p>
+          <span class="eyebrow">PAINEL ADMINISTRATIVO · FASE 1</span>
+          <h1>Prévia Administrativa</h1>
+          <p>Na Fase 1 (sem conexão ao Supabase), o acesso administrativo é controlado localmente para testes de cupons, relatórios, cursos e voz do Chef.</p>
           <div class="lesson-actions" style="justify-content:center;flex-wrap:wrap;">
-            ${isSupabaseConfigured() ? btn('Entrar na conta administrativa', 'open-login-modal', 'btn btn-red') : ''}
+            ${btn('Ativar Prévia Administrativa (Fase 1)', 'enable-admin-preview', 'btn btn-red')}
             ${btn('Voltar para Minha conta', 'account', 'btn btn-outline-dark')}
           </div>
         </section>
@@ -2759,102 +2996,73 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       </main>`;
     }
 
-    if (!isAdmin) {
-      return `<main class="page-wrap">
-        <section class="account-page">
-          <div class="account-avatar">🔒</div>
-          <span class="eyebrow">PAINEL ADMINISTRATIVO</span>
-          <h1>Acesso restrito</h1>
-          <p>Esta área é exclusiva da administração da FerveC Gastronomia. Sua conta (${esc(userProfile?.email || '')}) não possui permissão administrativa.</p>
-          <div class="lesson-actions" style="justify-content:center;flex-wrap:wrap;">
-            ${btn('Voltar para Minha conta', 'account', 'btn btn-red')}
-            ${btn('Ver meus cursos', 'courses', 'btn btn-outline-dark')}
-          </div>
-        </section>
-        ${footerNote()}
-      </main>`;
-    }
+    const accounts = listUnifiedAccounts();
+    const coupons = listProvisionalCoupons();
+    const demoOrders = listProvisionalDemoOrders();
+    const activities = listProvisionalActivities();
+    const courseProgress = evaluateMainCourseProgress();
+    const assessments = collectLocalAssessments();
+    const availableVoices = listAvailablePtBrVoices();
 
-    return `<main class="page-wrap">
-      <section class="admin-panel-shell" aria-label="Painel Administrativo da FerveC Gastronomia">
-        <div class="admin-panel-head">
-          <div>
-            <span class="eyebrow">PAINEL ADMINISTRATIVO · FERVEC GASTRONOMIA</span>
-            <h1>Administração &amp; Auditoria Asaas</h1>
-            <p>Acompanhe em tempo real o status da integração de pagamentos Asaas, variáveis de ambiente e webhook sem expor chaves no navegador.</p>
-          </div>
-          <div class="admin-panel-actions">
-            ${btn('Certificados (Admin)', 'certificate', 'btn btn-outline-dark')}
-            ${btn('Página de Pagamentos', 'payments', 'btn btn-outline-dark')}
-            ${btn('Minha conta', 'account', 'btn btn-saffron')}
-          </div>
-        </div>
-        <div id="admin-asaas-audit-mount"></div>
-      </section>
-      ${footerNote()}
-    </main>`;
+    return (
+      renderAdminDashboard({
+        activeTab: adminActiveTab,
+        mobileMenuOpen: adminMobileMenuOpen,
+        adminDisplayName: userProfile?.fullName || 'Operador Admin (Prévia)',
+        adminEmail: userProfile?.email || 'fervecrgastronomia@gmail.com',
+        accounts,
+        coupons,
+        demoOrders,
+        activities,
+        courseProgress,
+        assessments,
+        couponDraft: adminCouponDraft,
+        voiceConfig: adminVoiceConfig,
+        voiceTestPhrase: adminVoiceTestPhrase,
+        voiceStatusLabel: adminVoiceStatusLabel,
+        availableVoices,
+      }) + footerNote()
+    );
   }
 
   function accountPage(): string {
     if (userProfile) {
       const initial = esc(userProfile.fullName.trim().charAt(0).toUpperCase() || 'F');
-      const isSupabase = userProfile.authSource === 'supabase';
-      const isAdmin = Boolean(isSupabase && workspaceData?.permissions?.canAccessAdminPanel);
+      const isSupabase =
+        !PHASE_1_OFFLINE_ONLY && SUPABASE_CONNECTED && userProfile.authSource === 'supabase';
+      const hasCourse = hasProvisionalCourseEntitlement(userProfile.email, 'massas-italianas');
+      const isAdmin = canShowAdminPanelLink();
       return `<main class="page-wrap">
         <section class="account-page">
           <div class="account-avatar">${initial}</div>
-          <span class="eyebrow">${isSupabase ? 'MINHA CONTA · SUPABASE' : 'MINHA CONTA · PERFIL LOCAL'}</span>
+          <span class="eyebrow">${isSupabase ? 'MINHA CONTA' : 'MINHA CONTA · ARMAZENAMENTO LOCAL (FASE 1)'}</span>
           <h1>${esc(userProfile.fullName)}</h1>
-          <p>${
-            isSupabase
-              ? isAdmin
-                ? `Sua conta administrativa está conectada ao Supabase (${esc(userProfile.email)} · (${esc(userProfile.ddd)}) ${esc(userProfile.phone)}).`
-                : `Sua conta está conectada ao Supabase (${esc(userProfile.email)} · (${esc(userProfile.ddd)}) ${esc(userProfile.phone)}).`
-              : `Seu perfil está salvo localmente neste navegador (${esc(userProfile.email)} · (${esc(userProfile.ddd)}) ${esc(userProfile.phone)}).`
-          }</p>
+          <p>Seu cadastro unificado está salvo localmente neste navegador (${esc(userProfile.email)} · (${esc(userProfile.ddd)}) ${esc(userProfile.phone)}).</p>
           <div class="account-state">
             <span class="state-dot"></span>
             <div>
-              <strong>${isSupabase ? `Conta Supabase ativa (${userProfile.age} anos)` : `Perfil local ativo (${userProfile.age} anos)`}</strong>
+              <strong>Conta local ativa (${userProfile.age} anos)</strong>
               <small>${
-                isSupabase
-                  ? 'Cadastro sincronizado com o banco de dados Supabase e salvo neste navegador.'
-                  : 'Salvo apenas neste dispositivo, sem sincronização externa.'
+                hasCourse
+                  ? 'Curso de Massas Italianas liberado na Biblioteca Interativa (matrícula demonstrativa local).'
+                  : 'Acesso à Biblioteca Interativa requer aquisição do curso em Pagamentos (ou cupom de 100% na Fase 1).'
               }</small>
             </div>
           </div>
           <div class="lesson-actions" style="justify-content:center;flex-wrap:wrap;">
-            ${
-              !isSupabase && isSupabaseConfigured()
-                ? btn('Entrar na conta Supabase', 'open-login-modal', 'btn btn-saffron')
-                : ''
-            }
-            ${isAdmin ? btn('Painel Administrativo', 'admin', 'btn btn-saffron') : ''}
+            ${btn('Painel Administrativo', 'admin', 'btn btn-saffron')}
+            ${btn('Pagamentos', 'payments', 'btn btn-outline-dark')}
             ${btn('Ver meus cursos', 'courses', 'btn btn-red')}
             ${btn('Editar Perfil', 'edit-profile', 'btn btn-outline-dark')}
             ${btn('Memorial Descritivo', 'open-memorial', 'btn btn-outline-dark')}
           </div>
-          <button class="text-action account-reset" data-action="clear-profile">${
-            isSupabase ? 'Sair da conta e limpar dados locais' : 'Remover perfil local deste navegador'
-          }</button>
+          ${
+            !isAdmin
+              ? `<button class="text-action" data-action="enable-admin-preview" style="margin-top:8px;">Ativar prévia do Painel Administrativo</button>`
+              : ''
+          }
+          <button class="text-action account-reset" data-action="clear-profile">Sair e desconectar conta local deste navegador</button>
         </section>
-        ${
-          isAdmin
-            ? `<section class="admin-panel-shell" aria-label="Painel Administrativo Integrado">
-                <div class="admin-panel-head">
-                  <div>
-                    <span class="eyebrow">ÁREA ADMINISTRATIVA VERIFICADA</span>
-                    <h2>Auditoria de Pagamentos Asaas</h2>
-                    <p>Visível apenas para a conta administrativa autenticada no servidor.</p>
-                  </div>
-                  <div class="admin-panel-actions">
-                    ${btn('Abrir Painel Completo', 'admin', 'btn btn-outline-dark')}
-                  </div>
-                </div>
-                <div id="admin-asaas-audit-mount"></div>
-              </section>`
-            : ''
-        }
         ${footerNote()}
       </main>`;
     }
@@ -2862,12 +3070,12 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     return `<main class="page-wrap">
       <section class="account-page">
         <div class="account-avatar">${state.demo ? 'C' : '♡'}</div>
-        <span class="eyebrow">MINHA CONTA</span>
+        <span class="eyebrow">MINHA CONTA · FASE 1 LOCAL</span>
         <h1>${state.demo ? 'Área de demonstração' : 'A sua conta FerveC'}</h1>
         <p>${
           state.demo
-            ? 'Você está no modo demonstração local. Crie um perfil para personalizar sua experiência ou continue explorando os cursos.'
-            : 'Crie seu cadastro no Supabase ou entre com sua conta existente para personalizar sua jornada na cozinha.'
+            ? 'Você está no modo demonstração local. Crie seu cadastro único para personalizar sua experiência e acessar a Biblioteca Interativa após adquirir um curso.'
+            : 'Crie seu cadastro no portal ou entre com uma conta local existente para acessar sua jornada.'
         }</p>
         <div class="account-state">
           <span class="state-dot"></span>
@@ -2875,32 +3083,20 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             <strong>${
               state.demo
                 ? 'Modo demonstração local ativo'
-                : isSupabaseConfigured()
-                  ? 'Conexão com Supabase pronta'
-                  : 'Nenhum perfil cadastrado neste navegador'
+                : 'Armazenamento provisório local (Fase 1)'
             }</strong>
-            <small>${
-              state.demo
-                ? 'Sem sincronização entre aparelhos.'
-                : isSupabaseConfigured()
-                  ? 'Crie sua conta na aba Cadastro ou entre com seu e-mail e senha.'
-                  : 'Dados salvos localmente no navegador ao criar seu perfil.'
-            }</small>
+            <small>Sincronização em nuvem aguardando integração na Fase 2.</small>
           </div>
         </div>
         <div class="lesson-actions" style="justify-content:center;flex-wrap:wrap;">
-          ${btn('Criar Perfil', 'create-profile', 'btn btn-red')}
-          ${
-            isSupabaseConfigured()
-              ? btn('Já tenho conta (Entrar)', 'open-login-modal', 'btn btn-outline-dark')
-              : ''
-          }
+          ${btn('Criar Cadastro', 'create-profile', 'btn btn-red')}
+          ${btn('Já tenho conta (Entrar)', 'open-login-modal', 'btn btn-outline-dark')}
+          ${btn('Painel Administrativo', 'admin', 'btn btn-outline-dark')}
           ${btn(
             state.demo ? 'Ver meus cursos' : 'Explorar modo demonstração',
             state.demo ? 'courses' : 'demo-entry',
             'btn btn-outline-dark'
           )}
-          ${btn('Memorial Descritivo', 'open-memorial', 'btn btn-outline-dark')}
         </div>
         ${
           state.demo
@@ -2915,26 +3111,25 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   function helpPage(): string {
     return `<main class="page-wrap">
       <section class="help-page">
-        <span class="eyebrow">PODE CHAMAR O CHEF</span>
-        <h1>Ajuda sem complicação.</h1>
-        <p>Se alguma etapa ficou confusa, volte à aula e use o botão Socorro, Chef! ou converse diretamente com o assistente do Chef CREMONESE.</p>
-        <div class="help-items">
-          <article>
-            <strong>Uma etapa por vez</strong>
-            <p>Use voltar e avançar para revisar sem perder o que já marcou nos 6 módulos.</p>
+        <span class="eyebrow">ATENDIMENTO FERVEC GASTRONOMIA</span>
+        <h1>Ajuda e Contato Oficial</h1>
+        <p>Fale diretamente com a equipe FerveC Gastronomia pelos nossos canais oficiais de atendimento.</p>
+        <div class="help-contact-grid">
+          <article class="help-contact-card">
+            <span class="help-contact-icon" aria-hidden="true">✉</span>
+            <strong>E-mail Oficial</strong>
+            <p>Dúvidas sobre cursos, pagamentos ou acesso à plataforma.</p>
+            <a class="btn btn-red" href="mailto:fervecrgastronomia@gmail.com">fervecrgastronomia@gmail.com</a>
           </article>
-          <article>
-            <strong>Não ouviu o áudio?</strong>
-            <p>O áudio usa síntese de voz quando disponível no navegador. Se não carregar, a legenda da fala continua visível.</p>
-          </article>
-          <article>
-            <strong>Sobre seus dados e certificado</strong>
-            <p>A demonstração salva progresso localmente neste dispositivo. Não existe conta sincronizada, checkout ativo nem emissão oficial em PDF nesta prévia.</p>
+          <article class="help-contact-card">
+            <span class="help-contact-icon" aria-hidden="true">◎</span>
+            <strong>Instagram Oficial</strong>
+            <p>Novidades, receitas, bastidores e atendimento por mensagem.</p>
+            <a class="btn btn-outline-dark" href="https://www.instagram.com/fervecgastronomia/" target="_blank" rel="noopener noreferrer">@fervecgastronomia</a>
           </article>
         </div>
         <div class="lesson-actions" style="justify-content:flex-start;flex-wrap:wrap;">
           ${btn('Voltar aos cursos', 'courses', 'btn btn-red')}
-          ${btn('Conversar com o Chef IA', 'open-chef-chat', 'btn btn-outline-dark')}
           ${btn('Memorial Descritivo', 'open-memorial', 'btn btn-outline-dark')}
         </div>
       </section>
@@ -3194,11 +3389,21 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
 
     if (!examMode && prog.workFinished) {
       const result = attempts[attempts.length - 1] || { score: 0, answers: [] };
-      return `<section class="result-card">
+      const isWorkDone = Boolean(prog.workCompleted || prog.workFinished);
+      return `${renderModuleStageNotificationBanner({
+        iconType: 'work',
+        title: `Trabalho prático • ${r.title}`,
+        description: 'Responda todas as perguntas obrigatórias para consolidar a técnica.',
+        isDone: isWorkDone,
+        isReady: true,
+        doneLabel: 'Concluído',
+        progressLabel: 'Em andamento',
+      })}
+      <section class="result-card">
         <span class="eyebrow">TRABALHO CONCLUÍDO</span>
         <div class="result-medal">${result.score}/${bank.length}</div>
         <h2>Vamos aprender com cada resposta.</h2>
-        <p>O trabalho é formativo e não bloqueia seu progresso.</p>
+        <p>O trabalho é formativo e consolida os fundamentos do módulo.</p>
         <div class="answer-review-list">
           ${bank
             .map(
@@ -3214,7 +3419,16 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             )
             .join('')}
         </div>
-        <button class="btn btn-outline-dark" data-action="recipe-work-retry">Refazer o trabalho</button>
+        ${renderStandardCompletionAction({
+          isDone: isWorkDone,
+          buttonLabel: 'Marcar trabalho como concluído',
+          actionName: 'recipe-work-mark-complete',
+          doneText: 'Trabalho concluído com sucesso! Seu progresso foi atualizado.',
+          nextCtaLabel: 'Ir para revisão →',
+          nextCtaAction: 'recipe-tab',
+          nextCtaAttrs: 'data-tab="review"',
+        })}
+        <button class="btn btn-outline-dark" data-action="recipe-work-retry" style="margin-top:12px;">Refazer o trabalho</button>
       </section>`;
     }
 
@@ -3246,6 +3460,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
 
     const q = bank[current];
     const value = answers[current];
+    const answeredCount = answers.filter((v) => v !== null && v !== undefined).length;
     return renderUnifiedTrabalhoSection({
       currentIndex: current,
       totalQuestions: bank.length,
@@ -3260,6 +3475,11 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       nextAction: 'recipe-question-next',
       backAction: 'recipe-question-back',
       showNavButtons: true,
+      bannerTitle: examMode ? `Prova • ${r.title}` : `Trabalho prático • ${r.title}`,
+      workCompleted: Boolean(prog.workCompleted || prog.workFinished),
+      answeredCount,
+      completeAction: !examMode ? 'recipe-work-mark-complete' : undefined,
+      canCompleteWork: !examMode && canCompleteModuleWork(answeredCount, bank.length),
     });
   }
 
@@ -3465,8 +3685,18 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         .map((s) => s.trim())
         .filter(Boolean);
       const microList = stepItems.length ? stepItems : [step[1]];
+      const recipeLessonDone = Boolean(prog.lessonCompleted || prog.done.length >= r.steps.length);
 
-      tabBody = `<div class="cockpit-two-col">
+      tabBody = `${renderModuleStageNotificationBanner({
+        iconType: 'lesson',
+        title: `Aula prática • ${r.title}`,
+        description: `Etapa ${index + 1} de ${r.steps.length}: ${step[0]}`,
+        isDone: recipeLessonDone,
+        isReady: prog.done.length >= r.steps.length,
+        doneLabel: 'Concluído',
+        progressLabel: 'Em andamento',
+      })}
+      <div class="cockpit-two-col">
         <div class="cockpit-left-col">
           ${renderStageMediaPlayer({
             moduleId: r.id,
@@ -3523,6 +3753,15 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           ${renderInteractiveIngredientsPanel(r.id, index, stepVisual)}
         </div>
       </div>
+      ${renderStandardCompletionAction({
+        isDone: recipeLessonDone,
+        buttonLabel: 'Marcar aula como concluída',
+        actionName: 'recipe-lesson-mark-complete',
+        doneText: 'Aula concluída! Você já pode seguir para Trabalho ou Revisão.',
+        nextCtaLabel: 'Ir para Trabalho →',
+        nextCtaAction: 'recipe-tab',
+        nextCtaAttrs: 'data-tab="work"',
+      })}
       <details class="cockpit-auxiliary-drawer">
         <summary>Lista completa da receita (${esc(r.yield)}), alergênicos e notas editoriais</summary>
         <div class="cockpit-module-ingredients-list">
@@ -4822,6 +5061,19 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     courseTitle: string;
     value: number;
   }) {
+    if (PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED) {
+      paymentSummary = {
+        ...createDefaultCoursePaymentSummary(params.courseSlug || 'massas-italianas'),
+        courseId: params.courseId,
+        courseSlug: params.courseSlug,
+        courseTitle: params.courseTitle,
+        priceCents: Math.round(params.value * 100),
+      };
+      paymentsUiStatus = 'awaiting_selection';
+      paymentsStatusMessage = null;
+      go('payments');
+      return;
+    }
     if (paymentCheckoutState.isProcessing) return;
     const outcome = await requestAsaasChargeCheckout({
       courseId: params.courseId,
@@ -4977,6 +5229,21 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   }
 
   async function hydratePaymentsSummary(force = false): Promise<void> {
+    if (PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED) {
+      paymentSummaryLoaded = true;
+      const entitled = userProfile
+        ? hasProvisionalCourseEntitlement(userProfile.email, paymentSummary.courseSlug)
+        : false;
+      paymentSummary = {
+        ...paymentSummary,
+        isEnrolled: entitled,
+      };
+      if (entitled && paymentsUiStatus === 'approved') {
+        paymentsStatusMessage =
+          'Aquisição demonstrativa gratuita confirmada neste dispositivo. Biblioteca Interativa liberada!';
+      }
+      return;
+    }
     if (paymentSummaryLoaded && !force) return;
     paymentSummaryLoaded = true;
     const fetched = await fetchCoursePaymentSummary('massas-italianas');
@@ -5020,6 +5287,87 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   }
 
   async function executePaymentsPageCheckout(overrideMethod?: PaymentMethodChoice): Promise<void> {
+    if (PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED) {
+      const method = overrideMethod || selectedPaymentMethod;
+      selectedPaymentMethod = method;
+
+      const breakdown = appliedPaymentCoupon
+        ? applyCouponDiscount(paymentSummary.priceCents, appliedPaymentCoupon.discountPercent)
+        : applyCouponDiscount(paymentSummary.priceCents, 0);
+
+      if (appliedPaymentCoupon && breakdown.isFree) {
+        if (!userProfile?.email) {
+          paymentsUiStatus = 'refused';
+          paymentsStatusMessage =
+            'Para vincular a matrícula demonstrativa gratuita ao seu acesso da Biblioteca Interativa, faça primeiro seu Cadastro Principal no site.';
+          toast.warning('Cadastro necessário', 'Crie ou entre com sua conta antes de concluir.');
+          render();
+          return;
+        }
+
+        const orderId = `DEM-${Date.now().toString(36).toUpperCase()}`;
+        const redemption = recordProvisionalCouponRedemption({
+          couponCode: appliedPaymentCoupon.code,
+          orderId,
+          courseSlug: paymentSummary.courseSlug,
+          studentEmail: userProfile.email,
+          studentName: userProfile.fullName,
+          originalCents: breakdown.subtotalCents,
+          finalCents: 0,
+        });
+        if (!redemption.ok) {
+          paymentsUiStatus = 'refused';
+          paymentsStatusMessage = redemption.error || 'Cupom indisponível para resgate.';
+          appliedPaymentCoupon = null;
+          render();
+          return;
+        }
+
+        saveProvisionalDemoOrder({
+          id: orderId,
+          courseSlug: paymentSummary.courseSlug,
+          courseTitle: paymentSummary.courseTitle,
+          studentEmail: userProfile.email,
+          studentName: userProfile.fullName,
+          subtotalCents: breakdown.subtotalCents,
+          discountPercent: 100,
+          discountCents: breakdown.discountCents,
+          totalCents: 0,
+          couponCode: appliedPaymentCoupon.code,
+          status: 'demo_free_enrolled',
+          paymentMethod: 'COUPON_100',
+          createdAt: new Date().toISOString(),
+          isDemo: true,
+        });
+
+        grantProvisionalCourseEntitlement(userProfile.email, paymentSummary.courseSlug);
+        paymentSummary = {
+          ...paymentSummary,
+          isEnrolled: true,
+          latestOrderStatus: 'paid',
+        };
+        activeOrderId = orderId;
+        paymentsUiStatus = 'approved';
+        paymentsStatusMessage = `Aquisição demonstrativa gratuita concluída (Cupom ${appliedPaymentCoupon.code} · 100%). Acesso ao curso e à Biblioteca Interativa liberado localmente para ${userProfile.email}.`;
+        toast.success(
+          'Aquisição demonstrativa confirmada!',
+          `Pedido ${orderId} registrado e Biblioteca Interativa liberada.`
+        );
+        render();
+        return;
+      }
+
+      paymentsUiStatus = 'communication_error';
+      paymentsStatusMessage =
+        'Gateway Asaas aguardando configuração da Fase 2. Nesta Fase 1 não realizamos transações financeiras reais; utilize um cupom promocional de 100% gerado no Painel Administrativo para testar a aquisição demonstrativa gratuita.';
+      toast.info(
+        'Asaas aguardando Fase 2',
+        'Nenhum pagamento pago foi simulado. Use um cupom de 100% para testar liberação.'
+      );
+      render();
+      return;
+    }
+
     if (paymentCheckoutState.isProcessing) return;
 
     const method = overrideMethod || selectedPaymentMethod;
@@ -5196,6 +5544,80 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   function openLoginModal(subtitle?: string) {
     accountMenuOpen = false;
     const defaultEmail = userProfile?.email || '';
+    if (PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED) {
+      openModal(`<div class="modal-backdrop">
+        <section class="modal" role="dialog" aria-modal="true" aria-labelledby="login-modal-title">
+          <button class="modal-close" data-action="close-modal" aria-label="Fechar">×</button>
+          <span class="eyebrow">MINHA CONTA · ARMAZENAMENTO LOCAL (FASE 1)</span>
+          <h2 id="login-modal-title">Entrar na sua conta</h2>
+          <p>${esc(subtitle || 'Informe o e-mail e a senha do seu cadastro único FerveC.')}</p>
+          <form id="supabase-login-form" style="display:grid;gap:12px;margin-top:14px;">
+            <div>
+              <label for="login-email" style="display:block;font-size:13px;font-weight:600;margin-bottom:4px;">E-mail</label>
+              <input id="login-email" name="email" type="email" required value="${esc(defaultEmail)}" placeholder="seu@email.com" style="width:100%;padding:10px 14px;border-radius:999px;border:1px solid #d4c4ac;background:#fff;" />
+            </div>
+            <div>
+              <label for="login-password" style="display:block;font-size:13px;font-weight:600;margin-bottom:4px;">Senha</label>
+              <input id="login-password" name="password" type="password" required placeholder="Sua senha" style="width:100%;padding:10px 14px;border-radius:999px;border:1px solid #d4c4ac;background:#fff;" />
+            </div>
+            <p data-login-error role="alert" style="display:none;margin:0;padding:10px 14px;border-radius:12px;background:#fff1f0;border:1px solid #e7b5b2;color:#8c1118;font-size:13px;font-weight:600;line-height:1.45;"></p>
+            <div class="modal-buttons" style="margin-top:4px;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+              <button type="button" class="btn btn-outline-dark" data-action="create-profile">Criar cadastro</button>
+              <div style="display:flex;gap:8px;">
+                <button type="button" class="btn btn-outline-dark" data-action="close-modal">Cancelar</button>
+                <button type="submit" class="btn btn-red" id="login-submit-btn">Entrar</button>
+              </div>
+            </div>
+          </form>
+        </section>
+      </div>`);
+
+      const loginForm = modal.querySelector<HTMLFormElement>('#supabase-login-form');
+      const loginError = modal.querySelector<HTMLElement>('[data-login-error]');
+      loginForm?.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const emailVal = loginForm.querySelector<HTMLInputElement>('#login-email')?.value.trim() || '';
+        const passVal = loginForm.querySelector<HTMLInputElement>('#login-password')?.value || '';
+        const authRes = await authenticateUnifiedProvisional(emailVal, passVal);
+        if (!authRes.ok || !authRes.account) {
+          if (loginError) {
+            loginError.textContent = authRes.error || 'Não foi possível entrar.';
+            loginError.style.display = 'block';
+          }
+          return;
+        }
+        const acc = authRes.account;
+        const restoredProfile: StoredUserProfile = {
+          id: acc.id,
+          fullName: acc.fullName,
+          cpfMasked: acc.cpfMasked,
+          cpfHash: acc.cpfHash,
+          birthDate: acc.birthDate,
+          age: acc.age,
+          email: acc.email,
+          ddd: acc.ddd,
+          phone: acc.phone,
+          promoWhatsapp: acc.promoWhatsapp,
+          promoEmail: acc.promoEmail,
+          createdAt: acc.createdAt,
+          authSource: 'local',
+        };
+        saveProfile(restoredProfile);
+        userProfile = restoredProfile;
+        profileDraft = createInitialProfileDraft(restoredProfile);
+        syncProgressScope(restoredProfile);
+        setPhase1AdminPreviewEnabled(acc.role === 'admin');
+        closeModal();
+        toast.success(
+          `Bem-vindo(a) de volta, ${restoredProfile.fullName.split(' ')[0]}!`,
+          'Conta local carregada neste navegador.'
+        );
+        void hydratePaymentsSummary(true);
+        render();
+      });
+      return;
+    }
+
     openModal(`<div class="modal-backdrop">
       <section class="modal" role="dialog" aria-modal="true" aria-labelledby="login-modal-title">
         <button class="modal-close" data-action="close-modal" aria-label="Fechar">×</button>
@@ -5455,6 +5877,15 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   async function handleGenerateCertificatePdf() {
     if (certPdfBusy) return;
     closeModal();
+
+    if (PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED) {
+      pendingCertificateIssueAfterLogin = false;
+      showModal(
+        'Emissão oficial disponível na Fase 2 (Supabase)',
+        'Nesta Fase 1 (sem conexão ao Supabase), o progresso e a elegibilidade do certificado funcionam localmente para avaliação. A geração oficial com assinatura em banco de dados e PDF no servidor será ativada na Fase 2.'
+      );
+      return;
+    }
 
     await initSupabaseRuntimeConfig();
 
@@ -5926,6 +6357,34 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         profileSubmitting = true;
         render();
 
+        if (PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED) {
+          const localProfile: StoredUserProfile = {
+            ...createStoredProfile(profileDraft),
+            ...(userProfile?.id ? { id: userProfile.id } : {}),
+            authSource: 'local',
+          };
+          saveProfile(localProfile);
+          const unified = await upsertUnifiedAccountFromProfile(localProfile, profileDraft.password);
+          profileSubmitting = false;
+
+          userProfile = localProfile;
+          syncProgressScope(localProfile);
+          setPhase1AdminPreviewEnabled(unified.role === 'admin');
+          state.demo = true;
+          persist();
+          profileJustCreated = true;
+          profileErrors = {};
+          profileDraft = createInitialProfileDraft(localProfile);
+          const firstName = localProfile.fullName.split(' ')[0] || 'Chef';
+          toast.success(
+            hadExistingProfile ? 'Perfil atualizado com sucesso!' : 'Cadastro realizado com sucesso!',
+            `Bem-vindo(a), ${firstName}! Seu cadastro único foi salvo localmente para a Fase 1. A Biblioteca Interativa será liberada após aquisição do curso em Pagamentos.`
+          );
+          render();
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          return;
+        }
+
         const syncResult = await registerOrUpdateSupabaseProfile(profileDraft, userProfile);
         profileSubmitting = false;
 
@@ -5971,6 +6430,83 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         }
         render();
         window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    }
+
+    const couponForm = $<HTMLFormElement>('#admin-coupon-form');
+    if (couponForm) {
+      couponForm.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        const codeEl = couponForm.querySelector<HTMLInputElement>('[name="code"]');
+        const discountEl = couponForm.querySelector<HTMLSelectElement>('[name="discountPercent"]');
+        const validityEl = couponForm.querySelector<HTMLSelectElement>('[name="validityDays"]');
+        const maxUsesEl = couponForm.querySelector<HTMLInputElement>('[name="maxUses"]');
+        const scopeEl = couponForm.querySelector<HTMLSelectElement>('[name="courseScope"]');
+
+        const created = createProvisionalCoupon({
+          code: codeEl?.value || adminCouponDraft.code,
+          discountPercent: Number(discountEl?.value || adminCouponDraft.discountPercent),
+          validityDays: Number(validityEl?.value || adminCouponDraft.validityDays),
+          maxUses: Number(maxUsesEl?.value || adminCouponDraft.maxUses),
+          courseScope: scopeEl?.value || adminCouponDraft.courseScope,
+        });
+        adminCouponDraft = {
+          ...adminCouponDraft,
+          code: generateUniqueSixDigitCode(listProvisionalCoupons().map((c) => c.code)),
+        };
+        toast.success(
+          `Cupom ${created.code} gerado!`,
+          `${created.discountPercent}% de desconto · válido por ${created.validityDays} dia(s) · até ${created.maxUses} uso(s).`
+        );
+        render();
+      });
+    }
+
+    const voiceForm = $<HTMLFormElement>('#admin-voice-form');
+    if (voiceForm) {
+      voiceForm.addEventListener('input', () => {
+        const rateEl = voiceForm.querySelector<HTMLInputElement>('#admin-voice-rate');
+        const pitchEl = voiceForm.querySelector<HTMLInputElement>('#admin-voice-pitch');
+        const volEl = voiceForm.querySelector<HTMLInputElement>('#admin-voice-volume');
+        const selectEl = voiceForm.querySelector<HTMLSelectElement>('#admin-voice-select');
+        const phraseEl = voiceForm.querySelector<HTMLTextAreaElement>('#admin-voice-test-phrase');
+
+        if (rateEl) {
+          adminVoiceConfig.rate = Number(rateEl.value);
+          const lbl = voiceForm.querySelector<HTMLElement>('[data-voice-rate-val]');
+          if (lbl) lbl.textContent = `${adminVoiceConfig.rate.toFixed(2)}x`;
+        }
+        if (pitchEl) {
+          adminVoiceConfig.pitch = Number(pitchEl.value);
+          const lbl = voiceForm.querySelector<HTMLElement>('[data-voice-pitch-val]');
+          if (lbl) lbl.textContent = adminVoiceConfig.pitch.toFixed(2);
+        }
+        if (volEl) {
+          adminVoiceConfig.volume = Number(volEl.value);
+          const lbl = voiceForm.querySelector<HTMLElement>('[data-voice-vol-val]');
+          if (lbl) lbl.textContent = `${Math.round(adminVoiceConfig.volume * 100)}%`;
+        }
+        if (selectEl) {
+          adminVoiceConfig.voiceUri = selectEl.value;
+          const opt = selectEl.selectedOptions[0];
+          adminVoiceConfig.voiceName = opt?.textContent || '';
+        }
+        if (phraseEl) {
+          adminVoiceTestPhrase = phraseEl.value;
+        }
+      });
+
+      voiceForm.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        adminVoiceConfig = saveChefVoiceConfig(adminVoiceConfig);
+        state.voiceVolume = adminVoiceConfig.volume;
+        persist();
+        adminVoiceStatusLabel = 'Padrão Chef Educador salvo (Site + Biblioteca)';
+        toast.success(
+          'Configuração de voz salva!',
+          'Aplicada imediatamente nas aulas do site e na Biblioteca Interativa.'
+        );
+        render();
       });
     }
   }
@@ -6026,6 +6562,10 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           copiedPix: copiedPixCode,
           activeOrderId,
           activePayment: activePaymentCharge,
+          couponCodeInput: paymentCouponInput,
+          appliedCoupon: appliedPaymentCoupon,
+          couponFeedback: paymentCouponFeedback,
+          isPhase1Offline: PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED,
         }),
       memorial: memorialPage,
       progress: progressPage,
@@ -6040,7 +6580,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           savedProfile: userProfile,
           justCreated: profileJustCreated,
           isSubmitting: profileSubmitting,
-          supabaseConfigured: isSupabaseConfigured(),
+          supabaseConfigured: !PHASE_1_OFFLINE_ONLY && SUPABASE_CONNECTED && isSupabaseConfigured(),
         }),
       help: helpPage,
     };
@@ -6220,6 +6760,90 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     else if (a === 'payments') {
       go('payments');
       void hydratePaymentsSummary(true);
+    } else if (a === 'apply-coupon') {
+      const code = normalizeCouponCode(paymentCouponInput);
+      const coupons = listProvisionalCoupons();
+      const validation = validateCouponForCourse(code, coupons, paymentSummary.courseSlug);
+      if (!validation.ok || !validation.coupon) {
+        appliedPaymentCoupon = null;
+        paymentCouponFeedback = { ok: false, message: validation.message };
+        toast.warning('Cupom inválido', validation.message);
+      } else {
+        const disc = applyCouponDiscount(paymentSummary.priceCents, validation.coupon.discountPercent);
+        appliedPaymentCoupon = {
+          code: validation.coupon.code,
+          discountPercent: validation.coupon.discountPercent,
+          discountCents: disc.discountCents,
+          totalCents: disc.totalCents,
+          isFree: disc.isFree,
+        };
+        paymentCouponFeedback = { ok: true, message: validation.message };
+        toast.success('Cupom aplicado!', validation.message);
+      }
+      render();
+    } else if (a === 'remove-coupon') {
+      appliedPaymentCoupon = null;
+      paymentCouponInput = '';
+      paymentCouponFeedback = null;
+      render();
+    } else if (a === 'enable-admin-preview') {
+      setPhase1AdminPreviewEnabled(true);
+      toast.success('Prévia Administrativa ativada!', 'Acesso local ao Painel Administrativo liberado para a Fase 1.');
+      go('admin');
+    } else if (a === 'admin-tab') {
+      adminActiveTab = (b.dataset.tab || 'overview') as AdminTabId;
+      adminMobileMenuOpen = false;
+      render();
+    } else if (a === 'admin-toggle-mobile-nav') {
+      adminMobileMenuOpen = !adminMobileMenuOpen;
+      render();
+    } else if (a === 'admin-regenerate-coupon-code') {
+      adminCouponDraft = {
+        ...adminCouponDraft,
+        code: generateUniqueSixDigitCode(listProvisionalCoupons().map((c) => c.code)),
+      };
+      render();
+    } else if (a === 'admin-copy-coupon') {
+      const code = b.dataset.code || '';
+      if (code && navigator.clipboard?.writeText) {
+        void navigator.clipboard.writeText(code);
+      }
+      showToast(`Código ${code} copiado!`);
+    } else if (a === 'admin-toggle-coupon') {
+      const code = b.dataset.code || '';
+      const nextActive = b.dataset.nextActive === '1';
+      toggleProvisionalCouponActive(code, nextActive);
+      showToast(nextActive ? `Cupom ${code} reativado.` : `Cupom ${code} desativado.`);
+      render();
+    } else if (a === 'admin-voice-test') {
+      adminVoiceStatusLabel = 'Reproduzindo amostra pt-BR...';
+      render();
+      previewChefVoice(adminVoiceTestPhrase || CHEF_VOICE_TEST_PHRASE, adminVoiceConfig, () => {
+        adminVoiceStatusLabel = 'Amostra concluída';
+        if (route === 'admin') render();
+      });
+    } else if (a === 'admin-voice-stop') {
+      stopChef();
+      adminVoiceStatusLabel = 'Áudio interrompido';
+      render();
+    } else if (a === 'admin-voice-reset') {
+      adminVoiceConfig = saveChefVoiceConfig(DEFAULT_CHEF_VOICE_CONFIG);
+      adminVoiceTestPhrase = CHEF_VOICE_TEST_PHRASE;
+      adminVoiceStatusLabel = 'Padrão Chef Educador restaurado';
+      showToast('Padrão Chef Educador restaurado.');
+      render();
+    } else if (a === 'admin-export-report') {
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        phase: 'Fase 1 (Provisório Local)',
+        accounts: listUnifiedAccounts(),
+        coupons: listProvisionalCoupons(),
+        demoOrders: listProvisionalDemoOrders(),
+        courseProgress: evaluateMainCourseProgress(),
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      triggerBlobDownload(blob, `fervec-relatorio-fase1-${Date.now()}.json`);
+      toast.success('Relatório JSON local exportado!');
     } else if (a === 'select-payment-method') {
       const nextMethod = (b.dataset.method || 'PIX') as PaymentMethodChoice;
       selectedPaymentMethod = nextMethod;
@@ -6853,9 +7477,87 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       prepMode = false;
       persist();
       render();
+    } else if (a === 'lesson-mark-complete') {
+      state.lessonFinished = true;
+      for (let idx = 0; idx < stages.length; idx++) {
+        if (!state.done.includes(idx)) state.done.push(idx);
+      }
+      persist();
+      syncCarbonaraProgressAsync();
+      toast.success('Aula concluída!', 'Seu progresso no módulo Spaghetti alla Carbonara foi atualizado.');
+      render();
+    } else if (a === 'recipe-lesson-mark-complete') {
+      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
+      if (r) {
+        const p = recipeProgressFor(r);
+        p.lessonCompleted = true;
+        for (let idx = 0; idx < r.steps.length; idx++) {
+          if (!p.done.includes(idx)) p.done.push(idx);
+        }
+        persist();
+        syncRecipeProgressAsync(r, p);
+        toast.success(`Aula de ${r.title} concluída!`, 'Você já pode avançar para Trabalho ou Revisão.');
+        render();
+      }
+    } else if (a === 'questions-mark-complete') {
+      const answeredCount = state.questionsAnswers.filter((v) => v !== null && v !== undefined).length;
+      if (!canCompleteModuleWork(answeredCount, questions.length)) {
+        showModal(
+          'Responda todas as perguntas obrigatórias',
+          `Responda todas as ${questions.length} perguntas do Trabalho (${answeredCount}/${questions.length} respondidas) antes de concluir.`
+        );
+        return;
+      }
+      if (!state.questionsFinished) {
+        const correct = state.questionsAnswers.filter((v, i) => v === questions[i].correct).length;
+        state.questionAttempts.push({
+          score: correct,
+          answers: state.questionsAnswers.slice(),
+          date: new Date().toISOString(),
+        });
+      }
+      state.questionsFinished = true;
+      state.demo = true;
+      persist();
+      toast.success('Trabalho concluído!', 'Seu progresso em Meu Progresso foi atualizado.');
+      render();
+    } else if (a === 'recipe-work-mark-complete') {
+      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
+      if (r) {
+        const p = recipeProgressFor(r);
+        const bank = recipeQuestionSet(r, 6);
+        const answeredCount = p.workAnswers.filter((v) => v !== null && v !== undefined).length;
+        if (!canCompleteModuleWork(answeredCount, bank.length)) {
+          showModal(
+            'Responda todas as perguntas obrigatórias',
+            `Responda todas as ${bank.length} perguntas do Trabalho de ${r.title} antes de concluir.`
+          );
+          return;
+        }
+        if (!p.workFinished) {
+          const score = p.workAnswers.filter((v, k) => v === bank[k].correct).length;
+          p.workAttempts.push({
+            score,
+            answers: p.workAnswers.map((v) => (typeof v === 'number' ? v : 0)),
+            date: new Date().toISOString(),
+          });
+        }
+        p.workFinished = true;
+        p.workCompleted = true;
+        persist();
+        syncRecipeProgressAsync(r, p);
+        toast.success(`Trabalho de ${r.title} concluído!`, 'Seu progresso foi atualizado.');
+        render();
+      }
     } else if (a === 'question-answer') answerLearning(+(b.dataset.answer || 0));
     else if (a === 'question-next') nextLearning();
-    else if (a === 'questions-retry') {
+    else if (a === 'question-back') {
+      if (qIndex > 0) {
+        qIndex--;
+        persist();
+        render();
+      }
+    } else if (a === 'questions-retry') {
       state.questionsAnswers = [];
       state.questionsFinished = false;
       qIndex = 0;
@@ -6950,6 +7652,9 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     if (!target) return;
     if (target.dataset.paymentInput === 'cardHolderName') {
       cardHolderNameInput = target.value;
+    } else if (target.dataset.paymentInput === 'couponCode') {
+      paymentCouponInput = normalizeCouponCode(target.value);
+      target.value = paymentCouponInput;
     }
   }
 
@@ -6960,6 +7665,16 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     go('home');
   };
 
+  const onNavigateRoute = (ev: Event) => {
+    const custom = ev as CustomEvent<{ route?: string }>;
+    const next = custom.detail?.route;
+    if (!next) return;
+    accountMenuOpen = false;
+    cuisinesMenuOpen = false;
+    portalMenuOpen = false;
+    go(next);
+  };
+
   const uninstallGlobalErrors = installGlobalErrorHandlers({ getRoute: () => route });
   app.addEventListener('click', clickHandler);
   app.addEventListener('change', changeHandler);
@@ -6967,6 +7682,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   modal.addEventListener('click', clickHandler);
   window.addEventListener('hashchange', onHashChange);
   window.addEventListener('fervec:navigate-home', onNavigateHome);
+  window.addEventListener('fervec:navigate-route', onNavigateRoute as EventListener);
   render();
   if (route === 'payments') {
     void hydratePaymentsSummary(false);
@@ -7017,17 +7733,19 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     });
   }
 
-  bootstrapSupabaseAuth();
-  if (!isSupabaseConfigured()) {
-    void initSupabaseRuntimeConfig().then((configured) => {
-      if (configured) {
-        bootstrapSupabaseAuth();
-        if (route === 'payments') {
-          void hydratePaymentsSummary(true);
+  if (!PHASE_1_OFFLINE_ONLY && SUPABASE_CONNECTED) {
+    bootstrapSupabaseAuth();
+    if (!isSupabaseConfigured()) {
+      void initSupabaseRuntimeConfig().then((configured) => {
+        if (configured) {
+          bootstrapSupabaseAuth();
+          if (route === 'payments') {
+            void hydratePaymentsSummary(true);
+          }
+          render();
         }
-        render();
-      }
-    });
+      });
+    }
   }
 
   return () => {
@@ -7049,6 +7767,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     modal.removeEventListener('click', clickHandler);
     window.removeEventListener('hashchange', onHashChange);
     window.removeEventListener('fervec:navigate-home', onNavigateHome);
+    window.removeEventListener('fervec:navigate-route', onNavigateRoute as EventListener);
     if (timerInterval !== null) {
       window.clearInterval(timerInterval);
       timerInterval = null;

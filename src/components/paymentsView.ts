@@ -2,10 +2,19 @@ import {
   AsaasChargeResponsePayment,
   CardBillingMode,
   CoursePaymentSummary,
+  formatBrlFromCents,
   getPaymentUiStatusLabel,
   PaymentMethodChoice,
   PaymentUiStatus,
 } from '../utils/paymentCheckout';
+
+export interface AppliedPaymentCouponView {
+  code: string;
+  discountPercent: number;
+  discountCents: number;
+  totalCents: number;
+  isFree: boolean;
+}
 
 export interface PaymentsViewOptions {
   summary: CoursePaymentSummary;
@@ -21,6 +30,10 @@ export interface PaymentsViewOptions {
   copiedPix: boolean;
   activeOrderId: string | null;
   activePayment: AsaasChargeResponsePayment | null;
+  couponCodeInput?: string;
+  appliedCoupon?: AppliedPaymentCouponView | null;
+  couponFeedback?: { ok: boolean; message: string } | null;
+  isPhase1Offline?: boolean;
 }
 
 function esc(x: unknown): string {
@@ -127,6 +140,10 @@ export function renderPaymentsPage(opts: PaymentsViewOptions): string {
     copiedPix,
     activeOrderId,
     activePayment,
+    couponCodeInput = '',
+    appliedCoupon = null,
+    couponFeedback = null,
+    isPhase1Offline = false,
   } = opts;
 
   const caps = summary.capabilities;
@@ -136,6 +153,14 @@ export function renderPaymentsPage(opts: PaymentsViewOptions): string {
   const boletoPayment = activePayment?.billingType === 'BOLETO' ? activePayment : null;
   const boletoUrl = boletoPayment?.bankSlipUrl || boletoPayment?.invoiceUrl || null;
   const hasCreditCardCapability = caps.creditCard;
+
+  const finalTotalCents = appliedCoupon ? appliedCoupon.totalCents : summary.priceCents;
+  const finalTotalFormatted = formatBrlFromCents(finalTotalCents);
+  const confirmButtonLabel = isProcessing
+    ? 'Processando pagamento...'
+    : appliedCoupon?.isFree
+    ? 'Confirmar aquisição gratuita (cupom 100%)'
+    : 'Confirmar pagamento';
 
   const confirmedBrandsHtml =
     caps.acceptedCardBrands.length > 0
@@ -156,7 +181,7 @@ export function renderPaymentsPage(opts: PaymentsViewOptions): string {
       ? 'is-error'
       : 'is-pending';
 
-  const invoiceTotalFormatted = formatChargeBrl(activePayment?.value, summary.priceFormatted);
+  const invoiceTotalFormatted = formatChargeBrl(activePayment?.value, finalTotalFormatted);
   const invoiceDueSummary = formatInvoiceDueSummary(activePayment?.dueDate);
   const resolvedStatusMessage =
     statusMessage ||
@@ -290,7 +315,7 @@ export function renderPaymentsPage(opts: PaymentsViewOptions): string {
                                 <label class="payments-field">
                                   <span>Parcelamento no checkout seguro Asaas</span>
                                   <select data-payment-input="cardInstallments">
-                                    <option value="1" selected>1x de ${esc(summary.priceFormatted)} à vista</option>
+                                    <option value="1" selected>1x de ${esc(finalTotalFormatted)} à vista</option>
                                   </select>
                                 </label>
                                 <p class="payments-card-security-note">Os dados sensíveis do cartão são preenchidos diretamente no ambiente seguro tokenizado do Asaas após confirmar.</p>
@@ -303,6 +328,14 @@ export function renderPaymentsPage(opts: PaymentsViewOptions): string {
                     : ''
                 }
               </div>
+
+              ${
+                isPhase1Offline && uiStatus === 'awaiting_selection'
+                  ? `<div class="payments-phase1-note" role="note">
+                      <strong>Fase 1:</strong> integração Asaas aguardando configuração — Pix, Cartão de crédito e Boleto preparados para a Fase 2; cupons de 100% liberam acesso demonstrativo local.
+                    </div>`
+                  : ''
+              }
             </div>
           </section>
 
@@ -329,21 +362,57 @@ export function renderPaymentsPage(opts: PaymentsViewOptions): string {
                 <strong>${esc(summary.priceFormatted)}</strong>
               </div>
 
+              <div class="payments-coupon-row">
+                <label class="payments-coupon-label" for="payments-coupon-input">Cupom de desconto</label>
+                <div class="payments-coupon-controls">
+                  <input
+                    id="payments-coupon-input"
+                    class="payments-coupon-input"
+                    type="text"
+                    inputmode="numeric"
+                    maxlength="6"
+                    placeholder="Código (6 dígitos)"
+                    value="${esc(couponCodeInput)}"
+                    data-payment-input="couponCode"
+                  />
+                  <button type="button" class="payments-coupon-apply-btn" data-action="apply-coupon">Aplicar</button>
+                  ${
+                    appliedCoupon
+                      ? `<button type="button" class="payments-coupon-remove-btn" data-action="remove-coupon">Remover</button>`
+                      : ''
+                  }
+                </div>
+                ${
+                  couponFeedback
+                    ? `<p class="payments-coupon-feedback ${couponFeedback.ok ? 'is-ok' : 'is-error'}" role="status">${esc(couponFeedback.message)}</p>`
+                    : ''
+                }
+              </div>
+
+              ${
+                appliedCoupon
+                  ? `<div class="payments-price-row is-discount">
+                      <span>Desconto (${appliedCoupon.discountPercent}% · #${esc(appliedCoupon.code)})</span>
+                      <strong>- ${esc(formatBrlFromCents(appliedCoupon.discountCents))}</strong>
+                    </div>`
+                  : ''
+              }
+
               <hr class="payments-divider" />
 
               <div class="payments-price-row is-total">
                 <span class="payments-total-label">Total</span>
-                <strong class="payments-total-value">${esc(summary.priceFormatted)}</strong>
+                <strong class="payments-total-value">${esc(finalTotalFormatted)}</strong>
               </div>
 
               <button
                 type="button"
-                class="payments-confirm-btn ${isProcessing ? 'is-processing' : ''}"
+                class="payments-confirm-btn ${isProcessing ? 'is-processing' : ''} ${appliedCoupon?.isFree ? 'is-free-coupon' : ''}"
                 data-action="confirm-payment"
                 ${isProcessing ? 'disabled aria-disabled="true" aria-busy="true"' : ''}
               >
                 <span class="payments-confirm-icon">${isProcessing ? ICONS.spinner : ICONS.lockWhite}</span>
-                <span>${isProcessing ? 'Processando pagamento...' : 'Confirmar pagamento'}</span>
+                <span>${esc(confirmButtonLabel)}</span>
               </button>
 
               <div class="payments-security">

@@ -168,3 +168,68 @@ test('mapAsaasStatusToUiStatus never fakes approval on PENDING and unlocks only 
   assert.equal(mapAsaasStatusToUiStatus('RECEIVED', 'paid', true), 'approved');
   assert.equal(mapAsaasStatusToUiStatus('CONFIRMED', 'pending', false), 'approved');
 });
+
+test('renderPaymentsPage renders 90% and 100% applied coupon totals and free acquisition CTA', () => {
+  const summary = createDefaultCoursePaymentSummary('massas-italianas');
+  const html90 = renderPaymentsPage({
+    summary,
+    heroBannerSrc: '/assets/test-chef.jpg',
+    courseThumbSrc: '/assets/test-pasta.png',
+    selectedMethod: 'PIX',
+    cardMode: 'CREDIT_CARD',
+    cardHolderName: '',
+    cardInstallments: 1,
+    uiStatus: 'awaiting_selection',
+    statusMessage: null,
+    isProcessing: false,
+    copiedPix: false,
+    activeOrderId: null,
+    activePayment: null,
+    couponCodeInput: '482910',
+    appliedCoupon: {
+      code: '482910',
+      discountPercent: 90,
+      discountCents: 1161,
+      totalCents: 129,
+      isFree: false,
+    },
+    couponFeedback: { ok: true, message: 'Cupom #482910 aplicado!' },
+    isPhase1Offline: true,
+  });
+
+  assert.match(html90, /Cupom de desconto/);
+  assert.match(html90, /Desconto \(90% · #482910\)/);
+  assert.match(html90, /- R\$\s*11,61/);
+  assert.match(html90, /R\$\s*1,29/);
+  assert.match(html90, /Confirmar pagamento/);
+  assert.match(html90, /Fase 1:/);
+
+  const html100 = renderPaymentsPage({
+    summary,
+    heroBannerSrc: '/assets/test-chef.jpg',
+    courseThumbSrc: '/assets/test-pasta.png',
+    selectedMethod: 'PIX',
+    cardMode: 'CREDIT_CARD',
+    cardHolderName: '',
+    cardInstallments: 1,
+    uiStatus: 'awaiting_selection',
+    statusMessage: null,
+    isProcessing: false,
+    copiedPix: false,
+    activeOrderId: null,
+    activePayment: null,
+    couponCodeInput: '900100',
+    appliedCoupon: {
+      code: '900100',
+      discountPercent: 100,
+      discountCents: 1290,
+      totalCents: 0,
+      isFree: true,
+    },
+    couponFeedback: { ok: true, message: 'Cupom 100% aplicado!' },
+    isPhase1Offline: true,
+  });
+
+  assert.match(html100, /R\$\s*0,00/);
+  assert.match(html100, /Confirmar aquisição gratuita \(cupom 100%\)/);
+});

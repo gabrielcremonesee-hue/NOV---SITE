@@ -465,7 +465,7 @@ export function renderCreateProfilePage(opts: CreateProfileRenderOptions): strin
             <p class="cadastro-storage-hint"><svg class="cadastro-lock-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.2" fill="currentColor"/><path d="M8 10.5V7.8a4 4 0 0 1 8 0v2.7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> ${
               supabaseConfigured
                 ? 'Seus dados estão seguros conosco e sincronizados com o Supabase.'
-                : 'Seus dados estão seguros conosco.'
+                : 'Armazenamento provisório local (Fase 1): seus dados ficam salvos neste navegador para acesso ao portal e à Biblioteca.'
             }</p>
           </div>
         </form>
