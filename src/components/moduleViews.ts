@@ -67,6 +67,93 @@ export function renderModuleStageNotificationBanner(
   </div>`;
 }
 
+export interface LessonStepTabItem {
+  tag: string;
+  photo: string;
+  icon?: string;
+}
+
+export interface LessonProgressStripOptions {
+  pctDone: number;
+  doneCount: number;
+  total: number;
+  nextStep?: { tag: string };
+  currentIndex: number;
+  doneIndices: number[];
+  steps: LessonStepTabItem[];
+  onStepAction: string;
+  lessonBannerHtml?: string;
+}
+
+export function renderLessonProgressStrip(opts: LessonProgressStripOptions): string {
+  const {
+    pctDone,
+    doneCount,
+    total,
+    nextStep,
+    currentIndex,
+    doneIndices,
+    steps,
+    onStepAction,
+    lessonBannerHtml = '',
+  } = opts;
+
+  return `<section class="cockpit-progress-strip">
+    <div class="cockpit-progress-meta">
+      <div class="cockpit-progress-left">
+        <span class="eyebrow">SEU PROGRESSO NESTA AULA</span>
+        <div class="cockpit-progress-nums">
+          <strong>${pctDone}%</strong>
+          <span>${doneCount} de ${total} etapas</span>
+        </div>
+      </div>
+      <div class="progress-track cockpit-progress-track">
+        <span style="width:${pctDone}%"></span>
+      </div>
+      <div class="cockpit-next-hint">
+        ${
+          nextStep
+            ? `<button type="button" class="cockpit-next-link" data-action="${escHtml(onStepAction)}" data-step="${currentIndex + 1}">Próxima: <strong>${escHtml(nextStep.tag)} ›</strong></button>`
+            : `<strong>Última etapa do módulo</strong>`
+        }
+      </div>
+    </div>
+
+    ${lessonBannerHtml}
+
+    <div class="cockpit-wood-rack" role="tablist" aria-label="Etapas do preparo">
+      ${steps
+        .map((st, idx) => {
+          const isCurrent = idx === currentIndex;
+          const isDone = doneIndices.includes(idx);
+          return `<button type="button" class="wood-step-tile ${isCurrent ? 'is-current' : ''} ${
+            isDone ? 'is-done' : ''
+          }" data-action="${escHtml(onStepAction)}" data-step="${idx}" role="tab" aria-selected="${isCurrent}">
+            <span class="wood-tile-spotlight" aria-hidden="true"></span>
+            <span class="wood-step-num">${idx + 1}</span>
+            <div class="wood-step-thumb">
+              <img src="${escHtml(st.icon || st.photo)}" alt="${escHtml(st.tag)}" referrerpolicy="no-referrer" draggable="false">
+            </div>
+            <div class="wood-step-label-row">
+              <strong>${escHtml(st.tag)}</strong>
+              ${
+                isDone
+                  ? '<i class="wood-step-check" aria-label="Concluída"><svg viewBox="0 0 20 17" width="16" height="14"><defs><linearGradient id="chkGold" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fff3b8"/><stop offset="45%" stop-color="#f7c448"/><stop offset="100%" stop-color="#ce881c"/></linearGradient></defs><path d="M2.2 9.2 7.2 14.2 17.8 2.6" fill="none" stroke="url(#chkGold)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></i>'
+                  : ''
+              }
+            </div>
+            ${
+              isCurrent
+                ? `<b class="wood-step-arrow" aria-hidden="true"><svg viewBox="0 0 30 28" width="28" height="26"><defs><linearGradient id="arrowGlow" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffffff"/><stop offset="50%" stop-color="#ffefaa"/><stop offset="100%" stop-color="#ffc33b"/></linearGradient></defs><path d="M15 6v17.5M7 16.2 15 24.5l8-8.3" fill="none" stroke="url(#arrowGlow)" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/></svg></b>`
+                : ''
+            }
+          </button>`;
+        })
+        .join('')}
+    </div>
+  </section>`;
+}
+
 export interface StandardCompletionActionOptions {
   isDone: boolean;
   buttonLabel: string;

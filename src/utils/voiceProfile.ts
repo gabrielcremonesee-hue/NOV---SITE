@@ -17,13 +17,90 @@ export interface ExternalTtsProviderAdapter {
   synthesize?: (text: string, config: ChefVoiceProfileConfig) => Promise<string | null>;
 }
 
+export type ChefMaleGeminiVoiceId = 'Antonio' | 'Brian' | 'Giuseppe' | 'Andrew';
+
+export interface ChefMaleVoicePreset {
+  id: ChefMaleGeminiVoiceId;
+  voiceURI: string;
+  name: string;
+  lang: string;
+  profileLabel: string;
+  ttsStyle: string;
+  defaultRate: number;
+  defaultPitch: number;
+}
+
+export const CHEF_MALE_VOICE_PRESETS: readonly ChefMaleVoicePreset[] = [
+  {
+    id: 'Antonio',
+    voiceURI: 'neural:Antonio',
+    name: 'Chef Antonio — Brasileira Firme e Natural',
+    lang: 'pt-BR',
+    profileLabel: 'Chef Homem · Brasileira, firme e natural',
+    ttsStyle: 'Voz masculina brasileira neural natural, firme, clara e fluida.',
+    defaultRate: 1.0,
+    defaultPitch: 0.98,
+  },
+  {
+    id: 'Brian',
+    voiceURI: 'neural:Brian',
+    name: 'Chef Brian — Masculina Forte e Grave',
+    lang: 'pt-BR',
+    profileLabel: 'Chef Homem · Forte, grave e segura',
+    ttsStyle: 'Voz masculina neural forte, grave, firme e natural em português.',
+    defaultRate: 1.0,
+    defaultPitch: 0.94,
+  },
+  {
+    id: 'Giuseppe',
+    voiceURI: 'neural:Giuseppe',
+    name: 'Chef Giuseppe — Masculina Expressiva e Firme',
+    lang: 'pt-BR',
+    profileLabel: 'Chef Homem · Expressiva, firme e calorosa',
+    ttsStyle: 'Voz masculina neural firme, expressiva e calorosa explicando receitas.',
+    defaultRate: 1.0,
+    defaultPitch: 0.97,
+  },
+  {
+    id: 'Andrew',
+    voiceURI: 'neural:Andrew',
+    name: 'Chef Andrew — Masculina Serena e Natural',
+    lang: 'pt-BR',
+    profileLabel: 'Chef Homem · Serena, fluida e natural',
+    ttsStyle: 'Voz masculina neural serena, natural, leve e firme na cozinha.',
+    defaultRate: 1.0,
+    defaultPitch: 0.98,
+  },
+] as const;
+
+const FEMALE_VOICE_NAME_REGEX =
+  /\b(kore|zephyr|aoede|leda|autonoe|callirrhoe|despina|erinome|laomedeia|pulcherrima|vindemiatrix|sulafat|francisca|thalita|vitoria|vitória|camila|luciana|raquel|joana|maria|ana|fernanda|leticia|letícia|juliana|patricia|patrícia|helga|eliane|sandra|marcia|márcia|beatriz|carla|claudia|cláudia|helena|amanda|laura|gabriela|lara|sofia|ines|inês|female|feminina|mulher)\b|google português do brasil|google portugues do brasil/i;
+
+const ROBOTIC_VOICE_NAME_REGEX = /\b(espeak|compact|robot|robô|android tts|festival|flite)\b/i;
+
+export function isFemalePtBrVoiceName(nameOrUri: string): boolean {
+  return FEMALE_VOICE_NAME_REGEX.test(String(nameOrUri || '').toLowerCase());
+}
+
+export function extractGeminiVoiceId(voiceUriOrId: string): ChefMaleGeminiVoiceId | null {
+  const raw = String(voiceUriOrId || '').trim();
+  const normalized = raw.replace(/^(neural:|gemini:)/i, '');
+  const found = CHEF_MALE_VOICE_PRESETS.find((v) => v.id === normalized);
+  return found ? found.id : null;
+}
+
+export function getChefMaleVoicePreset(voiceUriOrId: string): ChefMaleVoicePreset {
+  const id = extractGeminiVoiceId(voiceUriOrId);
+  return CHEF_MALE_VOICE_PRESETS.find((v) => v.id === id) || CHEF_MALE_VOICE_PRESETS[0];
+}
+
 export const DEFAULT_CHEF_VOICE_CONFIG: ChefVoiceProfileConfig = {
-  voiceUri: '',
-  voiceName: 'Chef Educador (pt-BR natural)',
-  rate: 0.95,
-  pitch: 0.95,
+  voiceUri: CHEF_MALE_VOICE_PRESETS[0].voiceURI,
+  voiceName: CHEF_MALE_VOICE_PRESETS[0].name,
+  rate: CHEF_MALE_VOICE_PRESETS[0].defaultRate,
+  pitch: CHEF_MALE_VOICE_PRESETS[0].defaultPitch,
   volume: 0.9,
-  profileLabel: 'Chef Professor · Firme e acolhedor',
+  profileLabel: CHEF_MALE_VOICE_PRESETS[0].profileLabel,
   updatedAt: new Date(0).toISOString(),
 };
 
@@ -35,19 +112,24 @@ export function loadChefVoiceConfig(): ChefVoiceProfileConfig {
     const rate = Number(raw.rate);
     const pitch = Number(raw.pitch);
     const volume = Number(raw.volume);
+    const rawUri = typeof raw.voiceUri === 'string' ? raw.voiceUri.trim() : '';
+    const rawName = typeof raw.voiceName === 'string' ? raw.voiceName.trim() : '';
+    const presetMatch = extractGeminiVoiceId(rawUri);
+    const isFemaleOrLegacy =
+      !rawUri || !presetMatch || isFemalePtBrVoiceName(rawUri) || isFemalePtBrVoiceName(rawName);
+    const safePreset = isFemaleOrLegacy ? CHEF_MALE_VOICE_PRESETS[0] : getChefMaleVoicePreset(presetMatch);
+
     return {
-      voiceUri: typeof raw.voiceUri === 'string' ? raw.voiceUri : '',
-      voiceName:
-        typeof raw.voiceName === 'string' && raw.voiceName.trim()
-          ? raw.voiceName
-          : DEFAULT_CHEF_VOICE_CONFIG.voiceName,
-      rate: Number.isFinite(rate) ? Math.max(0.7, Math.min(1.3, rate)) : DEFAULT_CHEF_VOICE_CONFIG.rate,
-      pitch: Number.isFinite(pitch) ? Math.max(0.75, Math.min(1.2, pitch)) : DEFAULT_CHEF_VOICE_CONFIG.pitch,
+      voiceUri: safePreset.voiceURI,
+      voiceName: safePreset.name,
+      rate: Number.isFinite(rate)
+        ? Math.max(0.7, Math.min(1.3, isFemaleOrLegacy ? safePreset.defaultRate : rate))
+        : safePreset.defaultRate,
+      pitch: Number.isFinite(pitch)
+        ? Math.max(0.75, Math.min(1.2, isFemaleOrLegacy ? safePreset.defaultPitch : pitch))
+        : safePreset.defaultPitch,
       volume: Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : DEFAULT_CHEF_VOICE_CONFIG.volume,
-      profileLabel:
-        typeof raw.profileLabel === 'string' && raw.profileLabel.trim()
-          ? raw.profileLabel
-          : DEFAULT_CHEF_VOICE_CONFIG.profileLabel,
+      profileLabel: safePreset.profileLabel,
       updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : new Date().toISOString(),
     };
   } catch {
@@ -59,9 +141,22 @@ export function saveChefVoiceConfig(
   patch: Partial<ChefVoiceProfileConfig>
 ): ChefVoiceProfileConfig {
   const current = loadChefVoiceConfig();
+  const mergedUri =
+    typeof patch.voiceUri === 'string' ? patch.voiceUri.trim() : current.voiceUri;
+  const mergedName =
+    typeof patch.voiceName === 'string' ? patch.voiceName.trim() : current.voiceName;
+  const presetMatch = extractGeminiVoiceId(mergedUri);
+  const safePreset =
+    !mergedUri || !presetMatch || isFemalePtBrVoiceName(mergedUri) || isFemalePtBrVoiceName(mergedName)
+      ? CHEF_MALE_VOICE_PRESETS[0]
+      : getChefMaleVoicePreset(presetMatch);
+
   const next: ChefVoiceProfileConfig = {
     ...current,
     ...patch,
+    voiceUri: safePreset.voiceURI,
+    voiceName: safePreset.name,
+    profileLabel: safePreset.profileLabel,
     rate: Number.isFinite(Number(patch.rate ?? current.rate))
       ? Math.max(0.7, Math.min(1.3, Number(patch.rate ?? current.rate)))
       : current.rate,
@@ -86,25 +181,35 @@ export function saveChefVoiceConfig(
 export function rankChefEducatorPtBrVoices<
   T extends { voiceURI?: string; name?: string; lang?: string; localService?: boolean; default?: boolean }
 >(voices: T[]): T[] {
-  const ptVoices = voices.filter((v) => String(v?.lang || '').toLowerCase().startsWith('pt'));
+  const malePtVoices = voices.filter((v) => {
+    const lang = String(v?.lang || '').toLowerCase();
+    const name = String(v?.name || '');
+    const uri = String(v?.voiceURI || '');
+    if (!lang.startsWith('pt')) return false;
+    if (isFemalePtBrVoiceName(name) || isFemalePtBrVoiceName(uri)) return false;
+    if (ROBOTIC_VOICE_NAME_REGEX.test(name) || ROBOTIC_VOICE_NAME_REGEX.test(uri)) return false;
+    return true;
+  });
   const score = (v: T): number => {
     const name = String(v?.name || '').toLowerCase();
     const lang = String(v?.lang || '').toLowerCase();
     let s = 0;
     if (lang === 'pt-br' || lang === 'pt_br') s += 45;
     if (/natural|neural|online|wavenet|studio/.test(name)) s += 38;
-    // Male / authoritative warm professor preference first, then natural pt-BR voices
-    if (/antonio|daniel|ricardo|fabio|julio|henrique/.test(name)) s += 30;
-    if (/google português do brasil|google portugues do brasil/.test(name)) s += 26;
-    if (/francisca|thalita|vitoria|camila|luciana/.test(name)) s += 20;
+    if (
+      /\b(antonio|daniel|ricardo|fabio|fábio|julio|júlio|henrique|thiago|marcos|bruno|rafael|lucas|mateus|felipe|gabriel|gustavo|leonardo|rodrigo|eduardo|andre|andré|carlos|paulo|pedro|fernando|joao|joão|marcelo|male|masculin[oa])\b/.test(
+        name
+      )
+    ) {
+      s += 36;
+    }
     if (/microsoft/.test(name)) s += 16;
     if (/google/.test(name)) s += 14;
-    if (/espeak|compact|robot|android tts/.test(name)) s -= 30;
     if (v?.localService === false) s += 8;
     if (v?.default) s += 3;
     return s;
   };
-  return ptVoices.slice().sort((a, b) => score(b) - score(a));
+  return malePtVoices.slice().sort((a, b) => score(b) - score(a));
 }
 
 export function normalizeCulinarySpeechText(raw: string): string {

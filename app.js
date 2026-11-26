@@ -161,7 +161,14 @@ const state = {
   chatIncludeContext: true,
   chatBusy: false,
   assistantTab: 'chat',
-  voiceName: 'Kore',
+  voiceName: (() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('fervec-voice-config-v1') || 'null');
+      const uri = String(saved?.voiceUri || '').replace(/^(neural:|gemini:)/i, '');
+      if (['Antonio', 'Brian', 'Giuseppe', 'Andrew'].includes(uri)) return uri;
+    } catch {}
+    return 'Antonio';
+  })(),
   voiceStatus: 'idle',
   voiceDetail: 'Toque no botão abaixo para dialogar por voz com o Chefe.',
   voiceTranscripts: [],
@@ -1252,13 +1259,61 @@ function stopActiveTtsAudio() {
   } catch {}
 }
 
-async function speakWithGeminiTts(text, _voiceName = state.voiceName || 'Kore', { resumeHandsFree = false } = {}) {
+async function speakWithGeminiTts(text, voiceName = state.voiceName || 'Antonio', { resumeHandsFree = false } = {}) {
   const clean = String(text || '')
     .replace(/[*_`#>]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   if (!clean) return false;
   stopActiveTtsAudio();
+
+  const normalizedVoice = String(voiceName || '').replace(/^(neural:|gemini:)/i, '');
+  const chosenVoice = ['Antonio', 'Brian', 'Giuseppe', 'Andrew'].includes(normalizedVoice)
+    ? normalizedVoice
+    : 'Antonio';
+
+  let rateNum = 1.0;
+  let pitchNum = 0.98;
+  let volNum = 0.9;
+  try {
+    const cfg = JSON.parse(localStorage.getItem('fervec-voice-config-v1') || 'null');
+    if (Number.isFinite(Number(cfg?.rate))) rateNum = Number(cfg.rate);
+    if (Number.isFinite(Number(cfg?.pitch))) pitchNum = Number(cfg.pitch);
+    if (Number.isFinite(Number(cfg?.volume))) volNum = Number(cfg.volume);
+  } catch {}
+
+  try {
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: clean, voiceName: chosenVoice, rate: rateNum, pitch: pitchNum }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data?.audioBase64) {
+      const binary = atob(data.audioBase64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const mimeType = data.mimeType || 'audio/mpeg';
+      const blob = new Blob([bytes], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      activeTtsUrl = url;
+      const audio = new Audio(url);
+      audio.volume = Math.min(1, Math.max(0.2, volNum));
+      audio.playbackRate = mimeType.includes('mpeg') ? 1 : Math.min(1.25, Math.max(0.75, rateNum));
+      if ('preservesPitch' in audio) audio.preservesPitch = true;
+      activeTtsAudio = audio;
+      audio.onended = () => {
+        if (resumeHandsFree && typeof speechCtrl?.start === 'function') {
+          speechCtrl.start({ handsFree: true });
+        }
+      };
+      await audio.play();
+      return true;
+    }
+  } catch {}
+
   return speechCtrl.speakResponse(clean, { resumeHandsFree });
 }
 
@@ -5577,7 +5632,7 @@ document.addEventListener('change', (e) => {
     renderView();
   }
   if (e.target.id === 'voice-select') {
-    state.voiceName = e.target.value || 'Kore';
+    state.voiceName = e.target.value || 'Antonio';
   }
   if (e.target.id === 'bookmark-image-input') {
     const file = e.target.files?.[0];

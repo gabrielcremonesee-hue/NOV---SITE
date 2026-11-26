@@ -14,7 +14,11 @@ import {
   ProvisionalDemoOrder,
   UnifiedAccountRecord,
 } from '../services/provisionalStore';
-import { ChefVoiceProfileConfig, CHEF_VOICE_TEST_PHRASE } from '../utils/voiceProfile';
+import {
+  CHEF_MALE_VOICE_PRESETS,
+  ChefVoiceProfileConfig,
+  CHEF_VOICE_TEST_PHRASE,
+} from '../utils/voiceProfile';
 
 const ADMIN_COURSES_CATALOG: Array<{
   slug: string;
@@ -696,17 +700,16 @@ export function renderAdminDashboard(opts: AdminDashboardRenderOptions): string 
         <form id="admin-voice-form" class="fadmin-voice-form">
           <div class="fadmin-form-grid">
             <div class="fadmin-field fadmin-field-wide">
-              <label for="admin-voice-select">Voz pt-BR disponível neste dispositivo</label>
+              <label for="admin-voice-select">Voz masculina do Chef (pt-BR natural)</label>
               <select id="admin-voice-select" name="voiceUri">
-                <option value="">Automática — melhor voz Chef Educador pt-BR</option>
-                ${availableVoices
+                ${(availableVoices.length > 0 ? availableVoices : CHEF_MALE_VOICE_PRESETS)
                   .map(
                     (v) =>
                       `<option value="${esc(v.voiceURI)}" ${voiceConfig.voiceUri === v.voiceURI ? 'selected' : ''}>${esc(v.name)} (${esc(v.lang)})</option>`
                   )
                   .join('')}
               </select>
-              <small class="fadmin-muted">Lista carregada da API nativa Web Speech do navegador. Em Fase 2 será possível conectar provedor neural externo.</small>
+              <small class="fadmin-muted">4 vozes masculinas naturais, leves e firmes para explicar receitas sem tom robótico (Site + Biblioteca).</small>
             </div>
 
             <div class="fadmin-field">

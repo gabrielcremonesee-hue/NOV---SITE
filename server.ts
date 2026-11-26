@@ -10,6 +10,7 @@ import { WebSocketServer } from 'ws';
 import { GoogleGenAI, Modality, type Content } from '@google/genai';
 import { getChatRole, sanitizeChatHistory } from './lib/chat.js';
 import { createDatabase } from './lib/db.js';
+import { resolveMaleNeuralVoice, synthesizeMaleNeuralTts } from './lib/neural_tts.js';
 import { supabaseSessionMiddleware } from './src/utils/supabase/middleware.ts';
 import {
   createClient as createSupabaseServerClient,
@@ -25,7 +26,15 @@ const __dirname = path.dirname(__filename);
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = '0.0.0.0';
 const ALLOWED_CHAT_MODELS = new Set(['gemini-4-hydrogen', 'gemini-3.1-flash-lite']);
-const ALLOWED_LIVE_VOICES = new Set(['Zephyr', 'Kore', 'Puck', 'Charon', 'Fenrir']);
+const ALLOWED_LIVE_VOICES = new Set(['Orus', 'Charon', 'Fenrir', 'Puck']);
+const TTS_VOICE_STYLES: Record<string, string> = {
+  Orus: 'Homem brasileiro adulto, chef de cozinha experiente. Fale com voz masculina firme, leve, natural e fluida, conversando ao explicar a receita sem soar robótico ou artificial.',
+  Charon:
+    'Homem brasileiro adulto, chef instrutor sereno e próximo. Fale com voz masculina natural, leve, calma e bem articulada, explicando cada etapa com firmeza humana e fluidez.',
+  Fenrir:
+    'Homem brasileiro adulto, chef apaixonado pela gastronomia. Fale com voz masculina firme, leve, envolvente e espontânea, explicando o preparo com confiança real de conversa na bancada.',
+  Puck: 'Homem brasileiro adulto, chef comunicativo e acessível. Fale com voz masculina natural, leve, solta e firme na medida certa, fluindo como uma conversa tranquila na cozinha.',
+};
 const db = createDatabase(path.join(__dirname, 'data', 'fervec-db.json'));
 
 interface SiteChatMessageInput {
@@ -401,15 +410,8 @@ async function startServer() {
     }
   });
 
-  // --- Gemini Text-to-Speech (WAV audio in Brazilian Portuguese) ---
+  // --- Natural Male Neural Text-to-Speech (pt-BR) ---
   app.post('/api/tts', async (req: Request, res: Response) => {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(503).json({
-        error: 'Serviço de voz indisponível: configure GEMINI_API_KEY no servidor.',
-      });
-    }
-
     try {
       const cleanText = String(req.body?.text || '')
         .replace(/[*_`#>~]+/g, ' ')
@@ -419,7 +421,33 @@ async function startServer() {
       if (!cleanText) {
         return res.status(400).json({ error: 'Texto vazio para leitura em voz.' });
       }
-      const chosenVoice = ALLOWED_LIVE_VOICES.has(req.body?.voiceName) ? req.body.voiceName : 'Kore';
+
+      const voiceProfile = resolveMaleNeuralVoice(String(req.body?.voiceName || ''));
+      const rate = Number(req.body?.rate);
+      const pitch = Number(req.body?.pitch);
+
+      try {
+        const neuralOut = await synthesizeMaleNeuralTts({
+          text: cleanText,
+          voiceId: voiceProfile.id,
+          rate: Number.isFinite(rate) ? rate : 1.0,
+          pitch: Number.isFinite(pitch) ? pitch : 1.0,
+        });
+        return res.json(neuralOut);
+      } catch (neuralErr) {
+        console.warn('[API /api/tts neural fallback]', neuralErr instanceof Error ? neuralErr.message : neuralErr);
+      }
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        return res.status(503).json({
+          error: 'Serviço de voz neural temporariamente indisponível.',
+        });
+      }
+
+      const chosenGeminiVoice = ALLOWED_LIVE_VOICES.has(voiceProfile.liveVoice)
+        ? voiceProfile.liveVoice
+        : 'Charon';
       const ai = createAiClient(apiKey);
 
       const response = await ai.models.generateContent({
@@ -431,7 +459,7 @@ async function startServer() {
               {
                 text: cleanText,
                 speechMetadata: {
-                  style: 'Chef instrutor brasileiro simpático, natural, acolhedor e claro na cozinha',
+                  style: TTS_VOICE_STYLES[chosenGeminiVoice] || TTS_VOICE_STYLES.Charon,
                 } as unknown as undefined,
               },
             ],
@@ -441,7 +469,7 @@ async function startServer() {
           responseModalities: ['AUDIO'],
           speechConfig: {
             voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: chosenVoice },
+              prebuiltVoiceConfig: { voiceName: chosenGeminiVoice },
             },
           },
         },
@@ -455,7 +483,7 @@ async function startServer() {
       return res.json({
         audioBase64: base64Audio,
         mimeType: 'audio/wav',
-        voice: chosenVoice,
+        voice: voiceProfile.id,
       });
     } catch (err: unknown) {
       const rec = err as { status?: number; message?: string } | null;
@@ -598,18 +626,19 @@ async function startServer() {
 
     let session: { sendRealtimeInput: (input: unknown) => void; close: () => void } | null = null;
     let sessionReady = false;
-    const queryVoice = parsedUrl?.searchParams?.get('voice') || 'Kore';
+    const queryVoice = parsedUrl?.searchParams?.get('voice') || 'Antonio';
 
     async function initLiveSession(voiceName: string, systemInstruction: string) {
       if (session || sessionReady) return;
       sessionReady = true;
-      const chosenVoice = ALLOWED_LIVE_VOICES.has(voiceName) ? voiceName : 'Kore';
+      const mappedLive = resolveMaleNeuralVoice(voiceName).liveVoice;
+      const chosenVoice = ALLOWED_LIVE_VOICES.has(mappedLive) ? mappedLive : 'Charon';
       const ai = createAiClient(apiKey as string);
       const voiceStyle =
-        ' Fale sempre em português do Brasil com tom leve, simpático, natural e acolhedor, como um chef dialogando lado a lado na cozinha — evite frases robóticas, listas longas ou tom rígido.';
+        ' Fale sempre em português do Brasil com voz masculina leve, natural, fluida e firme de chef experiente explicando uma receita lado a lado na cozinha — evite frases robóticas, artificiais ou tom engessado.';
       const baseInstruction = systemInstruction
         ? `${systemInstruction}${voiceStyle}`
-        : 'Você é o Chef Instrutor de Voz da FerveC Gastronomia, em português do Brasil. Ajude o usuário a preparar massa italiana fresca, responder dúvidas rápidas na bancada e sugerir molhos com naturalidade, calor humano e frases curtas que fluem bem em voz alta.' +
+        : 'Você é o Chef Instrutor de Voz da FerveC Gastronomia, homem brasileiro falando em português do Brasil. Ajude o usuário a preparar massa italiana fresca, responder dúvidas rápidas na bancada e explicar receitas com firmeza, naturalidade, calor humano e frases fluidas que soam como conversa real.' +
           voiceStyle;
 
       try {

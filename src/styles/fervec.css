@@ -12470,6 +12470,10 @@ body:has(.home-page) .chef-chat-root {
 .stage-std-banner {
   margin-bottom: 18px;
 }
+.cockpit-progress-strip .stage-std-banner {
+  margin-top: 6px;
+  margin-bottom: 14px;
+}
 .stage-std-bottom-actions {
   margin-top: 22px;
   display: flex;

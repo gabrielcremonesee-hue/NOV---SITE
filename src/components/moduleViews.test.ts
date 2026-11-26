@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   computeStepProgressPct,
+  renderLessonProgressStrip,
   renderModuleStageNotificationBanner,
   renderOlhoDoChefCard,
   renderStandardCompletionAction,
@@ -116,4 +117,38 @@ test('renderModuleStageNotificationBanner and renderStandardCompletionAction ref
   assert.ok(banner.includes('Concluído'));
   assert.ok(banner.includes('is-done'));
   assert.ok(action.includes('Aula concluída com sucesso!'));
+});
+
+test('renderLessonProgressStrip places Aula prática banner below progress meta and above ingredients wood rack', () => {
+  const banner = renderModuleStageNotificationBanner({
+    iconType: 'lesson',
+    title: 'Aula prática • Fettuccine Alfredo',
+    description: 'Etapa 1 de 6: Mise en place',
+    isDone: false,
+    progressLabel: 'Em andamento',
+  });
+  const html = renderLessonProgressStrip({
+    pctDone: 17,
+    doneCount: 1,
+    total: 6,
+    nextStep: { tag: 'Manteiga' },
+    currentIndex: 0,
+    doneIndices: [0],
+    steps: [
+      { tag: 'Mise', photo: '/assets/step1.jpg' },
+      { tag: 'Manteiga', photo: '/assets/step2.jpg' },
+    ],
+    onStepAction: 'recipe-step',
+    lessonBannerHtml: banner,
+  });
+
+  const progressIdx = html.indexOf('SEU PROGRESSO NESTA AULA');
+  const bannerIdx = html.indexOf('Aula prática • Fettuccine Alfredo');
+  const statusIdx = html.indexOf('Em andamento');
+  const rackIdx = html.indexOf('class="cockpit-wood-rack"');
+
+  assert.ok(progressIdx !== -1);
+  assert.ok(bannerIdx > progressIdx);
+  assert.ok(statusIdx > bannerIdx);
+  assert.ok(rackIdx > statusIdx);
 });
