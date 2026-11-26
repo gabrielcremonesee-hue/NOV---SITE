@@ -1267,7 +1267,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         <div class="home-game-left">
           <div class="home-game-eyebrow">
             <span class="home-game-pad-icon" aria-hidden="true">
-              <svg viewBox="0 0 28 20"><rect x="2" y="3" width="24" height="14" rx="7" fill="#efc84f"/><path d="M7.5 10h4M9.5 8v4" stroke="#24140a" stroke-width="1.9" stroke-linecap="round"/><circle cx="17.5" cy="9" r="1.2" fill="#24140a"/><circle cx="20" cy="11" r="1.2" fill="#24140a"/></svg>
+              <svg viewBox="0 0 36 24"><path d="M10.5 3.5h15a7.5 7.5 0 0 1 7.2 5.6l1.3 6.1a3.6 3.6 0 0 1-6.1 3.3l-3.1-2.8a2.5 2.5 0 0 0-1.7-.7H12.9a2.5 2.5 0 0 0-1.7.7l-3.1 2.8A3.6 3.6 0 0 1 2 15.2l1.3-6.1a7.5 7.5 0 0 1 7.2-5.6Z" fill="#ffd022"/><path d="M8.5 10.6h4.6M10.8 8.3v4.6" stroke="#110602" stroke-width="2.1" stroke-linecap="round"/><circle cx="24.5" cy="8.7" r="1.25" fill="#110602"/><circle cx="24.5" cy="12.7" r="1.25" fill="#110602"/><circle cx="22.5" cy="10.7" r="1.25" fill="#110602"/><circle cx="26.5" cy="10.7" r="1.25" fill="#110602"/></svg>
             </span>
             <span>Novo Jogo</span>
           </div>
@@ -1275,7 +1275,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           <p>Explore, cozinhe e conquiste receitas incríveis no nosso jogo!</p>
         </div>
         <button type="button" class="home-game-soon-pill" data-action="upcoming-notice" data-title="Jogo Restaurante FerveC">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M3.5 9.5h17M8 3v3.5M16 3v3.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.8" width="17" height="15.5" rx="2.4" fill="none" stroke="currentColor" stroke-width="2.1"/><path d="M3.5 9.8h17M8 2.6v3.4M16 2.6v3.4" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><rect x="7" y="12.3" width="2" height="2" rx=".4" fill="currentColor"/><rect x="11" y="12.3" width="2" height="2" rx=".4" fill="currentColor"/><rect x="15" y="12.3" width="2" height="2" rx=".4" fill="currentColor"/><rect x="7" y="15.8" width="2" height="2" rx=".4" fill="currentColor"/><rect x="11" y="15.8" width="2" height="2" rx=".4" fill="currentColor"/></svg>
           <span>Em breve</span>
         </button>
       </section>

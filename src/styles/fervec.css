@@ -6866,14 +6866,14 @@ body.is-wine-route { background: #1e0907; color: #f8edd8; }
   .storefront-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .home-section-heading { flex-direction: column; align-items: flex-start; }
   .explore-note { flex-direction: column; align-items: flex-start; }
-  .featured-course.reference-course-ad { grid-template-columns: 1fr; min-height: auto; }
-  .reference-course-ad .featured-photo { position: relative; inset: auto; height: 220px; min-height: 220px; }
-  .reference-course-ad .featured-photo > img.featured-chef-photo { object-position: 18% center; }
-  .reference-course-ad .featured-photo:after { background: linear-gradient(180deg, transparent 58%, #25130a 100%); }
+  .featured-course.reference-course-ad { grid-template-columns: 34.5% 1fr auto; min-height: auto; }
+  .reference-course-ad .featured-photo { position: absolute; inset: 0; height: 100%; min-height: 0; }
+  .reference-course-ad .featured-photo > img.featured-chef-photo { object-position: left center; }
+  .reference-course-ad .featured-photo:after { background: linear-gradient(90deg, rgba(18, 9, 4, 0) 0%, rgba(18, 9, 4, 0.04) 30%, rgba(20, 9, 4, 0.84) 45%, rgba(16, 7, 3, 0.94) 100%); }
   .reference-course-ad .featured-spacer { display: none; }
-  .reference-course-ad .featured-copy { padding: 24px 20px; }
-  .home-offer-panel { width: min(240px, calc(100% - 36px)); margin: 0 auto 18px; }
-  .course-facts-icons { grid-template-columns: repeat(2, 1fr); }
+  .reference-course-ad .featured-copy { padding: 14px 4px 12px; }
+  .home-offer-panel { width: clamp(92px, 23vw, 128px); margin: 0 6px 0 0; }
+  .course-facts-icons { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .home-page > .site-footer > .footer-produce { width: 122px; left: -6px; bottom: -2px; }
   .home-page > .site-footer .footer-content { grid-template-columns: 1fr; padding-left: 96px; justify-items: center; gap: 12px; }
   .footer-rule { display: none; }
@@ -9797,20 +9797,22 @@ body:has(.home-page) .chef-chat-root {
 
 /* Home Game Banner */
 .home-game-banner {
+  container-type: inline-size;
   position: relative;
   width: min(1230px, calc(100% - 36px));
-  min-height: 176px;
+  aspect-ratio: 951 / 228;
+  min-height: 0;
   margin: 18px auto 26px;
-  padding: 20px 24px;
+  padding: 1.4cqi 1.8cqi;
   border-radius: 18px;
-  border: 1.5px solid #d1a763;
+  border: 2px solid #d5ab62;
   overflow: hidden;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  background: #150803;
-  box-shadow: 0 12px 26px rgba(24, 12, 5, 0.25);
+  justify-content: flex-start;
+  gap: 0;
+  background: #0a0401;
+  box-shadow: 0 12px 28px rgba(20, 10, 4, 0.32), inset 0 0 0 1px rgba(255, 224, 155, 0.22);
 }
 .home-game-bg {
   position: absolute;
@@ -9818,78 +9820,97 @@ body:has(.home-page) .chef-chat-root {
   right: 0;
   bottom: 0;
   left: auto;
-  width: 61%;
+  width: 57.6%;
   height: 100%;
-  object-fit: cover;
-  object-position: right center;
+  object-fit: fill;
+  object-position: center center;
 }
 .home-game-shade {
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    90deg,
-    #150803 0%,
-    #150803 39.5%,
-    rgba(21, 8, 3, 0.94) 45%,
-    rgba(21, 8, 3, 0.32) 55%,
-    transparent 66%
-  );
+  background:
+    radial-gradient(ellipse 14% 70% at 3% 45%, rgba(165, 86, 18, 0.28) 0%, transparent 72%),
+    radial-gradient(ellipse 22% 55% at 38% 12%, rgba(120, 56, 12, 0.26) 0%, transparent 72%),
+    radial-gradient(ellipse 18% 45% at 24% 88%, rgba(110, 48, 10, 0.22) 0%, transparent 72%),
+    linear-gradient(
+      90deg,
+      rgba(10, 4, 1, 0.94) 0%,
+      rgba(12, 5, 2, 0.92) 39%,
+      rgba(10, 4, 1, 0.98) 42.1%,
+      rgba(10, 4, 1, 0.72) 43%,
+      rgba(10, 4, 1, 0.12) 44.3%,
+      transparent 46%
+    );
 }
 .home-game-left {
   position: relative;
   z-index: 2;
-  max-width: 450px;
-  color: #fff5e3;
+  width: 40.5%;
+  max-width: 40.5%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #ffffff;
 }
 .home-game-eyebrow {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  color: #efc84f;
-  font: italic 700 14px var(--serif);
-  margin-bottom: 4px;
+  gap: 1.25cqi;
+  align-self: flex-start;
+  margin-left: 1.8cqi;
+  color: #f3c11d;
+  font: italic 700 2.55cqi/1 var(--serif);
+  margin-bottom: 0.7cqi;
 }
 .home-game-pad-icon svg {
-  width: 24px;
-  height: 17px;
+  width: 5.5cqi;
+  height: 3.7cqi;
   display: block;
 }
 .home-game-left h2 {
-  font: italic 700 clamp(24px, 2.5vw, 31px)/1.04 var(--serif);
-  margin: 0 0 8px;
-  color: #fff8ea;
+  font: italic 700 4.05cqi/0.98 var(--serif);
+  margin: 0 0 0.75cqi;
+  color: #ffffff;
+  text-align: center;
+  letter-spacing: -0.01em;
 }
 .home-game-left h2 em {
   display: block;
-  color: #efc84f;
+  color: #f5be18;
   font-style: italic;
-  font-size: clamp(28px, 3vw, 38px);
-  line-height: 1.02;
+  font-size: 5.05cqi;
+  line-height: 0.98;
+  margin-top: 0.15cqi;
 }
 .home-game-left p {
   margin: 0;
-  font: italic 600 13.5px/1.38 var(--serif);
-  color: #f6e7cb;
+  max-width: 39cqi;
+  font: italic 700 1.72cqi/1.2 var(--serif);
+  color: #ffffff;
+  text-align: center;
 }
 .home-game-soon-pill {
-  position: relative;
+  position: absolute;
+  top: 0.9cqi;
+  right: 1.1cqi;
   z-index: 3;
-  align-self: flex-start;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 20px;
+  gap: 1.05cqi;
+  padding: 1.15cqi 2.25cqi 1.15cqi 1.9cqi;
   border-radius: 999px;
-  border: 1.5px solid #ffd86f;
-  background: linear-gradient(180deg, #f5c644 0%, #d89b21 100%);
-  color: #241205;
-  font: 800 14.5px/1 var(--serif);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.42);
+  border: 1.5px solid #ffe488;
+  background: linear-gradient(180deg, #ffd02a 0%, #f1ae0b 100%);
+  color: #150902;
+  font: 800 2.3cqi/1 var(--serif);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
   white-space: nowrap;
 }
 .home-game-soon-pill svg {
-  width: 18px;
-  height: 18px;
+  width: 2.5cqi;
+  height: 2.5cqi;
 }
 
 /* Home Featured Course Showcase */
@@ -11221,19 +11242,22 @@ body:has(.home-page) .chef-chat-root {
     text-align: center;
   }
   .featured-course.reference-course-ad {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(136px, 34%) 1fr auto;
+    min-height: 230px;
   }
-  .reference-course-ad .featured-copy,
-  .reference-course-ad .home-offer-panel {
-    grid-column: 1;
+  .reference-course-ad .featured-copy {
+    grid-column: 2;
+    padding: 26px 8px 20px;
   }
   .reference-course-ad .home-offer-panel {
-    margin: 0 auto 20px;
-    width: min(260px, calc(100% - 32px));
+    grid-column: 3;
+    margin: 16px 14px 16px 0;
+    width: clamp(132px, 21vw, 176px);
   }
   .home-game-banner {
-    flex-direction: column;
-    align-items: flex-start;
+    flex-direction: row;
+    align-items: center;
+    min-height: 0;
   }
   .review-photo-grid,
   .review-errors-grid {
@@ -11785,114 +11809,128 @@ body:has(.home-page) .chef-chat-root {
   /* Game Banner */
   .home-game-banner {
     flex-direction: row;
-    align-items: stretch;
-    justify-content: space-between;
+    align-items: center;
+    justify-content: flex-start;
     width: calc(100% - 16px);
-    min-height: 118px;
+    aspect-ratio: 951 / 252;
+    min-height: 0;
     margin: 10px auto 14px;
-    padding: 12px 12px;
-    gap: 8px;
-    border-radius: 14px;
+    padding: 1.4cqi 1.6cqi;
+    gap: 0;
+    border-radius: 12px;
   }
   .home-game-bg {
-    width: 72%;
-    object-position: right center;
+    width: 57.6%;
+    height: 100%;
+    object-fit: fill;
+    object-position: center center;
   }
   .home-game-shade {
-    background: linear-gradient(
-      90deg,
-      #150803 0%,
-      #150803 29.5%,
-      rgba(21, 8, 3, 0.92) 42%,
-      rgba(21, 8, 3, 0.34) 58%,
-      rgba(21, 8, 3, 0.08) 76%
-    );
+    background:
+      radial-gradient(ellipse 16% 70% at 3% 45%, rgba(165, 86, 18, 0.28) 0%, transparent 72%),
+      radial-gradient(ellipse 24% 55% at 38% 12%, rgba(120, 56, 12, 0.26) 0%, transparent 72%),
+      linear-gradient(
+        90deg,
+        rgba(10, 4, 1, 0.94) 0%,
+        rgba(12, 5, 2, 0.92) 39%,
+        rgba(10, 4, 1, 0.98) 42.1%,
+        rgba(10, 4, 1, 0.72) 43%,
+        rgba(10, 4, 1, 0.12) 44.3%,
+        transparent 46%
+      );
   }
   .home-game-left {
-    max-width: 58%;
+    width: 40.5%;
+    max-width: 40.5%;
+    padding-right: 0;
     display: flex;
     flex-direction: column;
+    align-items: center;
     justify-content: center;
+    text-align: center;
   }
   .home-game-eyebrow {
-    font-size: 11px;
-    gap: 6px;
-    margin-bottom: 2px;
+    font-size: 2.55cqi;
+    gap: 1.2cqi;
+    margin-left: 1.5cqi;
+    margin-bottom: 0.6cqi;
   }
   .home-game-pad-icon svg {
-    width: 19px;
-    height: 14px;
+    width: 5.4cqi;
+    height: 3.6cqi;
   }
   .home-game-left h2 {
-    font-size: clamp(15px, 4.3vw, 19px);
-    line-height: 1.04;
-    margin-bottom: 4px;
+    font-size: 4cqi;
+    line-height: 0.98;
+    margin-bottom: 0.7cqi;
   }
   .home-game-left h2 em {
-    font-size: clamp(17.5px, 4.9vw, 22px);
+    font-size: 5cqi;
   }
   .home-game-left p {
-    font-size: clamp(9.5px, 2.6vw, 11px);
-    line-height: 1.26;
+    font-size: clamp(6.5px, 1.85cqi, 11px);
+    line-height: 1.18;
   }
   .home-game-soon-pill {
-    align-self: flex-start;
-    padding: 5px 10px;
-    font-size: 11px;
-    gap: 5px;
+    top: 1cqi;
+    right: 1.1cqi;
+    padding: 1.1cqi 2.15cqi 1.1cqi 1.8cqi;
+    font-size: 2.3cqi;
+    gap: 1cqi;
   }
   .home-game-soon-pill svg {
-    width: 13px;
-    height: 13px;
+    width: 2.45cqi;
+    height: 2.45cqi;
   }
 
-  /* Featured Course Showcase */
+  /* Featured Course Showcase — adapted identically to PC layout */
   .home-course {
     width: calc(100% - 16px);
-    margin: 20px auto 20px;
+    margin: 18px auto 18px;
   }
   .featured-course.reference-course-ad {
-    grid-template-columns: 27% 1fr auto;
-    min-height: 204px;
-    margin-top: 14px;
-    border-radius: 16px;
+    grid-template-columns: 36.5% 1fr auto;
+    min-height: clamp(134px, 36.5vw, 178px);
+    margin-top: 12px;
+    border-radius: 14px;
     align-items: center;
-    padding: 20px 10px 16px 0;
-    gap: 6px;
+    padding: 13px 6px 8px 0;
+    gap: 3px;
   }
   .featured-corner-foliage-tl {
-    width: 38px;
+    width: clamp(26px, 7.2vw, 36px);
     top: -6px;
     left: -5px;
   }
   .featured-corner-foliage-br {
-    width: 46px;
-    right: -6px;
-    bottom: -12px;
+    width: clamp(32px, 8.8vw, 44px);
+    right: -7px;
+    bottom: -9px;
   }
   .featured-highlight-pill {
-    top: -12px;
+    top: -10px;
     left: 50%;
-    padding: 5px 15px;
-    font-size: 11.5px;
+    padding: 4px 13px;
+    font-size: clamp(8.5px, 2.3vw, 11px);
   }
   .reference-course-ad .featured-photo {
     position: absolute;
     inset: 0;
     height: 100%;
     min-height: 0;
-    border-radius: 16px;
+    border-radius: 14px;
   }
   .reference-course-ad .featured-photo > img.featured-chef-photo {
-    object-position: 10% center;
+    object-position: left center;
   }
   .reference-course-ad .featured-photo:after {
     background: linear-gradient(
       90deg,
-      rgba(18, 9, 4, 0.04) 0%,
-      rgba(18, 9, 4, 0.34) 20%,
-      rgba(20, 9, 4, 0.93) 34%,
-      rgba(16, 7, 3, 0.97) 100%
+      rgba(18, 9, 4, 0) 0%,
+      rgba(18, 9, 4, 0.04) 32%,
+      rgba(20, 9, 4, 0.66) 42%,
+      rgba(18, 8, 3, 0.88) 54%,
+      rgba(16, 7, 3, 0.94) 100%
     );
   }
   .reference-course-ad .featured-copy {
@@ -11901,16 +11939,17 @@ body:has(.home-page) .chef-chat-root {
     min-width: 0;
   }
   .reference-course-ad .featured-copy h3 {
-    font-size: clamp(15.5px, 4.3vw, 21px);
+    font-size: clamp(11px, 3vw, 15.5px);
     line-height: 1.04;
     margin-bottom: 2px;
+    white-space: nowrap;
   }
   .reference-course-ad .featured-copy h3 > span {
-    font-size: clamp(11px, 3vw, 13.5px);
+    font-size: clamp(8px, 2.15vw, 11px);
   }
   .featured-do-prato {
-    font-size: clamp(10.5px, 2.9vw, 13px);
-    margin-bottom: 7px;
+    font-size: clamp(8px, 2.2vw, 11px);
+    margin-bottom: 5px;
   }
   .course-facts-icons {
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -11919,57 +11958,59 @@ body:has(.home-page) .chef-chat-root {
     padding-top: 2px;
   }
   .course-facts-icons span {
-    font-size: clamp(7.5px, 2vw, 9.5px);
-    line-height: 1.1;
-    gap: 3px;
-    padding: 0 3px;
+    font-size: clamp(5.5px, 1.48vw, 7.4px);
+    line-height: 1.12;
+    gap: 2.5px;
+    padding: 0 2px;
     max-width: none;
+    white-space: normal;
   }
   .course-facts-icons span.is-solid-gold b {
-    width: 24px;
-    height: 24px;
+    width: clamp(16px, 4.4vw, 22px);
+    height: clamp(16px, 4.4vw, 22px);
   }
   .course-facts-icons span.is-solid-gold b svg {
-    width: 12px;
-    height: 12px;
+    width: clamp(8px, 2.2vw, 11px);
+    height: clamp(8px, 2.2vw, 11px);
   }
   .course-facts-icons span.is-outline-gold b {
-    width: 24px;
-    height: 24px;
+    width: clamp(16px, 4.4vw, 22px);
+    height: clamp(16px, 4.4vw, 22px);
   }
   .course-facts-icons span.is-outline-gold b svg {
-    width: 18px;
-    height: 18px;
+    width: clamp(12.5px, 3.5vw, 17px);
+    height: clamp(12.5px, 3.5vw, 17px);
   }
   .reference-course-ad .home-offer-panel {
     grid-column: 3;
-    width: clamp(94px, 25vw, 122px);
-    margin: 0 2px 0 0;
-    padding: 8px 6px;
+    width: clamp(78px, 21.5vw, 106px);
+    margin: 2px 1px 0 0;
+    padding: 6px 4px;
     gap: 2px;
-    border-radius: 12px;
+    border-radius: 10px;
   }
   .home-offer-panel span {
-    font-size: 8.5px;
+    font-size: clamp(6.4px, 1.7vw, 8.2px);
   }
   .home-offer-panel strong.offer-price-swash {
-    font-size: clamp(17px, 4.7vw, 22px);
+    font-size: clamp(13px, 3.55vw, 17.5px);
   }
   .offer-swash-svg {
-    width: 68px;
-    height: 6px;
-    margin-bottom: 3px;
+    width: clamp(44px, 12vw, 66px);
+    height: 5px;
+    margin-bottom: 2px;
   }
   .home-offer-panel .btn {
     width: 100%;
-    min-height: 28px;
-    padding: 5px 6px;
-    font-size: 10px;
+    min-height: clamp(19px, 5.2vw, 25px);
+    padding: 3px 4px;
+    font-size: clamp(7px, 1.9vw, 9.2px);
     white-space: nowrap;
   }
   .home-offer-panel small {
-    font-size: 7.8px;
+    font-size: clamp(5px, 1.38vw, 6.8px);
     line-height: 1.15;
+    white-space: nowrap;
   }
 
   /* Signature Footer */
@@ -12389,43 +12430,18 @@ body:has(.home-page) .chef-chat-root {
     font-size: 10px;
   }
   .featured-course.reference-course-ad {
-    grid-template-columns: 1fr;
-    padding: 20px 12px 14px;
-    gap: 10px;
+    grid-template-columns: 35.5% 1fr auto;
+    padding: 13px 5px 8px 0;
+    gap: 2px;
   }
-  .reference-course-ad .featured-photo {
-    position: relative;
-    inset: auto;
-    height: 156px;
-    border-radius: 12px;
-  }
-  .reference-course-ad .featured-photo > img.featured-chef-photo {
-    object-position: 18% 20%;
-  }
-  .reference-course-ad .featured-photo:after {
-    background: linear-gradient(180deg, transparent 54%, #25130a 100%);
-  }
-  .reference-course-ad .featured-copy,
-  .reference-course-ad .home-offer-panel {
-    grid-column: 1;
+  .reference-course-ad .featured-copy {
+    grid-column: 2;
   }
   .reference-course-ad .home-offer-panel {
-    width: min(210px, 100%);
-    margin: 0 auto;
-    padding: 10px 12px;
-  }
-  .home-offer-panel span {
-    font-size: 10.5px;
-  }
-  .home-offer-panel strong.offer-price-swash {
-    font-size: 24px;
-  }
-  .home-offer-panel .btn {
-    font-size: 11.5px;
-    min-height: 34px;
-  }
-  .home-offer-panel small {
-    font-size: 9.5px;
+    grid-column: 3;
+    width: clamp(74px, 21vw, 88px);
+    margin: 2px 0 0 0;
+    padding: 5px 4px;
   }
   .cockpit-wood-rack {
     gap: 5px;
