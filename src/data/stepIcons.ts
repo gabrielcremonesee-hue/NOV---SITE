@@ -28,8 +28,10 @@ const MODULE_STEP_ICONS: Record<string, readonly string[]> = {
   ],
   pesto: [
     '/assets/step-icons/manjericao.png',
-    '/assets/step-icons/pinoli-queijo.png',
     '/assets/step-icons/almofariz.png',
+    '/assets/step-icons/pinoli-queijo.png',
+    '/assets/step-icons/manjericao.png',
+    '/assets/step-icons/pinoli-queijo.png',
     '/assets/step-icons/azeite.png',
     '/assets/step-icons/fusilli.png',
     '/assets/step-icons/mantecatura.png',

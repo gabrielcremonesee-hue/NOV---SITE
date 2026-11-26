@@ -6,6 +6,8 @@ import {
   questions,
   exam,
   reviewItems,
+  carbonaraTechSheet,
+  TechnicalSheet,
 } from './data/courseData';
 import { extraRecipes, ExtraRecipe } from './data/recipesData';
 import {
@@ -589,27 +591,109 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   function recipeShortDescription(r: ExtraRecipe): string {
     const map: Record<string, string> = {
       alfredo:
-        'Aprenda a construir uma emulsão cremosa com manteiga, Parmigiano-Reggiano e água do cozimento, controlando temperatura e textura.',
+        'Padronizado com 400 g de fettuccine fresco, 100 g de manteiga e 240 g de Parmigiano-Reggiano (24 meses), sem creme de leite, com fabricação artesanal da massa.',
       arrabbiata:
-        'Aprenda a equilibrar tomate, alho e pimenta, desenvolvendo um molho intenso sem perder frescor e controle de calor.',
+        'Massa tubular penne rigate seca (320 g didáticos) com infusão controlada de alho e peperoncino/pimenta calabresa e redução integral de tomate pelado.',
       pesto:
-        'Entenda como preservar o frescor do manjericão, triturar os ingredientes sem excesso de calor e envolver a massa com equilíbrio.',
+        'Molho cru da Ligúria em 10 etapas (60 g manjericão, 30 g pinoli, 50 g Parmigiano, 25 g Pecorino Sardo, 70 ml azeite) sobre fusilli didático, com conservação segura.',
       'ragù':
-        'Conheça a sequência de soffritto, carne, deglaçagem e cozimento lento que constrói a profundidade de um ragù à bolonhesa.',
+        'Baseado na Accademia Italiana della Cucina (2023): fichas separadas (massa 4 porções; ragù 6 porções), carne moída grossa, pancetta fresca, soffritto e cozimento lento.',
       sauces:
-        'Compare Pomodoro e Burro e Salvia e aprenda duas formas diferentes de construir sabor, controlar calor e ajustar a textura.',
+        'Pomodoro (redução de 20–30 min para 320–400 g de massa seca, sem açúcar obrigatório) ao lado de Burro e Salvia (100 g manteiga para ravioli e tortelli).',
     };
     return map[r.id] || r.subtitle || '';
   }
 
+  function renderTechnicalSheetDetails(
+    sheet: TechnicalSheet,
+    opts?: { stepWarning?: string; editorialAlert?: string }
+  ): string {
+    return `<div class="cockpit-module-ingredients-list">
+      <strong>Ficha Técnica Completa · ${esc(sheet.originalName)}</strong>
+      <p style="margin:6px 0 8px;">${esc(sheet.portugueseExplanation)}</p>
+      <ul>
+        <li><strong>Região gastronômica:</strong> ${esc(sheet.region)}</li>
+        <li><strong>Rendimento de referência:</strong> ${esc(sheet.yield)}</li>
+        <li><strong>Quantidade por porção:</strong> ${esc(sheet.portionQuantity)}</li>
+        <li><strong>Tempo de preparação culinária:</strong> ${esc(sheet.prepTime)}</li>
+        <li><strong>Tempo de cozimento:</strong> ${esc(sheet.cookTime)}</li>
+        <li><strong>Tempo total culinário estimado:</strong> ${esc(sheet.totalEstimatedTime)}</li>
+        <li><strong>Carga horária do curso vs preparo:</strong> ${esc(sheet.workloadDistinction)}</li>
+        <li><strong>Nível de dificuldade:</strong> ${esc(sheet.difficulty)}</li>
+      </ul>
+    </div>
+    <div class="cockpit-module-ingredients-list" style="margin-top:10px;">
+      <strong>Ingredientes e unidades de medida</strong>
+      <ul>${sheet.ingredients.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+    </div>
+    <div class="cockpit-module-ingredients-list" style="margin-top:10px;">
+      <strong>Utensílios necessários</strong>
+      <ul>${sheet.utensils.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+    </div>
+    <div class="cockpit-module-ingredients-list" style="margin-top:10px;">
+      <strong>Mise en place</strong>
+      <ul>${sheet.miseEnPlace.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+    </div>
+    <div class="cockpit-module-ingredients-list" style="margin-top:10px;">
+      <strong>Etapas detalhadas e pontos de controle</strong>
+      <ul>${sheet.detailedSteps.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+      <strong style="display:block;margin-top:8px;">Técnicas gastronômicas</strong>
+      <ul>${sheet.techniques.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+      <strong style="display:block;margin-top:8px;">Pontos de controle</strong>
+      <ul>${sheet.controlPoints.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+    </div>
+    <div class="cockpit-module-ingredients-list" style="margin-top:10px;">
+      <strong>Resultado esperado e correção de falhas</strong>
+      <p style="margin:6px 0;">${esc(sheet.expectedResult)}</p>
+      <ul>${sheet.errorsAndFixes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+      <strong style="display:block;margin-top:8px;">Dicas do Chef Cremonese</strong>
+      <ul>${sheet.chefTips.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+    </div>
+    ${
+      opts?.stepWarning
+        ? `<div class="safety-note cockpit-safety-note" style="margin-top:10px;">
+            <strong>Atenção nesta etapa:</strong> ${esc(opts.stepWarning)}
+          </div>`
+        : ''
+    }
+    <div class="safety-note cockpit-safety-note" style="margin-top:10px;">
+      <strong>Alergênicos:</strong> ${esc(sheet.allergens)}
+    </div>
+    <div class="safety-note cockpit-safety-note" style="margin-top:10px;">
+      <strong>Conservação e Segurança Alimentar (Anvisa RDC 216/2004):</strong> ${esc(sheet.conservation)}
+      <ul style="margin:6px 0 0 18px;">${sheet.foodSafetyNotes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+    </div>
+    ${
+      opts?.editorialAlert
+        ? `<div class="recipe-disclaimer" style="margin:10px 0;">
+            <strong>Nota editorial do módulo</strong>
+            <p style="margin:4px 0 0;">${esc(opts.editorialAlert)}</p>
+          </div>`
+        : ''
+    }
+    <div class="cockpit-module-ingredients-list" style="margin-top:10px;">
+      <strong>Adaptações didáticas, validação e referências</strong>
+      <ul>
+        <li><strong>Adaptações didáticas:</strong> ${esc(sheet.didacticAdaptations)}</li>
+        <li><strong>Status de validação prática:</strong> ${esc(sheet.practicalValidationStatus)}</li>
+        ${sheet.references
+          .map(
+            (ref) =>
+              `<li><strong>Referência:</strong> ${esc(ref.label)} — <span style="word-break:break-all;">${esc(ref.url)}</span></li>`
+          )
+          .join('')}
+      </ul>
+    </div>`;
+  }
+
   function evaluateMainCourseProgress(): EvaluatedCourseProgress {
     const curriculumTitles: Record<string, string> = {
-      carbonara: 'Tipos de Massas Italianas',
-      alfredo: 'Massas Frescas',
-      arrabbiata: 'Massas Recheadas',
-      pesto: 'Molhos Clássicos I',
-      'ragù': 'Molhos Clássicos II',
-      sauces: 'Receitas Especiais',
+      carbonara: 'Fundamentos das Massas Italianas: Carbonara',
+      alfredo: 'Massas Frescas e Emulsificação: Fettuccine Alfredo',
+      arrabbiata: 'Massas Tubulares e Molhos Picantes: Penne all’Arrabbiata',
+      pesto: 'Molhos Clássicos da Ligúria: Pesto Genovese',
+      'ragù': 'Massa Artesanal e Cozimento Lento: Tagliatelle al Ragù',
+      sauces: 'Molhos Essenciais Italianos: Pomodoro e Burro e Salvia',
     };
 
     const blueprint: CourseBlueprint = {
@@ -625,7 +709,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           index: 1,
           title: curriculumTitles.carbonara,
           recipeTitle: 'Spaghetti alla Carbonara',
-          desc: 'Aprenda a controlar o cozimento, preparar a mistura de ovos e queijo e construir uma emulsão cremosa sem creme de leite.',
+          desc: 'Controle de sal, guanciale sem pele, ovos pasteurizados como padrão didático, emulsão fora do fogo direto e segurança alimentar.',
           photo: MEDIA.pastaCarbonaraHero,
           duration: course.duration,
           level: course.level,
@@ -1514,16 +1598,17 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           <div class="utensil-box">
             <strong>Utensílios e equipamentos</strong>
             <div>
-              <span>Panela grande</span>
-              <span>Frigideira</span>
+              <span>Panela ampla</span>
+              <span>Frigideira larga</span>
               <span>Tigela</span>
-              <span>Ralador</span>
-              <span>Escorredor</span>
-              <span>Pinça ou pegador</span>
-              <span>Faca e tábua</span>
+              <span>Ralador fino</span>
+              <span>Escorredor e concha</span>
+              <span>Pegador</span>
+              <span>Tábua higienizada (separada)</span>
+              <span>Termômetro culinário (recomendado)</span>
             </div>
           </div>
-          <div class="safety-note">O guanciale deve estar previamente cortado. Fogão e água fervente exigem supervisão responsável.</div>
+          <div class="safety-note">Higiene e segurança (Anvisa RDC 216/2004): lave as mãos e higienize tábuas/utensílios prevenindo contaminação cruzada; mantenha ovos pasteurizados refrigerados até o uso e verifique se a pele dura do guanciale foi removida. Alergênicos: trigo (glúten), ovos e leite.</div>
           <button class="btn btn-red" data-action="mise-ready">Minha bancada está pronta <span>→</span></button>
         </div>
       </section>
@@ -1909,10 +1994,11 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       nextCtaAction: 'questions',
     })}
     <details class="cockpit-auxiliary-drawer">
-      <summary>Segurança na cozinha e orientações complementares</summary>
-      <div class="safety-note cockpit-safety-note">
-        <strong>Segurança na cozinha:</strong> ${esc(s.warning)}
-      </div>
+      <summary>Ficha técnica completa (${esc(carbonaraTechSheet.yield)}), segurança alimentar e alergênicos</summary>
+      ${renderTechnicalSheetDetails(carbonaraTechSheet, {
+        stepWarning: s.warning,
+        editorialAlert: carbonaraTechSheet.didacticAdaptations,
+      })}
     </details>`;
 
     return renderUnifiedLessonCockpit({
@@ -2134,36 +2220,36 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     }));
     const carbonaraErrors: ReviewErrorCardInput[] = [
       {
-        text: 'Massa cozida demais: perde a textura al dente ideal.',
-        image: MEDIA.techPastaBoiling,
-        detailAction: 'review-detail',
-        modalTitle: 'Massa cozida demais',
-        modalCopy:
-          'Use o tempo da embalagem apenas como guia e prove a massa dois minutos antes para garantir resistência al dente.',
-      },
-      {
-        text: 'Ovo cozido: o calor foi alto demais.',
+        text: 'Ovo coagulado pelo calor direto: afaste a frigideira do fogo e use ovos pasteurizados.',
         image: MEDIA.carbonaraEggCheese,
         detailAction: 'review-detail',
-        modalTitle: 'Ovo coagulado pelo calor excessivo',
+        modalTitle: 'Ovo coagulado e segurança microbiológica',
         modalCopy:
-          'Sempre afaste a frigideira do fogo direto antes de acrescentar a mistura de ovos e queijo, mexendo continuamente.',
+          'Afaste sempre a frigideira do fogo direto antes de juntar a mistura de ovos pasteurizados e Pecorino. Lembre: o calor residual da massa não garante eliminação de patógenos e textura cremosa não comprova segurança.',
       },
       {
-        text: 'Molho seco: ajuste com água do cozimento.',
-        image: MEDIA.pastaCarbonaraHero,
-        detailAction: 'review-detail',
-        modalTitle: 'Molho seco na finalização',
-        modalCopy:
-          'Adicione a água rica em amido reservada aos poucos, uma colher de cada vez, mantendo o movimento até obter brilho cremoso.',
-      },
-      {
-        text: 'Guanciale queimado: reduza o fogo.',
+        text: 'Excesso de sal ou gordura: modere o sal da água e controle a gordura do guanciale.',
         image: MEDIA.techGuancialePan,
         detailAction: 'review-detail',
-        modalTitle: 'Guanciale escurecido demais',
+        modalTitle: 'Controle de gordura do guanciale e sal',
         modalCopy:
-          'Comece com fogo moderado para renderizar a gordura aos poucos e busque apenas cor dourada.',
+          'Retire a pele dura do guanciale, corte uniforme e doure na própria gordura em fogo brando. Retire excesso de gordura se houver sobra, reserve parte crocante para a montagem e modere o sal da água.',
+      },
+      {
+        text: 'Molho seco ou massa mole: reserve água amilácea e prove o ponto al dente.',
+        image: MEDIA.techPastaBoiling,
+        detailAction: 'review-detail',
+        modalTitle: 'Ponto al dente e ajuste com água do cozimento',
+        modalCopy:
+          'Reserve a água rica em amido antes de escorrer o spaghetti al dente e adicione colher a colher na emulsão fora do fogo direto, sem jamais usar creme de leite.',
+      },
+      {
+        text: 'Serviço demorado ou contaminação cruzada: sirva imediatamente e aplique a RDC 216/2004.',
+        image: MEDIA.pastaCarbonaraHero,
+        detailAction: 'review-detail',
+        modalTitle: 'Serviço imediato, alergênicos e boas práticas',
+        modalCopy:
+          'Sirva na hora com o guanciale crocante e Pecorino reservados; não mantenha à temperatura ambiente. Higienize mãos e utensílios separando crus de prontos. Alergênicos: trigo (glúten), ovos e leite.',
       },
     ];
 
@@ -3339,6 +3425,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
                     <strong>${esc(q.q)}</strong>
                     <p>Sua resposta: ${esc(q.a[(result.answers?.[i] ?? 0) as number])}</p>
                     <small>Resposta correta: ${esc(q.a[q.correct])}</small>
+                    <p class="exam-explain">${esc(q.why)}</p>
                   </div>
                 </article>`
             )
@@ -3729,22 +3816,10 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         nextCtaAttrs: 'data-tab="work"',
       })}
       <details class="cockpit-auxiliary-drawer">
-        <summary>Lista completa da receita (${esc(r.yield)}), alergênicos e notas editoriais</summary>
-        <div class="cockpit-module-ingredients-list">
-          <strong>Lista completa da receita (${esc(r.yield)})</strong>
-          <ul>${r.ingredients.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
-        </div>
-        ${
-          r.editorialAlert
-            ? `<div class="recipe-disclaimer" style="margin:10px 0;">
-                <strong>Nota editorial do módulo</strong>
-                <p style="margin:4px 0 0">${esc(r.editorialAlert)}</p>
-              </div>`
-            : ''
-        }
-        <div class="safety-note cockpit-safety-note">
-          <strong>Alergênicos e atenção:</strong> ${esc(r.allergens)}
-        </div>
+        <summary>Ficha técnica completa (${esc(r.yield)}), segurança alimentar e alergênicos</summary>
+        ${renderTechnicalSheetDetails(r.techSheet, {
+          editorialAlert: r.editorialAlert,
+        })}
       </details>
       ${saucesCompareSection}`;
     }
@@ -4059,34 +4134,34 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
 
     const moduleTopics: Record<string, string[]> = {
       carbonara: [
-        'Mise en place e controle de água fervente',
-        'Renderização gradual do guanciale',
-        'Emulsão de ovos, Pecorino Romano e água do cozimento',
+        'Higiene (RDC 216/2004), sal moderado e guanciale sem pele em corte uniforme',
+        'Ovos pasteurizados como padrão didático e controle térmico fora do fogo direto',
+        'Reserva de guanciale e Pecorino para montagem imediata; alergênicos trigo, ovos e leite',
       ],
       alfredo: [
-        'Manteiga e Parmigiano-Reggiano sem creme de leite',
-        'Controle térmico na mantecatura',
-        'Ajuste gradual de textura com amido da massa',
+        'Padronização Alfredo alla Scrofa: 400 g fettuccine, 100 g manteiga e 240 g Parmigiano (24m)',
+        'Mantecatura sem creme de leite e ajuste do tempo à espessura da massa artesanal',
+        'Fabricação do fettuccine (farinha vs peso final da massa fresca) e alergênicos',
       ],
       arrabbiata: [
-        'Infusão aromática controlada de alho e pimenta',
-        'Redução de tomate pelado e equilíbrio de acidez',
-        'Integração do penne ao dente ao molho',
+        'Penne rigate (massa tubular seca, não recheada) em versão didática de 320 g',
+        'Infusão sem queimar o alho, peperoncino ou pimenta calabresa e redução com líquido do tomate',
+        'Finalização da massa no molho e opção contemporânea de Pecorino Romano',
       ],
       pesto: [
-        'Higienização e secagem cuidadosa do manjericão',
-        'Maceração / trituração sem aquecimento excessivo',
-        'Emulsão com azeite, pinoli e queijos italianos',
+        'Sequência oficial de 10 etapas (60 g manjericão, 30 g pinoli, 50 g Parmigiano, 25 g Pecorino Sardo, 70 ml azeite)',
+        'Almofariz vs processador em pulsos curtos sem aquecer e fusilli didático (vs trofie/trenette)',
+        'Conservação segura: nunca armazenar alho em azeite à temperatura ambiente (NCHFP)',
       ],
       'ragù': [
-        'Soffritto aromático e cozimento lento da carne',
-        'Deglaçagem com vinho e construção do ragù',
-        'Preparo de massa fresca e integração com o molho (pendente validação de corte)',
+        'Accademia Italiana della Cucina (2023): fichas separadas (massa 4 porções; ragù 6 porções)',
+        'Carne moída grossa com colágeno, pancetta fresca não defumada, soffritto e 2–3 h de cocção',
+        'Tagliatelle artesanal (corte ~7 mm cru / 8 mm cozido ou 8 mm cru contemporâneo) sob validação',
       ],
       sauces: [
-        'Molho 1: Pomodoro clássico por redução suave',
-        'Molho 2: Burro e Salvia por infusão e emulsão',
-        'Comparação técnica de cor, aroma e consistência',
+        'Pomodoro: redução 20–30 min para 320–400 g massa seca, concentração vs acidez, sem açúcar obrigatório',
+        'Burro e Salvia (100 g manteiga): manteiga derretida, dourada e queimada para ravioli e tortelli',
+        'Alergênicos separados de molho e massa e boas práticas contra contaminação cruzada',
       ],
     };
 
