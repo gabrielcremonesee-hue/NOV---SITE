@@ -1,4 +1,5 @@
-import { CourseState, RecipeProgressEntry } from '../progress';
+import { CourseState, ExamAttempt, QuestionAttempt, RecipeProgressEntry } from '../progress';
+import type { QuestionAttemptSnapshot } from '../../data/assessments';
 import { getSupabaseClient } from './client';
 
 export interface ServerCertificateRecord {
@@ -40,6 +41,10 @@ export interface ServerAttemptRow {
   passed: boolean;
   answers: number[];
   attempted_at: string;
+  bank_version?: string | null;
+  question_ids?: string[] | null;
+  selected_option_ids?: string[] | null;
+  question_snapshots?: QuestionAttemptSnapshot[] | null;
 }
 
 export interface WorkspaceCourseSummary {
@@ -162,6 +167,10 @@ export interface SubmitAssessmentResponse {
   correctCount?: number;
   totalQuestions?: number;
   passed?: boolean;
+  bankVersion?: string;
+  questionIds?: string[];
+  selectedOptionIds?: string[];
+  questionSnapshots?: QuestionAttemptSnapshot[];
   certificateUnlocked?: boolean;
   certificate?: ServerCertificateRecord | null;
   certificates?: ServerCertificateRecord[];
@@ -172,6 +181,10 @@ export async function submitAssessmentToServer(payload: {
   moduleKey: string;
   attemptType: 'work' | 'exam';
   answers: number[];
+  bankVersion?: string;
+  questionIds?: string[];
+  selectedOptionIds?: string[];
+  displayedOptionOrders?: string[][];
 }): Promise<SubmitAssessmentResponse> {
   try {
     const token = await getAccessToken();
@@ -205,6 +218,12 @@ export async function submitAssessmentToServer(payload: {
       correctCount: data.correctCount,
       totalQuestions: data.totalQuestions,
       passed: Boolean(data.passed),
+      bankVersion: typeof data.bankVersion === 'string' ? data.bankVersion : undefined,
+      questionIds: Array.isArray(data.questionIds) ? data.questionIds : undefined,
+      selectedOptionIds: Array.isArray(data.selectedOptionIds) ? data.selectedOptionIds : undefined,
+      questionSnapshots: Array.isArray(data.questionSnapshots)
+        ? (data.questionSnapshots as QuestionAttemptSnapshot[])
+        : undefined,
       certificateUnlocked: Boolean(data.certificateUnlocked),
       certificate: data.certificate || null,
       certificates: Array.isArray(data.certificates)
@@ -338,6 +357,43 @@ export async function downloadCertificatePdfBlob(certificateCode: string): Promi
   }
 }
 
+function mergeAttemptVersionMetadata<T extends { score: number; answers: (number | null)[]; date: string; bankVersion?: string; questionIds?: string[]; selectedOptionIds?: string[]; questionSnapshots?: QuestionAttemptSnapshot[] }>(
+  mapped: T,
+  row: ServerAttemptRow,
+  previousList?: T[]
+): T {
+  const localMatch = Array.isArray(previousList)
+    ? previousList.find(
+        (prev) =>
+          prev.date === row.attempted_at ||
+          (prev.score === row.score &&
+            JSON.stringify(prev.answers || []) === JSON.stringify(row.answers || []))
+      )
+    : undefined;
+
+  const bankVersion =
+    typeof row.bank_version === 'string' && row.bank_version
+      ? row.bank_version
+      : localMatch?.bankVersion;
+  const questionIds = Array.isArray(row.question_ids)
+    ? row.question_ids
+    : localMatch?.questionIds;
+  const selectedOptionIds = Array.isArray(row.selected_option_ids)
+    ? row.selected_option_ids
+    : localMatch?.selectedOptionIds;
+  const questionSnapshots = Array.isArray(row.question_snapshots)
+    ? row.question_snapshots
+    : localMatch?.questionSnapshots;
+
+  return {
+    ...mapped,
+    ...(bankVersion ? { bankVersion } : {}),
+    ...(questionIds ? { questionIds } : {}),
+    ...(selectedOptionIds ? { selectedOptionIds } : {}),
+    ...(questionSnapshots ? { questionSnapshots } : {}),
+  };
+}
+
 export function hydrateCourseStateFromWorkspace(
   current: CourseState,
   ws: WorkspaceHydrationResponse
@@ -365,25 +421,37 @@ export function hydrateCourseStateFromWorkspace(
     }
   }
 
-  const carbExams = ws.attempts
+  const carbExams: ExamAttempt[] = ws.attempts
     .filter((a) => a.module_key === 'carbonara' && a.attempt_type === 'exam')
-    .map((a) => ({
-      score: a.score,
-      passed: a.passed,
-      answers: Array.isArray(a.answers) ? a.answers : [],
-      date: a.attempted_at,
-    }));
+    .map((a) =>
+      mergeAttemptVersionMetadata(
+        {
+          score: a.score,
+          passed: a.passed,
+          answers: Array.isArray(a.answers) ? a.answers : [],
+          date: a.attempted_at,
+        },
+        a,
+        current.examAttempts
+      )
+    );
   if (carbExams.length > 0) {
     next.examAttempts = carbExams;
   }
 
-  const carbWorks = ws.attempts
+  const carbWorks: QuestionAttempt[] = ws.attempts
     .filter((a) => a.module_key === 'carbonara' && a.attempt_type === 'work')
-    .map((a) => ({
-      score: a.score,
-      answers: Array.isArray(a.answers) ? a.answers : [],
-      date: a.attempted_at,
-    }));
+    .map((a) =>
+      mergeAttemptVersionMetadata(
+        {
+          score: a.score,
+          answers: Array.isArray(a.answers) ? a.answers : [],
+          date: a.attempted_at,
+        },
+        a,
+        current.questionAttempts
+      )
+    );
   if (carbWorks.length > 0) {
     next.questionAttempts = carbWorks;
   }
@@ -391,21 +459,34 @@ export function hydrateCourseStateFromWorkspace(
   const recipeIds = ['alfredo', 'arrabbiata', 'pesto', 'ragù', 'sauces'];
   for (const rId of recipeIds) {
     const dbMod = ws.moduleProgress.find((m) => m.module_key === rId);
-    const dbExams = ws.attempts
+    const prevProg = current.recipeProgress?.[rId];
+    const dbExams: ExamAttempt[] = ws.attempts
       .filter((a) => a.module_key === rId && a.attempt_type === 'exam')
-      .map((a) => ({
-        score: a.score,
-        passed: a.passed,
-        answers: Array.isArray(a.answers) ? a.answers : [],
-        date: a.attempted_at,
-      }));
-    const dbWorks = ws.attempts
+      .map((a) =>
+        mergeAttemptVersionMetadata(
+          {
+            score: a.score,
+            passed: a.passed,
+            answers: Array.isArray(a.answers) ? a.answers : [],
+            date: a.attempted_at,
+          },
+          a,
+          prevProg?.examAttempts
+        )
+      );
+    const dbWorks: QuestionAttempt[] = ws.attempts
       .filter((a) => a.module_key === rId && a.attempt_type === 'work')
-      .map((a) => ({
-        score: a.score,
-        answers: Array.isArray(a.answers) ? a.answers : [],
-        date: a.attempted_at,
-      }));
+      .map((a) =>
+        mergeAttemptVersionMetadata(
+          {
+            score: a.score,
+            answers: Array.isArray(a.answers) ? a.answers : [],
+            date: a.attempted_at,
+          },
+          a,
+          prevProg?.workAttempts
+        )
+      );
 
     if (dbMod || dbExams.length > 0 || dbWorks.length > 0) {
       const prev: RecipeProgressEntry = next.recipeProgress?.[rId] || {

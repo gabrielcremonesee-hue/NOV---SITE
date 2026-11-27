@@ -8,6 +8,18 @@ export interface SauceCard {
   tip: string;
 }
 
+export interface IndependentTechnicalSheet {
+  code: string;
+  title: string;
+  sheet: TechnicalSheet;
+}
+
+export interface RecipeAssemblyGuide {
+  title: string;
+  reference: string;
+  points: string[];
+}
+
 export interface ExtraRecipe {
   id: string;
   photo?: string;
@@ -29,6 +41,8 @@ export interface ExtraRecipe {
   chefTip: string;
   imageStatus: string;
   techSheet: TechnicalSheet;
+  technicalSheets?: IndependentTechnicalSheet[];
+  assemblyGuide?: RecipeAssemblyGuide;
 }
 
 export const extraRecipes: ExtraRecipe[] = [
@@ -382,7 +396,7 @@ export const extraRecipes: ExtraRecipe[] = [
     level: 'Fácil a intermediária',
     technique: 'Maceração a frio, emulsão crua e controle de oxidação',
     adaptation:
-      'Padronização didática dentro dos intervalos oficiais publicados pelo município de Gênova (VisitGenoa), sujeita à validação prática. O fusilli seco (320 g) é uma adaptação didática FerveC; na Ligúria, usam-se tradicionalmente trofie e trenette.',
+      'Os ingredientes do pesto são padronização didática FerveC dentro das faixas clássicas da Ligúria (VisitGenoa apresenta o preparo para cerca de 4 pessoas sem fixar 600 g de massa nem distinguir massa seca vs fresca; formatos tradicionais locais são trofie e trenette). O uso de 320 g de fusilli seco é adaptação didática FerveC cuja proporção exata molho/massa depende de validação prática em bancada.',
     ingredients: [
       '320 g de fusilli seco (adaptação didática; tradicionais da Ligúria: trofie e trenette)',
       '60 g de folhas de manjericão fresco',
@@ -474,7 +488,7 @@ export const extraRecipes: ExtraRecipe[] = [
       region: 'Ligúria / Gênova (Itália)',
       yield: '4 porções (padronização didática sujeita à validação prática)',
       portionQuantity:
-        '80 g de fusilli seco cru por pessoa na padronização FerveC (relação exata de molho/massa sujeita a teste em bancada, pois VisitGenoa escala essa quantidade de molho para cerca de 600 g de massa)',
+        '80 g de fusilli seco cru por pessoa na padronização didática FerveC (320 g para 4 porções); o peso final cozido e a relação exata entre essa batelada de molho e os 320 g de fusilli aguardam validação prática em bancada. Observação documental: o portal VisitGenoa descreve a receita clássica para cerca de 4 pessoas acompanhada de trofie ou trenette, sem fixar 600 g de massa nem discriminar ali peso seco vs fresco.',
       prepTime: '15–20 min (higienização, secagem das folhas e maceração)',
       cookTime: '10–12 min (cocção da massa al dente)',
       totalEstimatedTime: '25–35 min culinários',
@@ -544,8 +558,12 @@ export const extraRecipes: ExtraRecipe[] = [
       ],
       references: [
         {
-          label: 'VisitGenoa — Pesto alla Genovese (Portal Oficial de Gênova)',
+          label: 'VisitGenoa — Pesto alla Genovese (Portal Oficial de Gênova, ~4 porções com trofie/trenette)',
           url: 'https://www.visitgenoa.it/it/pesto-alla-genovese',
+        },
+        {
+          label: 'Campionato Mondiale di Pesto al Mortaio — Receita Oficial Genovesa (referência comparativa da Ligúria)',
+          url: 'https://www.pestochampionship.it/il-campionato/ricetta-ufficiale-del-pesto-genovese/',
         },
         {
           label: 'NCHFP — Freezing Garlic in Oil & Risco Botulínico',
@@ -557,9 +575,9 @@ export const extraRecipes: ExtraRecipe[] = [
         },
       ],
       didacticAdaptations:
-        'Ingredientes padronizados pela FerveC dentro dos intervalos de VisitGenoa (60 g manjericão, 30 g pinoli, 50 g Parmigiano, 25 g Pecorino Sardo, 70 ml azeite, 1 dente de alho) com adaptação didática do formato de massa para 320 g de fusilli seco.',
+        'Ingredientes do molho padronizados pela FerveC dentro dos intervalos genoveses (60 g manjericão, 30 g pinoli, 50 g Parmigiano, 25 g Pecorino Sardo, 70 ml azeite, 1 dente pequeno de alho) com adaptação didática do formato de massa para 320 g de fusilli seco (em lugar dos tradicionais trofie ou trenette). VisitGenoa não prescreve 600 g de massa nem fixa peso seco/fresco.',
       practicalValidationStatus:
-        'Proporção do molho em relação aos 320 g de fusilli sujeita à validação prática em bancada.',
+        'A relação exata entre o molho padronizado e os 320 g de fusilli seco (bem como eventual sobra de pesto e rendimento final em prato) depende de validação física em bancada.',
     },
   },
   {
@@ -687,75 +705,82 @@ export const extraRecipes: ExtraRecipe[] = [
       'Massa fresca e ragù têm fichas e rendimentos próprios: o molho pode gerar sobra saborosa para conservar sob refrigeração ou congelamento seguro conforme a RDC 216/2004.',
     imageStatus: 'Imagem ilustrativa disponível; pesagem final cozida e corte oficial em validação prática.',
     techSheet: {
-      originalName: 'Tagliatelle al Ragù alla Bolognese',
+      originalName: 'Ragù alla Bolognese (Ficha Técnica B · Ficha Principal de Molho)',
       portugueseExplanation:
-        'Massa fresca artesanal em tiras ao ovo servida com ragù tradicional bolonhês de carne bovina moída grossa, pancetta fresca, soffritto, vinho, extrato/passata de tomate e cozimento lento.',
+        'Molho clássico bolonhês de cocção lenta elaborado com carne bovina moída grossa rica em colágeno, pancetta fresca não defumada, soffritto (cebola, cenoura e salsão), vinho, passata, extrato duplo concentrado e caldo leve, seguindo a atualização de 20/04/2023 da Accademia Italiana della Cucina.',
       region: 'Emília-Romanha / Bolonha (Itália)',
-      yield:
-        'Massa fresca: 4 porções | Ragù: 6 porções (rendimentos independentes; montagem Turismo de Bolonha usa ~400 g de ragù pronto para a massa de 4 porções, gerando possível sobra de molho)',
+      yield: '6 porções de molho (rendimento independente da massa fresca de 4 porções; pode gerar sobra após a montagem)',
       portionQuantity:
-        'Peso cozido final por porção e fração exata de molho pendentes de validação física em bancada na FerveC.',
-      prepTime: '50–65 min ativos (soffritto + sova 15–20 min + descanso 30 min + abertura/corte)',
-      cookTime: '2 a 3 horas (cozimento lento do ragù) + poucos minutos (cocção do tagliatelle)',
-      totalEstimatedTime: '3 horas ou mais culinárias',
+        'Na montagem com tagliatelle de 4 porções, utiliza-se ~400 g de ragù pronto (Bologna Welcome); o peso exato do molho cozido total e a fração final por porção aguardam validação física em bancada.',
+      prepTime: '20–25 min (higienização de vegetais, corte fino do soffritto e separação de insumos)',
+      cookTime: '2 a 3 horas (douramento, deglaçagem e cozimento lento em fogo mínimo)',
+      totalEstimatedTime: '2 h 30 min a 3 h 30 min culinárias',
       workloadDistinction:
-        'Tempo culinário total da preparação (3 horas ou mais); distinto da carga horária pedagógica do curso no certificado.',
+        'Tempo culinário exclusivo do Ragù (2 h 30 min a 3 h 30 min); distinto da carga horária pedagógica do curso no certificado.',
       difficulty: 'Intermediária a avançada',
       ingredients: [
-        'MASSA (4 porções): 400 g de farinha de trigo tipo 00 · 4 ovos médios · 1 pitada de sal',
-        'RAGÙ (6 porções): 400 g de carne bovina moída grossa (cortes ricos em colágeno) · 150 g de pancetta fresca suína não defumada · 60 g de cebola · 60 g de cenoura · 60 g de salsão · 1 copo de vinho branco ou tinto (padronização FerveC: 120 ml) · 200 g de passata de tomate · 1 c.s. extrato duplo concentrado · 1 copo de leite integral opcional (padronização FerveC: 120 ml) · 3 c.s. azeite EV (padronização FerveC: 45 ml) · caldo leve q.b. · sal e pimenta q.b. · Parmigiano-Reggiano opcional',
+        '400 g de carne bovina moída grossa (cortes ricos em colágeno, ex.: dianteiro/músculo)',
+        '150 g de pancetta fresca suína (não defumada)',
+        '60 g de cebola picada finamente',
+        '60 g de cenoura picada finamente',
+        '60 g de salsão picado finamente',
+        '1 copo de vinho branco ou tinto (padronização didática FerveC: 120 ml)',
+        '200 g de passata de tomate',
+        '1 colher de sopa de extrato duplo concentrado de tomate',
+        '1 copo de leite integral, opcional (padronização didática FerveC: 120 ml)',
+        '3 colheres de sopa de azeite extravirgem (padronização didática FerveC: 45 ml)',
+        'Caldo leve de carne ou vegetais, quanto baste',
+        'Sal e pimenta a gosto',
       ],
       utensils: [
-        'Panela pesada de fundo espesso para cocção lenta',
-        'Panela grande para cocção do tagliatelle',
-        'Bancada limpa, rolo ou cilindro de massas, faca afiada e tábuas separadas (vegetais vs carnes cruas)',
-        'Termômetro culinário para controle térmico de cocção e eventual resfriamento da sobra do molho',
+        'Panela pesada de fundo espesso com tampa para cocção lenta',
+        'Tábuas higienizadas separadas (uma exclusiva para vegetais, outra para carnes cruas)',
+        'Faca do chef afiada, colher de madeira/espátula resistente ao calor e concha',
+        'Recipientes rasos e termômetro culinário para controle térmico e resfriamento rápido da sobra',
       ],
       miseEnPlace: [
-        'Higienizar mãos, bancadas, vegetais e separar tábuas distintas para vegetais e carnes cruas (Anvisa RDC 216/2004).',
-        'Manter carne bovina, pancetta fresca e ovos sob refrigeração até o momento da manipulação.',
-        'Pesar separadamente os insumos da massa (4 porções) e do ragù (6 porções).',
+        'Higienizar mãos, bancada e vegetais (cebola, cenoura, salsão), separando tábua exclusiva para evitar contaminação cruzada com carnes cruas (Anvisa RDC 216/2004).',
+        'Manter carne bovina moída grossa e pancetta fresca sob refrigeração controlada até o momento de levar à panela.',
+        'Pesar todos os insumos do molho e medir as padronizações didáticas FerveC (120 ml vinho, 120 ml leite opcional, 45 ml azeite).',
       ],
       detailedSteps: [
-        '1. Preparar soffritto fino (cebola, cenoura, salsão).',
-        '2. Derreter gradualmente a pancetta fresca não defumada com o azeite.',
-        '3. Cozinhar o soffritto suavemente até amaciar.',
-        '4. Dourar a carne bovina moída grossa rica em colágeno.',
-        '5. Deglaçar com o vinho e reduzir (sem afirmar eliminação total do álcool).',
-        '6. Adicionar extrato duplo, passata e caldo leve.',
-        '7. Cozinhar lentamente por 2 a 3 horas, juntando o leite opcional na metade do processo e ajustando sal/pimenta.',
-        '8. Preparar massa incorporando ovos e farinha tipo 00 progressivamente.',
-        '9. Sovar 15–20 min e descansar protegido por ~30 min.',
-        '10. Abrir fino e uniforme; 11. Cortar tagliatelle (~7 mm cru / 8 mm cozido histórico ou 8 mm cru contemporâneo — em validação); 12. Cozinhar massa; 13. Integrar massa ao ragù (~400 g de ragù para 4 porções); 14. Servir.',
+        '1. Picar finamente cebola (60 g), cenoura (60 g) e salsão (60 g) para o soffritto.',
+        '2. Aquecer a pancetta fresca não defumada (150 g) com azeite (3 c.s. / 45 ml) em fogo baixo para liberar gordura gradualmente.',
+        '3. Cozinhar o soffritto na gordura da pancetta até amaciar sem queimar.',
+        '4. Juntar os 400 g de carne bovina moída grossa rica em colágeno e dourar bem até evaporar a água superficial.',
+        '5. Deglaçar com 1 copo de vinho (120 ml didáticos) soltando o fundo e reduzindo até concentrar aromas (sem afirmar eliminação de 100% do álcool).',
+        '6. Incorporar 1 c.s. de extrato duplo concentrado, 200 g de passata de tomate e caldo leve quente aos poucos.',
+        '7. Cozinhar tampado parcialmente em fogo mínimo por 2 a 3 horas, repondo caldo leve conforme necessário, juntando o copo de leite opcional (120 ml didáticos) na metade do tempo e ajustando sal/pimenta ao final.',
       ],
       techniques: [
-        'Soffritto e liberação gradual de gordura da pancetta fresca',
-        'Deglaçagem e cozimento lento de 2–3 horas',
-        'Massa fresca artesanal (incorporação progressiva, sova, descanso protegido, abertura, corte)',
+        'Soffritto fino em cocção branda',
+        'Liberação gradual da gordura da pancetta fresca não defumada',
+        'Selagem/douramento de carne rica em colágeno e deglaçagem controlada',
+        'Cozimento lento de 2 a 3 horas com adição de leite opcional na metade do processo',
       ],
       controlPoints: [
-        'Uso de carne moída grossa rica em colágeno e pancetta fresca não defumada.',
-        'Controle do álcool: redução do vinho sem afirmar evaporação de 100%.',
-        'Separação clara de rendimentos (massa 4 porções vs ragù 6 porções).',
-        'Segurança na manipulação de carne crua, ovos e resfriamento rápido da sobra de ragù (RDC 216/2004).',
+        'Separação sanitária rigorosa de tábuas e facas entre vegetais e carnes cruas.',
+        'Fogo mínimo constante sem queimar o fundo durante 2–3 horas.',
+        'Transparência científica: não afirmar eliminação total do álcool durante a redução do vinho.',
+        'Controle de rendimento: molho rende 6 porções; na montagem de 4 porções (com ~400 g), separar e resfriar a sobra.',
       ],
       expectedResult:
-        'Tagliatelle de textura elástica e espessura uniforme envolto por ragù escuro-avermelhado, untuoso e rico, sem excesso de óleo separado.',
+        'Ragù escuro-avermelhado, brilhante e untuoso, com carne macia que envolve sem excesso de óleo separado nem acidez agressiva.',
       errorsAndFixes: [
-        'Carne granulosa seca: faltou colágeno, líquido ou tempo brando de cocção; mantenha fogo mínimo e caldo aos poucos.',
-        'Massa seca ou quebradiça: avalie tamanho real dos ovos em bancada sob orientação do Chef antes de alterar medidas.',
-        'Sobra de ragù deixada fora da geladeira: risco microbiológico; resfrie rapidamente e refrigere/congele.',
+        'Carne seca e dura: falta de colágeno, chama alta ou pouco caldo; reduza o fogo e adicione caldo quente aos poucos.',
+        'Sabor defumado dominante: uso indevido de bacon em vez de pancetta fresca não defumada.',
+        'Sobra conservada em panela tampada fora da geladeira: risco sanitário; fracione em recipiente raso, promova resfriamento rápido e refrigere ou congele.',
       ],
       chefTips: [
-        'As medidas de 120 ml (vinho/leite) e 45 ml (azeite) são padronizações didáticas FerveC para 1 copo e 3 colheres de sopa da ficha italiana original.',
+        'As quantidades de 120 ml (vinho/leite) e 45 ml (azeite) são padronizações didáticas FerveC para 1 copo e 3 colheres de sopa citados na fonte italiana.',
       ],
       allergens:
-        'ALERGÊNICOS OBRIGATÓRIOS (Anvisa RDC 727/2022): Contém TRIGO (CONTÉM GLÚTEN), OVOS e LEITE (quando usado na preparação ou na finalização). DESTAQUE ADICIONAL DE COMPOSIÇÃO (fora da lista obrigatória brasileira): contém salsão, carne suína e vinho.',
+        'ALERGÊNICOS OBRIGATÓRIOS (Anvisa RDC 727/2022): Contém LEITE quando utilizado o copo de leite integral opcional na cocção. DESTAQUE ADICIONAL DE COMPOSIÇÃO (não integra a lista obrigatória brasileira, mas relevante a restrições alimentares): contém salsão, carne suína (pancetta) e vinho (álcool residual possível).',
       conservation:
-        'Tagliatelle servido imediatamente após cocção. Sobra eventual do ragù deve passar por resfriamento rápido controlado e ser mantida sob refrigeração adequada (<= 5 °C) ou congelamento conforme Anvisa RDC 216/2004, descongelando sempre sob refrigeração antes do reaquecimento completo. Sem prazo comercial sem validação.',
+        'Sobra eventual (o ragù rende 6 porções; a montagem de 4 porções utiliza ~400 g) deve passar por resfriamento rápido controlado, armazenamento sob refrigeração (<= 5 °C) ou congelamento conforme Anvisa RDC 216/2004, com descongelamento sempre sob refrigeração antes de reaquecer integralmente. Não declarar prazo comercial sem validação.',
       foodSafetyNotes: [
-        'Prevenção rigorosa de contaminação cruzada entre carne bovina/suína crua, ovos e utensílios prontos.',
-        'Resfriamento e descongelamento controlados segundo Anvisa RDC 216/2004.',
+        'Manipulação segura de carnes bovina e suína cruas separadas de vegetais do soffritto (RDC 216/2004).',
+        'Resfriamento rápido e descongelamento refrigerado para eventuais sobras de ragù cozido.',
       ],
       references: [
         {
@@ -763,12 +788,8 @@ export const extraRecipes: ExtraRecipe[] = [
           url: 'https://accademia1953.it/it/notizie/notizia/l%E2%80%99accademia-italiana-della-cucina-deposita-la-ricetta-aggiornata-del-vero-rag%C3%B9-alla',
         },
         {
-          label: 'Bologna Welcome — Tagliatelle al Ragù (4 porções)',
+          label: 'Bologna Welcome — Tagliatelle al Ragù (~400 g de ragù para 4 porções)',
           url: 'https://www.bolognawelcome.com/it/altro/altro/tagliatelle-al-ragu',
-        },
-        {
-          label: 'Biblioteca Salaborsa — Medida histórica da Tagliatella Bolognese',
-          url: 'https://www.bibliotecasalaborsa.it/bolognaonline/events/ricetta_e_misura_della_tagliatella_bolognese',
         },
         {
           label: 'Anvisa — Boas Práticas e Rotulagem de Alergênicos',
@@ -776,9 +797,213 @@ export const extraRecipes: ExtraRecipe[] = [
         },
       ],
       didacticAdaptations:
-        'Conversão indicativa de medidas caseiras italianas (copo = 120 ml; 3 colheres de sopa = 45 ml) registrada expressamente como padronização FerveC. Mantidos alertas de validação prática em bancada.',
+        'Conversão de 1 copo (120 ml de vinho e 120 ml de leite opcional) e 3 colheres de sopa (45 ml de azeite) declarada explicitamente como padronização didática FerveC mantendo a referência da Accademia Italiana della Cucina (2023).',
       practicalValidationStatus:
-        'Validação prática pendente em bancada para pesagem final, rendimento exato do molho por porção e definição editorial final do corte (7 mm vs 8 mm).',
+        'Peso total cozido do ragù e fração exata servida por porção pendentes de validação física em bancada.',
+    },
+    technicalSheets: [
+      {
+        code: 'A',
+        title: 'Ficha Técnica A — Tagliatelle artesanal (4 porções)',
+        sheet: {
+          originalName: 'Tagliatelle Fresche all’Uovo (Ficha Técnica A · Massa Artesanal)',
+          portugueseExplanation:
+            'Massa fresca artesanal ao ovo preparada com farinha de trigo tipo 00, ovos médios e pitada de sal, sovada, descansada sob proteção, aberta em lâmina fina e cortada em tiras regulares para 4 porções.',
+          region: 'Emília-Romanha / Bolonha (Itália)',
+          yield: '4 porções (base de 400 g de farinha tipo 00 + 4 ovos médios + 1 pitada de sal)',
+          portionQuantity:
+            'Proporção crua de referência: 100 g de farinha tipo 00 e 1 ovo médio por pessoa; peso final cozido por porção pendente de validação física em bancada.',
+          prepTime: '50–60 min ativos e de descanso (incorporação, sova 15–20 min, descanso protegido ~30 min, abertura e corte)',
+          cookTime: '2–4 min aproximados em água fervente salgada (ajustar conforme espessura real da lâmina)',
+          totalEstimatedTime: '55–65 min culinários (independentes da cocção prévia do ragù)',
+          workloadDistinction:
+            'Tempo culinário da massa fresca (55–65 min); distinto da carga horária pedagógica total exibida no certificado.',
+          difficulty: 'Intermediária',
+          ingredients: [
+            '400 g de farinha de trigo tipo 00',
+            '4 ovos médios',
+            '1 pitada de sal (conforme referência de Bolonha)',
+            'Farinha tipo 00 ou sêmola fina extra apenas q.b. para polvilhar na abertura e ninhos',
+            'Água e sal moderado para a panela de cocção',
+          ],
+          utensils: [
+            'Bancada lisa e higienizada (madeira ou pedra limpa)',
+            'Rolo de macarrão (mattarello) ou cilindro laminador de massas',
+            'Faca afiada / cortador para corte regular de 7 mm / 8 mm',
+            'Filme plástico ou tigela limpa para cobrir durante o descanso protegido',
+            'Panela ampla, escumadeira/escorredor e pano ou grade limpa para ninhos',
+          ],
+          miseEnPlace: [
+            'Higienizar rigorosamente mãos, bancada, rolo/cilindro e utensílios separando da área de carnes cruas do ragù (Anvisa RDC 216/2004).',
+            'Pesar 400 g de farinha tipo 00, separar 4 ovos médios (mantidos refrigerados até o preparo) e 1 pitada de sal.',
+            'Reservar filme plástico ou tigela limpa para proteger a massa durante os 30 minutos de descanso.',
+          ],
+          detailedSteps: [
+            '1. Formar coroa/cova com os 400 g de farinha tipo 00 e 1 pitada de sal na bancada limpa e quebrar os 4 ovos médios no centro.',
+            '2. Bater levemente os ovos com garfo e incorporar progressivamente a farinha das bordas para o centro até formar massa agregada.',
+            '3. Sovar vigorosamente por cerca de 15 a 20 minutos até alcançar massa lisa, homogênea e elástica.',
+            '4. Envolver bem em filme plástico ou cobrir sob tigela limpa e deixar descansar por aproximadamente 30 minutos para relaxar o glúten.',
+            '5. Abrir progressivamente em espessura fina e uniforme sem excesso de farinha seca.',
+            '6. Enrolar frouxamente ou dobrar e cortar tiras regulares: referência histórica da Câmara de Comércio indica ~7 mm crua (para ~8 mm cozida), enquanto variações italianas contemporâneas indicam 8 mm crua — sem tratar como erro absoluto e sob validação prática.',
+            '7. Cozinhar o tagliatelle em água fervente salgada por poucos minutos até ponto firme e uniforme, reservando um pouco da água do cozimento antes da montagem.',
+          ],
+          techniques: [
+            'Incorporação progressiva de ovos e farinha tipo 00',
+            'Sova manual (15–20 min) e desenvolvimento controlado da rede de glúten',
+            'Descanso protegido (~30 min) para relaxamento proteico sem ressecamento superficial',
+            'Laminação fina uniforme e corte regular de tagliatelle (7 mm / 8 mm em validação)',
+            'Cocção rápida al dente com reserva de água amilácea',
+          ],
+          controlPoints: [
+            'Tempo de sova (15–20 min) e descanso protegido (30 min) para evitar que a massa encolha ou rasgue na abertura.',
+            'Consistência ao incorporar ovos sem acréscimos arbitrários de farinha ou líquidos antes da avaliação real do tamanho dos ovos.',
+            'Definição editorial transparente do corte (7 mm cru / 8 mm cozido histórico vs 8 mm cru contemporâneo), pendente de validação em bancada.',
+          ],
+          expectedResult:
+            'Fitas regulares de tagliatelle frescas, lisas, elásticas e sem rachaduras, que cozinham por igual mantendo leve resistência al dente para sustentar o ragù.',
+          errorsAndFixes: [
+            'Massa rasgando ao abrir: faltou sova ou descanso protegido suficiente; cubra novamente por 15 minutos antes de voltar ao rolo/cilindro.',
+            'Massa seca ou quebradiça: avalie a umidade/tamanho real dos ovos sob orientação antes de alterar proporções.',
+            'Tiras grudando nos ninhos: polvilhe levemente com farinha/sêmola fina sem exagerar para não engrossar demais a água.',
+          ],
+          chefTips: [
+            'Na produção artesanal, lembre-se de que o peso final da massa fresca pronta supera os 400 g de farinha seca por causa da hidratação trazida pelos 4 ovos.',
+          ],
+          allergens:
+            'ALERGÊNICOS OBRIGATÓRIOS (Anvisa RDC 727/2022): Contém TRIGO (CONTÉM GLÚTEN) e OVOS. Prevenir contaminação cruzada na bancada e utensílios.',
+          conservation:
+            'Cozinhar preferencialmente após o preparo e servir imediatamente com o ragù. Caso a massa fresca crua com ovos não seja cozida de imediato, manter protegida sob refrigeração controlada (<= 5 °C) ou congelamento conforme Anvisa RDC 216/2004, sem estabelecer prazo comercial sem validação.',
+          foodSafetyNotes: [
+            'Massa fresca com ovos é alimento perecível: manipular com mãos e bancada rigorosamente higienizadas e evitar permanência prolongada em temperatura ambiente.',
+            'Evitar contato cruzado com carnes cruas durante o preparo concomitante do ragù.',
+          ],
+          references: [
+            {
+              label: 'Bologna Welcome — Tagliatelle al Ragù (base massa 4 porções: 400 g farinha 00 + 4 ovos)',
+              url: 'https://www.bolognawelcome.com/it/altro/altro/tagliatelle-al-ragu',
+            },
+            {
+              label: 'Biblioteca Salaborsa — Ricetta e misura della Tagliatella Bolognese (7 mm cru / 8 mm cozido)',
+              url: 'https://www.bibliotecasalaborsa.it/bolognaonline/events/ricetta_e_misura_della_tagliatella_bolognese',
+            },
+            {
+              label: 'Anvisa — Boas Práticas para Serviços de Alimentação (RDC 216/2004) e Alergênicos (RDC 727/2022)',
+              url: 'https://www.gov.br/anvisa/pt-br/assuntos/alimentos',
+            },
+          ],
+          didacticAdaptations:
+            'A ficha apresenta os rendimentos próprios da massa (4 porções) separados do molho (6 porções), explicitando o consenso histórico/contemporâneo da largura de corte (7 mm vs 8 mm) sob validação física.',
+          practicalValidationStatus:
+            'Peso cozido final da massa fresca e definição definitiva da largura padrão de corte (7 mm vs 8 mm) pendentes de validação física em bancada.',
+        },
+      },
+      {
+        code: 'B',
+        title: 'Ficha Técnica B — Ragù alla Bolognese (6 porções)',
+        sheet: {
+          originalName: 'Vero Ragù alla Bolognese (Ficha Técnica B · Molho Lento)',
+          portugueseExplanation:
+            'Molho tradicional de Bolonha depositado pela Accademia Italiana della Cucina (20/04/2023), formulado para 6 porções com carne bovina moída grossa rica em colágeno, pancetta fresca não defumada, soffritto clássico, vinho, passata, extrato duplo concentrado, caldo leve e leite opcional.',
+          region: 'Emília-Romanha / Bolonha (Itália)',
+          yield: '6 porções de molho (independente da massa fresca de 4 porções)',
+          portionQuantity:
+            'Peso cozido total do molho e rendimento exato por porção aguardam validação prática em bancada (na montagem para 4 pessoas usa-se ~400 g de ragù pronto).',
+          prepTime: '20–25 min (higienização de vegetais, corte fino do soffritto e separação de insumos)',
+          cookTime: '2 a 3 horas (renderização da pancetta, douramento, deglaçagem e cocção lenta)',
+          totalEstimatedTime: '2 h 30 min a 3 h 30 min culinárias',
+          workloadDistinction:
+            'Tempo culinário exclusivo do molho Ragù (2 h 30 min a 3 h 30 min); distinto da carga horária pedagógica do curso no certificado.',
+          difficulty: 'Intermediária a avançada',
+          ingredients: [
+            '400 g de carne bovina moída grossa (cortes ricos em colágeno)',
+            '150 g de pancetta fresca suína (não defumada)',
+            '60 g de cebola',
+            '60 g de cenoura',
+            '60 g de salsão',
+            '1 copo de vinho branco ou tinto (padronização didática FerveC: 120 ml)',
+            '200 g de passata de tomate',
+            '1 colher de sopa de extrato duplo concentrado de tomate',
+            '1 copo de leite integral, opcional (padronização didática FerveC: 120 ml)',
+            '3 colheres de sopa de azeite extravirgem (padronização didática FerveC: 45 ml)',
+            'Caldo leve de carne ou vegetais, quanto baste',
+            'Sal e pimenta a gosto (Parmigiano-Reggiano ralado na hora opcional na montagem)',
+          ],
+          utensils: [
+            'Panela pesada de fundo espesso com tampa para cocção lenta',
+            'Tábuas e facas distintas e higienizadas para vegetais vs carnes cruas',
+            'Colher/espátula resistente ao calor e concha para caldo',
+            'Recipientes rasos e termômetro culinário para cocção e resfriamento rápido de sobras',
+          ],
+          miseEnPlace: [
+            'Higienizar mãos, vegetais (cebola, cenoura, salsão) e separar área limpa distinta das carnes cruas (RDC 216/2004).',
+            'Manter carne bovina moída grossa e pancetta fresca sob refrigeração até o início da cocção.',
+            'Separar medidas padronizadas FerveC (120 ml vinho, 120 ml leite opcional, 45 ml azeite), passata, extrato duplo e caldo leve aquecido.',
+          ],
+          detailedSteps: [
+            '1. Picar finamente cebola (60 g), cenoura (60 g) e salsão (60 g) para o soffritto.',
+            '2. Aquecer os 150 g de pancetta fresca não defumada com 3 c.s. de azeite (45 ml) em fogo baixo para liberar gordura gradualmente.',
+            '3. Suar o soffritto em calor suave até amaciar sem queimar.',
+            '4. Dourar os 400 g de carne bovina moída grossa rica em colágeno até eliminar umidade superficial.',
+            '5. Deglaçar com 1 copo de vinho (120 ml didáticos) soltando sabores do fundo até reduzir (sem afirmar eliminação total de álcool).',
+            '6. Adicionar 1 c.s. de extrato duplo, 200 g de passata e caldo leve quente aos poucos.',
+            '7. Cozinhar lentamente por 2 a 3 horas com tampa parcial em fogo mínimo, incorporando o copo de leite opcional (120 ml didáticos) na metade da cocção e ajustando sal e pimenta ao final.',
+          ],
+          techniques: [
+            'Soffritto em corte fino e cocção suave',
+            'Liberação gradual de gordura da pancetta fresca não defumada',
+            'Selagem de carne com colágeno e deglaçagem controlada com vinho',
+            'Cozimento lento de 2–3 horas e adição de leite opcional na metade da cocção',
+          ],
+          controlPoints: [
+            'Uso obrigatório de carne moída grossa com colágeno e pancetta fresca não defumada.',
+            'Não afirmar evaporação de 100% do álcool na redução do vinho.',
+            'Controle rigoroso de tempo e temperatura no resfriamento rápido da eventual sobra do molho (RDC 216/2004).',
+          ],
+          expectedResult:
+            'Ragù encorpado, escuro-avermelhado, brilhante e macio, com gordura integrada e equilíbrio entre carne, soffritto e tomate moderado.',
+          errorsAndFixes: [
+            'Carne ressecada: fogo alto demais ou pouco caldo leve ao longo das 2–3 horas.',
+            'Perfil defumado incorreto: troca de pancetta fresca por bacon defumado.',
+            'Fundo grudado ou queimado: manter chama mínima e mexer periodicamente umedecendo com caldo quente.',
+          ],
+          chefTips: [
+            'Como esta receita rende 6 porções e a montagem clássica de Bolonha usa ~400 g de ragù para 4 porções de massa, já planeje o resfriamento seguro da sobra.',
+          ],
+          allergens:
+            'ALERGÊNICOS OBRIGATÓRIOS (Anvisa RDC 727/2022): Contém LEITE quando utilizado o leite integral opcional na cocção (ou Parmigiano na finalização). INFORMAÇÃO ADICIONAL DE COMPOSIÇÃO (fora da lista obrigatória brasileira): contém salsão, carne suína e vinho.',
+          conservation:
+            'Resfriamento rápido da sobra de molho após a porcionagem, mantendo sob refrigeração controlada (<= 5 °C) ou congelamento conforme Anvisa RDC 216/2004. Descongelar sempre sob refrigeração antes de reaquecer integralmente. Sem prazo comercial sem validação técnica.',
+          foodSafetyNotes: [
+            'Prevenção de contaminação cruzada entre carnes cruas, vegetais e utensílios prontos.',
+            'Resfriamento rápido em recipientes rasos e descongelamento refrigerado conforme Anvisa RDC 216/2004.',
+          ],
+          references: [
+            {
+              label: 'Accademia Italiana della Cucina — Vero Ragù alla Bolognese (20/04/2023)',
+              url: 'https://accademia1953.it/it/notizie/notizia/l%E2%80%99accademia-italiana-della-cucina-deposita-la-ricetta-aggiornata-del-vero-rag%C3%B9-alla',
+            },
+            {
+              label: 'Anvisa — Boas Práticas (RDC 216/2004) e Rotulagem de Alergênicos (RDC 727/2022)',
+              url: 'https://www.gov.br/anvisa/pt-br/assuntos/alimentos',
+            },
+          ],
+          didacticAdaptations:
+            'Conversão de 1 copo (120 ml vinho / 120 ml leite opcional) e 3 colheres de sopa (45 ml azeite) expressamente identificada como padronização didática FerveC.',
+          practicalValidationStatus:
+            'Peso final cozido do ragù e rendimento fracionado em bancada pendentes de validação física.',
+        },
+      },
+    ],
+    assemblyGuide: {
+      title: 'Montagem final — Referência Turismo de Bolonha e controle de sobra',
+      reference: 'Bologna Welcome (Tagliatelle al Ragù — 4 porções)',
+      points: [
+        '1. Rendimento da massa (Ficha Técnica A): 4 porções (400 g de farinha tipo 00, 4 ovos médios e 1 pitada de sal).',
+        '2. Rendimento do molho (Ficha Técnica B): 6 porções completas segundo a Accademia Italiana della Cucina (20/04/2023).',
+        '3. Quantidade na montagem final: utilize aproximadamente 400 g de ragù pronto para envolver as 4 porções de tagliatelle fresco (referência Turismo de Bolonha), ajustando com pequena colher de água do cozimento se necessário e Parmigiano-Reggiano opcional.',
+        '4. Possível sobra de molho: como o molho rende 6 porções e a montagem consome ~400 g para 4 porções de massa, resfrie rapidamente a eventual sobra do ragù em recipiente raso limpo e conserve sob refrigeração (<= 5 °C) ou congelamento conforme Anvisa RDC 216/2004.',
+        '5. Validação prática pendente: o peso cozido final da massa fresca, a fração exata por prato montado e o corte definitivo do tagliatelle (7 mm cru / 8 mm cozido histórico vs 8 mm cru contemporâneo) aguardam validação física em bancada (nenhum peso cozido inventado).',
+      ],
     },
   },
   {
@@ -913,8 +1138,13 @@ export const extraRecipes: ExtraRecipe[] = [
         'Tempo culinário (30–40 min); distinto da carga horária pedagógica do curso no certificado.',
       difficulty: 'Iniciante',
       ingredients: [
-        'POMODORO: 800 g tomate pelado (com líquido) · 30 ml azeite EV · 1 dente alho opcional · 1/2 cebola pequena opcional · manjericão fresco · sal q.b. · acompanhamento sugerido: 320–400 g massa seca',
-        'BURRO E SALVIA: 100 g manteiga sem sal · 8–12 folhas de sálvia fresca · água do cozimento q.b. · sal q.n. · Parmigiano-Reggiano opcional · acompanhamento adequado: ravioli, tortelli e outras massas recheadas',
+        'POMODORO — 800 g de tomate pelado italiano (com seu líquido)',
+        'POMODORO — 30 ml de azeite extravirgem',
+        'POMODORO — 1 dente pequeno de alho opcional e 1/2 cebola pequena opcional',
+        'POMODORO — Folhas de manjericão fresco e sal quanto baste (sugestão: 320–400 g de massa seca)',
+        'BURRO E SALVIA — 100 g de manteiga sem sal (referência inicial para 4 porções)',
+        'BURRO E SALVIA — 8 a 12 folhas de sálvia fresca higienizadas e secas',
+        'BURRO E SALVIA — Água do cozimento q.b., sal q.n. e Parmigiano-Reggiano opcional (ideal para ravioli/tortelli)',
       ],
       utensils: [
         'Duas frigideiras ou panela para molho e frigideira larga para manteiga',

@@ -26,10 +26,13 @@ import {
   RecipeProgressEntry,
 } from './utils/progress';
 import {
+  ASSESSMENT_BANK_VERSION,
   computeCourseWorkloadLabel,
   formatBrDate,
+  gradeAssessment,
   PASSING_SCORE_PERCENT,
   recipeQuestionSet,
+  type QuestionAttemptSnapshot,
 } from './data/assessments';
 import {
   playChef,
@@ -602,6 +605,57 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         'Pomodoro (redução de 20–30 min para 320–400 g de massa seca, sem açúcar obrigatório) ao lado de Burro e Salvia (100 g manteiga para ravioli e tortelli).',
     };
     return map[r.id] || r.subtitle || '';
+  }
+
+  function buildVersionedAttemptPayload(
+    moduleKey: string,
+    attemptType: 'work' | 'exam',
+    answers: number[]
+  ) {
+    const graded = gradeAssessment(moduleKey, attemptType, answers);
+    return {
+      graded,
+      bankVersion: graded.bankVersion || ASSESSMENT_BANK_VERSION,
+      questionIds: graded.questionIds,
+      selectedOptionIds: graded.selectedOptionIds,
+      questionSnapshots: graded.questionSnapshots,
+    };
+  }
+
+  function renderAttemptAnswerReview(
+    bank: typeof questions,
+    answers: (number | null)[] | undefined,
+    snapshots?: QuestionAttemptSnapshot[],
+    showWhyOnWork = false
+  ): string {
+    if (Array.isArray(snapshots) && snapshots.length > 0) {
+      return snapshots
+        .map(
+          (snap) => `<article class="review-answer">
+            <span class="review-mark">${snap.isCorrect ? '✓' : '↺'}</span>
+            <div>
+              <strong>${esc(snap.prompt)}</strong>
+              <p>Sua resposta: ${esc(snap.selectedText)}</p>
+              <small>Correta: ${esc(snap.correctText)}${showWhyOnWork && snap.explanation ? ` · ${esc(snap.explanation)}` : ''}</small>
+              ${!showWhyOnWork && snap.explanation ? `<p class="exam-explain">${esc(snap.explanation)}</p>` : ''}
+            </div>
+          </article>`
+        )
+        .join('');
+    }
+    return bank
+      .map(
+        (q, i) => `<article class="review-answer">
+          <span class="review-mark">${(answers || [])[i] === q.correct ? '✓' : '↺'}</span>
+          <div>
+            <strong>${esc(q.q)}</strong>
+            <p>Sua resposta: ${esc(q.a[(answers || [])[i] ?? 0])}</p>
+            <small>Correta: ${esc(q.a[q.correct])}${showWhyOnWork ? ` · ${esc(q.why)}` : ''}</small>
+            ${!showWhyOnWork ? `<p class="exam-explain">${esc(q.why)}</p>` : ''}
+          </div>
+        </article>`
+      )
+      .join('');
   }
 
   function renderTechnicalSheetDetails(
@@ -2135,23 +2189,13 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       })}
       <section class="result-card">
         <span class="eyebrow">PERGUNTAS CONCLUÍDAS</span>
-        <div class="result-medal">${a.score || 0}/${questions.length}</div>
+        <div class="result-medal">${a.score || 0}/${a.questionSnapshots?.length || questions.length}</div>
         <h2>Você está indo muito bem!</h2>
-        <p>As respostas ajudam a revisar os conceitos. A avaliação final é uma etapa separada.</p>
+        <p>As respostas ajudam a revisar os conceitos. A avaliação final é uma etapa separada.${
+          a.bankVersion ? ` · Banco ${esc(a.bankVersion)}` : ''
+        }</p>
         <div class="answer-review-list">
-          ${questions
-            .map(
-              (q, i) =>
-                `<article class="review-answer">
-                  <span class="review-mark">${(a.answers || [])[i] === q.correct ? '✓' : '↺'}</span>
-                  <div>
-                    <strong>${esc(q.q)}</strong>
-                    <p>Sua resposta: ${esc(q.a[(a.answers || [])[i] ?? 0])}</p>
-                    <small>Correta: ${esc(q.a[q.correct])}</small>
-                  </div>
-                </article>`
-            )
-            .join('')}
+          ${renderAttemptAnswerReview(questions, a.answers, a.questionSnapshots, true)}
         </div>
         ${renderStandardCompletionAction({
           isDone,
@@ -2396,22 +2440,9 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           result.passed
             ? 'Você concluiu sua avaliação! Seu aprendizado merece ser comemorado.'
             : 'A nota mínima é 70%. Reveja as etapas e tente outra vez; novas tentativas estão liberadas.'
-        }</p>
+        }${result.bankVersion ? ` · Banco ${esc(result.bankVersion)}` : ''}</p>
         <div class="answer-review-list">
-          ${exam
-            .map(
-              (q, i) =>
-                `<article class="review-answer">
-                  <span class="review-mark">${result.answers[i] === q.correct ? '✓' : '↺'}</span>
-                  <div>
-                    <strong>${esc(q.q)}</strong>
-                    <p>Sua resposta: ${esc(q.a[(result.answers[i] ?? 0) as number])}</p>
-                    <small>Correta: ${esc(q.a[q.correct])}</small>
-                    <p class="exam-explain">${esc(q.why)}</p>
-                  </div>
-                </article>`
-            )
-            .join('')}
+          ${renderAttemptAnswerReview(exam, result.answers, result.questionSnapshots, false)}
         </div>
         ${btn(
           result.passed ? 'Ver certificado' : 'Revisar conteúdo',
@@ -3401,35 +3432,23 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     }
 
     if (examMode && status === 'result') {
-      const result = (attempts[attempts.length - 1] || {
+      const result = attempts[attempts.length - 1] || {
         score: 0,
         passed: false,
         answers: [],
-      }) as { score: number; passed: boolean; answers: (number | null)[] };
+      };
+      const examPassed = 'passed' in result ? Boolean(result.passed) : false;
       return `<section class="result-card">
         <span class="eyebrow">RESULTADO DA PROVA</span>
         <div class="result-medal">${result.score}%</div>
-        <h2>${result.passed ? 'PARABÉNS! VOCÊ CONSEGUIU!' : 'Não desanime! Vamos revisar juntos e tentar novamente.'}</h2>
+        <h2>${examPassed ? 'PARABÉNS! VOCÊ CONSEGUIU!' : 'Não desanime! Vamos revisar juntos e tentar novamente.'}</h2>
         <p>${
-          result.passed
+          examPassed
             ? 'Seu aprendizado merece ser comemorado. A prévia do certificado permanece local e não oficial.'
             : 'Revise as etapas e tente novamente.'
-        }</p>
+        }${result.bankVersion ? ` · Banco ${esc(result.bankVersion)}` : ''}</p>
         <div class="answer-review-list">
-          ${bank
-            .map(
-              (q, i) =>
-                `<article class="review-answer">
-                  <span class="review-mark">${result.answers?.[i] === q.correct ? '✓' : '↺'}</span>
-                  <div>
-                    <strong>${esc(q.q)}</strong>
-                    <p>Sua resposta: ${esc(q.a[(result.answers?.[i] ?? 0) as number])}</p>
-                    <small>Resposta correta: ${esc(q.a[q.correct])}</small>
-                    <p class="exam-explain">${esc(q.why)}</p>
-                  </div>
-                </article>`
-            )
-            .join('')}
+          ${renderAttemptAnswerReview(bank, result.answers, result.questionSnapshots, false)}
         </div>
         <div class="lesson-actions" style="justify-content:flex-start;flex-wrap:wrap;">
           <button class="btn btn-outline-dark" data-action="recipe-tab" data-tab="review">Revisar conteúdo</button>
@@ -3452,23 +3471,13 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       })}
       <section class="result-card">
         <span class="eyebrow">TRABALHO CONCLUÍDO</span>
-        <div class="result-medal">${result.score}/${bank.length}</div>
+        <div class="result-medal">${result.score}/${result.questionSnapshots?.length || bank.length}</div>
         <h2>Vamos aprender com cada resposta.</h2>
-        <p>O trabalho é formativo e consolida os fundamentos do módulo.</p>
+        <p>O trabalho é formativo e consolida os fundamentos do módulo.${
+          result.bankVersion ? ` · Banco ${esc(result.bankVersion)}` : ''
+        }</p>
         <div class="answer-review-list">
-          ${bank
-            .map(
-              (q, i) =>
-                `<article class="review-answer">
-                  <span class="review-mark">${result.answers?.[i] === q.correct ? '✓' : '↺'}</span>
-                  <div>
-                    <strong>${esc(q.q)}</strong>
-                    <p>Sua resposta: ${esc(q.a[result.answers?.[i] ?? 0])}</p>
-                    <small>Resposta: ${esc(q.a[q.correct])} · ${esc(q.why)}</small>
-                  </div>
-                </article>`
-            )
-            .join('')}
+          ${renderAttemptAnswerReview(bank, result.answers, result.questionSnapshots, true)}
         </div>
         ${renderStandardCompletionAction({
           isDone: isWorkDone,
@@ -3815,12 +3824,37 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         nextCtaAction: 'recipe-tab',
         nextCtaAttrs: 'data-tab="work"',
       })}
-      <details class="cockpit-auxiliary-drawer">
-        <summary>Ficha técnica completa (${esc(r.yield)}), segurança alimentar e alergênicos</summary>
-        ${renderTechnicalSheetDetails(r.techSheet, {
-          editorialAlert: r.editorialAlert,
-        })}
-      </details>
+      ${
+        r.technicalSheets && r.technicalSheets.length > 0
+          ? `${r.technicalSheets
+              .map(
+                (entry) => `<details class="cockpit-auxiliary-drawer">
+                  <summary>${esc(entry.title)} — ingredientes, técnicas, segurança alimentar e alergênicos</summary>
+                  ${renderTechnicalSheetDetails(entry.sheet, {
+                    editorialAlert: entry.code === 'A' ? r.editorialAlert : undefined,
+                  })}
+                </details>`
+              )
+              .join('')}
+              ${
+                r.assemblyGuide
+                  ? `<details class="cockpit-auxiliary-drawer" open>
+                      <summary>${esc(r.assemblyGuide.title)} (${esc(r.assemblyGuide.reference)})</summary>
+                      <div class="cockpit-module-ingredients-list">
+                        <strong>${esc(r.assemblyGuide.title)}</strong>
+                        <p style="margin:6px 0 8px;">Referência: ${esc(r.assemblyGuide.reference)}</p>
+                        <ul>${r.assemblyGuide.points.map((pt) => `<li>${esc(pt)}</li>`).join('')}</ul>
+                      </div>
+                    </details>`
+                  : ''
+              }`
+          : `<details class="cockpit-auxiliary-drawer">
+              <summary>Ficha técnica completa (${esc(r.yield)}), segurança alimentar e alergênicos</summary>
+              ${renderTechnicalSheetDetails(r.techSheet, {
+                editorialAlert: r.editorialAlert,
+              })}
+            </details>`
+      }
       ${saucesCompareSection}`;
     }
 
@@ -4150,13 +4184,13 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       ],
       pesto: [
         'Sequência oficial de 10 etapas (60 g manjericão, 30 g pinoli, 50 g Parmigiano, 25 g Pecorino Sardo, 70 ml azeite)',
-        'Almofariz vs processador em pulsos curtos sem aquecer e fusilli didático (vs trofie/trenette)',
+        'Almofariz vs processador em pulsos curtos; 320 g fusilli didático (VisitGenoa cita ~4 porções com trofie/trenette)',
         'Conservação segura: nunca armazenar alho em azeite à temperatura ambiente (NCHFP)',
       ],
       'ragù': [
-        'Accademia Italiana della Cucina (2023): fichas separadas (massa 4 porções; ragù 6 porções)',
-        'Carne moída grossa com colágeno, pancetta fresca não defumada, soffritto e 2–3 h de cocção',
-        'Tagliatelle artesanal (corte ~7 mm cru / 8 mm cozido ou 8 mm cru contemporâneo) sob validação',
+        'Duas fichas independentes: Ficha Técnica A (Tagliatelle, 4 porções) e Ficha Técnica B (Ragù Accademia 2023, 6 porções)',
+        'Carne moída grossa com colágeno, pancetta fresca não defumada, soffritto e cozimento lento (2–3 h)',
+        'Montagem final (~400 g de ragù pronto para 4 porções), gestão de sobra e validação prática em bancada pendente',
       ],
       sauces: [
         'Pomodoro: redução 20–30 min para 320–400 g massa seca, concentração vs acidez, sem açúcar obrigatório',
@@ -6080,11 +6114,16 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       render();
       return;
     }
-    const correct = state.questionsAnswers.filter((v, i) => v === questions[i].correct).length;
+    const cleanAnswers = state.questionsAnswers.slice();
+    const versioned = buildVersionedAttemptPayload('carbonara', 'work', cleanAnswers);
     state.questionAttempts.push({
-      score: correct,
-      answers: state.questionsAnswers.slice(),
+      score: versioned.graded.score,
+      answers: versioned.graded.answers,
       date: new Date().toISOString(),
+      bankVersion: versioned.bankVersion,
+      questionIds: versioned.questionIds,
+      selectedOptionIds: versioned.selectedOptionIds,
+      questionSnapshots: versioned.questionSnapshots,
     });
     state.questionsFinished = true;
     state.demo = true;
@@ -6093,7 +6132,10 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       void submitAssessmentToServer({
         moduleKey: 'carbonara',
         attemptType: 'work',
-        answers: state.questionsAnswers.slice(),
+        answers: versioned.graded.answers,
+        bankVersion: versioned.bankVersion,
+        questionIds: versioned.questionIds,
+        selectedOptionIds: versioned.selectedOptionIds,
       });
     }
     render();
@@ -6149,10 +6191,14 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         lastModuleKey: 'carbonara',
       });
 
+      const localVersioned = buildVersionedAttemptPayload('carbonara', 'exam', answers);
       const res = await submitAssessmentToServer({
         moduleKey: 'carbonara',
         attemptType: 'exam',
         answers,
+        bankVersion: localVersioned.bankVersion,
+        questionIds: localVersioned.questionIds,
+        selectedOptionIds: localVersioned.selectedOptionIds,
       });
       examSubmitting = false;
 
@@ -6165,13 +6211,17 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         return;
       }
 
-      const score = res.score ?? 0;
+      const score = res.score ?? localVersioned.graded.score;
       const passed = Boolean(res.passed);
       state.examAttempts.push({
         score,
         passed,
         answers,
         date: res.attempt?.attempted_at || new Date().toISOString(),
+        bankVersion: res.bankVersion || localVersioned.bankVersion,
+        questionIds: res.questionIds || localVersioned.questionIds,
+        selectedOptionIds: res.selectedOptionIds || localVersioned.selectedOptionIds,
+        questionSnapshots: res.questionSnapshots || localVersioned.questionSnapshots,
       });
       if (res.certificate) {
         upsertWorkspaceCertificate(res.certificate, res.certificates);
@@ -6188,16 +6238,20 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         );
       }
     } else {
-      const right = answers.filter((v, i) => v === exam[i].correct).length;
-      const score = Math.round((right / exam.length) * 100);
+      const versioned = buildVersionedAttemptPayload('carbonara', 'exam', answers);
+      const score = versioned.graded.score;
       state.examAttempts.push({
         score,
-        passed: score >= PASSING_SCORE_PERCENT,
-        answers,
+        passed: versioned.graded.passed,
+        answers: versioned.graded.answers,
         date: new Date().toISOString(),
+        bankVersion: versioned.bankVersion,
+        questionIds: versioned.questionIds,
+        selectedOptionIds: versioned.selectedOptionIds,
+        questionSnapshots: versioned.questionSnapshots,
       });
       toast.info(
-        score >= PASSING_SCORE_PERCENT
+        versioned.graded.passed
           ? `Prévia aprovada (${score}%)`
           : `Prévia: ${score}% (mínimo ${PASSING_SCORE_PERCENT}%)`,
         'Entre na sua conta para registrar a prova oficialmente e emitir o certificado em PDF.'
@@ -7143,19 +7197,26 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         } else if (examMode) {
           p.examStatus = 'review';
         } else {
-          const score = answers.filter((v, k) => v === bank[k].correct).length;
           const cleanWorkAnswers = (answers as number[]).slice();
+          const versioned = buildVersionedAttemptPayload(r.id, 'work', cleanWorkAnswers);
           p.workAttempts.push({
-            score,
-            answers: cleanWorkAnswers,
+            score: versioned.graded.score,
+            answers: versioned.graded.answers,
             date: new Date().toISOString(),
+            bankVersion: versioned.bankVersion,
+            questionIds: versioned.questionIds,
+            selectedOptionIds: versioned.selectedOptionIds,
+            questionSnapshots: versioned.questionSnapshots,
           });
           p.workFinished = true;
           if (userProfile?.authSource === 'supabase') {
             void submitAssessmentToServer({
               moduleKey: r.id,
               attemptType: 'work',
-              answers: cleanWorkAnswers,
+              answers: versioned.graded.answers,
+              bankVersion: versioned.bankVersion,
+              questionIds: versioned.questionIds,
+              selectedOptionIds: versioned.selectedOptionIds,
             });
           }
         }
@@ -7226,23 +7287,31 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
               workFinished: Boolean(p.workFinished),
               lastModuleKey: r.id,
             });
+            const localVersioned = buildVersionedAttemptPayload(r.id, 'exam', submittedAnswers);
             const res = await submitAssessmentToServer({
               moduleKey: r.id,
               attemptType: 'exam',
               answers: submittedAnswers,
+              bankVersion: localVersioned.bankVersion,
+              questionIds: localVersioned.questionIds,
+              selectedOptionIds: localVersioned.selectedOptionIds,
             });
             if (!res.ok) {
               toast.error('Não foi possível registrar a prova', res.error || 'Tente novamente.');
               render();
               return;
             }
-            const score = res.score ?? 0;
+            const score = res.score ?? localVersioned.graded.score;
             const passed = Boolean(res.passed);
             p.examAttempts.push({
               score,
               passed,
               answers: submittedAnswers,
               date: res.attempt?.attempted_at || new Date().toISOString(),
+              bankVersion: res.bankVersion || localVersioned.bankVersion,
+              questionIds: res.questionIds || localVersioned.questionIds,
+              selectedOptionIds: res.selectedOptionIds || localVersioned.selectedOptionIds,
+              questionSnapshots: res.questionSnapshots || localVersioned.questionSnapshots,
             });
             if (res.certificate) {
               upsertWorkspaceCertificate(res.certificate, res.certificates);
@@ -7265,14 +7334,16 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             render();
           })();
         } else {
-          const bank = recipeQuestionSet(r, 8);
-          const right = submittedAnswers.filter((v, k) => v === bank[k].correct).length;
-          const score = Math.round((right / 8) * 100);
+          const versioned = buildVersionedAttemptPayload(r.id, 'exam', submittedAnswers);
           p.examAttempts.push({
-            score,
-            passed: score >= PASSING_SCORE_PERCENT,
-            answers: submittedAnswers,
+            score: versioned.graded.score,
+            passed: versioned.graded.passed,
+            answers: versioned.graded.answers,
             date: new Date().toISOString(),
+            bankVersion: versioned.bankVersion,
+            questionIds: versioned.questionIds,
+            selectedOptionIds: versioned.selectedOptionIds,
+            questionSnapshots: versioned.questionSnapshots,
           });
           p.examStatus = 'result';
           p.examAnswers = [];
@@ -7579,11 +7650,19 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         return;
       }
       if (!state.questionsFinished) {
-        const correct = state.questionsAnswers.filter((v, i) => v === questions[i].correct).length;
+        const versioned = buildVersionedAttemptPayload(
+          'carbonara',
+          'work',
+          state.questionsAnswers.slice()
+        );
         state.questionAttempts.push({
-          score: correct,
-          answers: state.questionsAnswers.slice(),
+          score: versioned.graded.score,
+          answers: versioned.graded.answers,
           date: new Date().toISOString(),
+          bankVersion: versioned.bankVersion,
+          questionIds: versioned.questionIds,
+          selectedOptionIds: versioned.selectedOptionIds,
+          questionSnapshots: versioned.questionSnapshots,
         });
       }
       state.questionsFinished = true;
@@ -7605,11 +7684,16 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           return;
         }
         if (!p.workFinished) {
-          const score = p.workAnswers.filter((v, k) => v === bank[k].correct).length;
+          const cleanAnswers = p.workAnswers.map((v) => (typeof v === 'number' ? v : 0));
+          const versioned = buildVersionedAttemptPayload(r.id, 'work', cleanAnswers);
           p.workAttempts.push({
-            score,
-            answers: p.workAnswers.map((v) => (typeof v === 'number' ? v : 0)),
+            score: versioned.graded.score,
+            answers: versioned.graded.answers,
             date: new Date().toISOString(),
+            bankVersion: versioned.bankVersion,
+            questionIds: versioned.questionIds,
+            selectedOptionIds: versioned.selectedOptionIds,
+            questionSnapshots: versioned.questionSnapshots,
           });
         }
         p.workFinished = true;

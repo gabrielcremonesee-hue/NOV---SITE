@@ -8,6 +8,7 @@ import {
   isValidModuleKey,
   PASSING_SCORE_PERCENT,
   resolveCourseWorkload,
+  type QuestionAttemptSnapshot,
 } from '../data/assessments.ts';
 import { generateCertificatePdf } from '../utils/certificatePdf.ts';
 import { getServerSupabaseEnv, resolveAuthenticatedSupabaseUser } from '../utils/supabase/server.ts';
@@ -103,6 +104,25 @@ interface AssessmentAttemptRow {
   passed: boolean;
   answers: number[];
   attempted_at: string;
+  bank_version?: string | null;
+  question_ids?: string[] | null;
+  selected_option_ids?: string[] | null;
+  question_snapshots?: QuestionAttemptSnapshot[] | null;
+}
+
+function isMissingVersioningColumnError(err: { code?: string; message?: string } | null | undefined): boolean {
+  if (!err) return false;
+  const code = String(err.code || '');
+  const msg = String(err.message || '').toLowerCase();
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    msg.includes('bank_version') ||
+    msg.includes('question_ids') ||
+    msg.includes('selected_option_ids') ||
+    msg.includes('question_snapshots') ||
+    msg.includes('schema cache')
+  );
 }
 
 interface CertificateRow {
@@ -723,7 +743,7 @@ export function registerCourseApiRoutes(
     });
     const enrollment = await ensureEnrollment(supabase, user.id, courseCtx.course.id);
 
-    const [{ data: progressRows }, { data: attemptRows }] = await Promise.all([
+    const [{ data: progressRows }, versionedAttemptsRes] = await Promise.all([
       supabase
         .from('module_progress')
         .select(
@@ -734,12 +754,25 @@ export function registerCourseApiRoutes(
       supabase
         .from('assessment_attempts')
         .select(
-          'id, user_id, course_id, module_key, attempt_type, score, passed, answers, attempted_at'
+          'id, user_id, course_id, module_key, attempt_type, score, passed, answers, attempted_at, bank_version, question_ids, selected_option_ids, question_snapshots'
         )
         .eq('user_id', user.id)
         .eq('course_id', courseCtx.course.id)
         .order('attempted_at', { ascending: true }),
     ]);
+
+    let attemptRows = versionedAttemptsRes.data as AssessmentAttemptRow[] | null;
+    if (versionedAttemptsRes.error && isMissingVersioningColumnError(versionedAttemptsRes.error)) {
+      const legacyAttemptsRes = await supabase
+        .from('assessment_attempts')
+        .select(
+          'id, user_id, course_id, module_key, attempt_type, score, passed, answers, attempted_at'
+        )
+        .eq('user_id', user.id)
+        .eq('course_id', courseCtx.course.id)
+        .order('attempted_at', { ascending: true });
+      attemptRows = (legacyAttemptsRes.data || []) as AssessmentAttemptRow[];
+    }
 
     const attempts = (attemptRows || []) as AssessmentAttemptRow[];
     const passingExams = attempts.filter((a) => a.attempt_type === 'exam' && a.passed);
@@ -1058,8 +1091,20 @@ export function registerCourseApiRoutes(
       }
     }
 
+    const rawDisplayedOrders = (body as { displayedOptionOrders?: unknown }).displayedOptionOrders;
+    const displayedOptionOrders = Array.isArray(rawDisplayedOrders)
+      ? rawDisplayedOrders.map((arr) =>
+          Array.isArray(arr) ? arr.filter((item): item is string => typeof item === 'string') : []
+        )
+      : undefined;
+
     // Never trust client score/passed — grade deterministically on server
-    const graded = gradeAssessment(moduleKey, attemptType, body.answers || []);
+    const graded = gradeAssessment(
+      moduleKey,
+      attemptType,
+      body.answers || [],
+      displayedOptionOrders ? { displayedOptionOrders } : undefined
+    );
     if (!graded.ok) {
       res.status(400).json({ error: graded.error || 'Respostas inválidas.' });
       return;
@@ -1068,20 +1113,51 @@ export function registerCourseApiRoutes(
     const enrollment = await ensureEnrollment(supabase, user.id, courseCtx.course.id);
     const nowIso = new Date().toISOString();
 
-    const { data: insertedAttempt, error: attemptErr } = await supabase
+    const baseAttemptInsert = {
+      user_id: user.id,
+      course_id: courseCtx.course.id,
+      module_key: moduleKey,
+      attempt_type: attemptType,
+      score: graded.score,
+      passed: graded.passed,
+      answers: graded.answers,
+      attempted_at: nowIso,
+    };
+
+    const versionedAttemptInsert = {
+      ...baseAttemptInsert,
+      bank_version: graded.bankVersion,
+      question_ids: graded.questionIds,
+      selected_option_ids: graded.selectedOptionIds,
+      question_snapshots: graded.questionSnapshots,
+    };
+
+    let insertedAttempt: AssessmentAttemptRow | null = null;
+    let attemptErr: { code?: string; message?: string } | null = null;
+
+    const versionedInsertRes = await supabase
       .from('assessment_attempts')
-      .insert({
-        user_id: user.id,
-        course_id: courseCtx.course.id,
-        module_key: moduleKey,
-        attempt_type: attemptType,
-        score: graded.score,
-        passed: graded.passed,
-        answers: graded.answers,
-        attempted_at: nowIso,
-      })
-      .select('id, user_id, course_id, module_key, attempt_type, score, passed, answers, attempted_at')
+      .insert(versionedAttemptInsert)
+      .select(
+        'id, user_id, course_id, module_key, attempt_type, score, passed, answers, attempted_at, bank_version, question_ids, selected_option_ids, question_snapshots'
+      )
       .single();
+
+    if (
+      versionedInsertRes.error &&
+      isMissingVersioningColumnError(versionedInsertRes.error)
+    ) {
+      const fallbackInsertRes = await supabase
+        .from('assessment_attempts')
+        .insert(baseAttemptInsert)
+        .select('id, user_id, course_id, module_key, attempt_type, score, passed, answers, attempted_at')
+        .single();
+      insertedAttempt = (fallbackInsertRes.data as AssessmentAttemptRow | null) || null;
+      attemptErr = fallbackInsertRes.error;
+    } else {
+      insertedAttempt = (versionedInsertRes.data as AssessmentAttemptRow | null) || null;
+      attemptErr = versionedInsertRes.error;
+    }
 
     if (attemptErr || !insertedAttempt) {
       res.status(500).json({
@@ -1148,12 +1224,24 @@ export function registerCourseApiRoutes(
         })
       : [];
 
+    const enrichedAttempt: AssessmentAttemptRow = {
+      ...insertedAttempt,
+      bank_version: insertedAttempt.bank_version || graded.bankVersion,
+      question_ids: insertedAttempt.question_ids || graded.questionIds,
+      selected_option_ids: insertedAttempt.selected_option_ids || graded.selectedOptionIds,
+      question_snapshots: insertedAttempt.question_snapshots || graded.questionSnapshots,
+    };
+
     res.json({
-      attempt: insertedAttempt,
+      attempt: enrichedAttempt,
       score: graded.score,
       correctCount: graded.correctCount,
       totalQuestions: graded.totalQuestions,
       passed: graded.passed,
+      bankVersion: graded.bankVersion,
+      questionIds: graded.questionIds,
+      selectedOptionIds: graded.selectedOptionIds,
+      questionSnapshots: graded.questionSnapshots,
       passingScorePercent: PASSING_SCORE_PERCENT,
       certificateUnlocked: Boolean(issuedCert),
       certificates: allCertificates,

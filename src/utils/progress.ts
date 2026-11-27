@@ -1,14 +1,24 @@
+import type { QuestionAttemptSnapshot } from '../data/assessments';
+
 export interface ExamAttempt {
   score: number;
   passed: boolean;
   answers: (number | null)[];
   date: string;
+  bankVersion?: string;
+  questionIds?: string[];
+  selectedOptionIds?: string[];
+  questionSnapshots?: QuestionAttemptSnapshot[];
 }
 
 export interface QuestionAttempt {
   score: number;
   answers: number[];
   date: string;
+  bankVersion?: string;
+  questionIds?: string[];
+  selectedOptionIds?: string[];
+  questionSnapshots?: QuestionAttemptSnapshot[];
 }
 
 export interface RecipeProgressEntry {
