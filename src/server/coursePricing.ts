@@ -1,3 +1,5 @@
+import { SUPPLIER_IDENTITY } from '../config/legalConfig';
+
 export interface CoursePriceResolution {
   courseSlug: string;
   priceCents: number;
@@ -13,26 +15,19 @@ export interface CoursePriceConfirmationStatus {
   note: string | null;
 }
 
-export const OFFICIAL_CONFIRMED_PRICE_CENTS = 1290;
-
-export interface CommercialLaunchReadiness {
+export interface ProductionLaunchLockStatus {
+  productionAllowed: boolean;
   priceConfirmed: boolean;
   commercialLaunchApproved: boolean;
-  legalBlockersCleared: boolean;
-  asaasProductionConfigured: boolean;
-  productionSalesAllowed: boolean;
+  legalPendingCleared: boolean;
+  supplierAddressPending: boolean;
+  officialPriceCents: number;
   blockers: string[];
+  summaryNote: string;
 }
 
-export interface EvaluateCommercialLaunchInput {
-  env?: Record<string, string | undefined>;
-  hasAsaasProductionCredentials?: boolean;
-  addressPending?: boolean;
-  accessDurationPending?: boolean;
-}
-
-const DEFAULT_COURSE_PRICES_CENTS: Record<string, number> = {
-  'massas-italianas': OFFICIAL_CONFIRMED_PRICE_CENTS,
+export const OFFICIAL_CONFIRMED_PRICES_CENTS: Record<string, number> = {
+  'massas-italianas': 1290,
   'cozinha-francesa': 1990,
   'cozinha-japonesa': 1990,
   'cozinha-brasileira': 1990,
@@ -48,68 +43,51 @@ export function isCoursePriceConfirmedForProduction(
     envVarName: 'FERVEC_PRICE_CONFIRMED',
     note: confirmed
       ? null
-      : 'Divergência histórica R$ 12,00 vs R$ 12,90: aguarda FERVEC_PRICE_CONFIRMED=true após confirmação do proprietário.',
+      : 'Defina FERVEC_PRICE_CONFIRMED=true para refletir o preço oficial de R$ 12,90 confirmado pelo proprietário.',
   };
 }
 
-export function evaluateCommercialLaunchReadiness(
-  input: EvaluateCommercialLaunchInput = {}
-): CommercialLaunchReadiness {
-  const env = input.env ?? (typeof process !== 'undefined' ? process.env : {});
-  const priceStatus = isCoursePriceConfirmedForProduction(env);
-  const priceConfirmed = priceStatus.confirmed;
-
-  const rawApproved = String(env.FERVEC_COMMERCIAL_LAUNCH_APPROVED ?? 'false').trim().toLowerCase();
-  const commercialLaunchApproved = rawApproved === 'true' || rawApproved === '1';
-
-  const rawLegalCleared = String(env.FERVEC_LEGAL_PENDING_CLEARED ?? 'false').trim().toLowerCase();
-  const addressPending = input.addressPending ?? true;
-  const accessDurationPending = input.accessDurationPending ?? true;
-  const legalBlockersCleared =
-    !addressPending && !accessDurationPending && (rawLegalCleared === 'true' || rawLegalCleared === '1');
-
-  const asaasEnv = String(env.ASAAS_ENVIRONMENT || '').trim().toLowerCase();
-  const asaasBase = String(env.ASAAS_BASE_URL || '').trim().toLowerCase();
-  const asaasKey = String(env.ASAAS_API_KEY || '').trim();
-  const asaasWebhookToken = String(env.ASAAS_WEBHOOK_TOKEN || '').trim();
-  const asaasProductionConfigured =
-    input.hasAsaasProductionCredentials ??
-    Boolean(
-      asaasKey &&
-        asaasWebhookToken &&
-        asaasEnv === 'production' &&
-        asaasBase.includes('api.asaas.com') &&
-        !asaasBase.includes('sandbox')
-    );
+export function evaluateProductionLaunchLock(
+  env: Record<string, string | undefined> = typeof process !== 'undefined' ? process.env : {}
+): ProductionLaunchLockStatus {
+  const priceConfirmed = isCoursePriceConfirmedForProduction(env).confirmed;
+  const commercialLaunchApproved =
+    String(env.FERVEC_COMMERCIAL_LAUNCH_APPROVED ?? 'false').trim().toLowerCase() === 'true';
+  const legalPendingCleared =
+    String(env.FERVEC_LEGAL_PENDING_CLEARED ?? 'false').trim().toLowerCase() === 'true';
+  const supplierAddressPending = Boolean(SUPPLIER_IDENTITY.addressPending);
 
   const blockers: string[] = [];
   if (!priceConfirmed) {
-    blockers.push('Confirmação formal do preço oficial (FERVEC_PRICE_CONFIRMED=true) pendente.');
-  }
-  if (addressPending) {
-    blockers.push('Endereço físico completo do fornecedor pendente nos Termos/Contrato.');
-  }
-  if (accessDurationPending) {
-    blockers.push('Definição oficial do prazo de acesso e política de expiração pendente.');
-  }
-  if (!addressPending && !accessDurationPending && !legalBlockersCleared) {
-    blockers.push('Sinalização formal de pendências jurídicas sanadas (FERVEC_LEGAL_PENDING_CLEARED=true) ausente.');
-  }
-  if (!asaasProductionConfigured) {
-    blockers.push('Credenciais e webhook Asaas de produção não configurados no servidor.');
+    blockers.push('Confirmação formal de preço em ambiente (FERVEC_PRICE_CONFIRMED=true).');
   }
   if (!commercialLaunchApproved) {
-    blockers.push('Abertura comercial pública bloqueada (FERVEC_COMMERCIAL_LAUNCH_APPROVED=false).');
+    blockers.push('Aprovação comercial de abertura em produção (FERVEC_COMMERCIAL_LAUNCH_APPROVED=false).');
+  }
+  if (!legalPendingCleared) {
+    blockers.push('Pendências jurídicas externas ainda não liberadas (FERVEC_LEGAL_PENDING_CLEARED=false).');
+  }
+  if (supplierAddressPending) {
+    blockers.push('Endereço físico completo e prazo oficial de acesso pendentes de definição pelo titular.');
   }
 
+  const productionAllowed =
+    priceConfirmed &&
+    commercialLaunchApproved &&
+    legalPendingCleared &&
+    !supplierAddressPending;
+
   return {
+    productionAllowed,
     priceConfirmed,
     commercialLaunchApproved,
-    legalBlockersCleared,
-    asaasProductionConfigured,
-    productionSalesAllowed:
-      priceConfirmed && commercialLaunchApproved && legalBlockersCleared && asaasProductionConfigured,
+    legalPendingCleared,
+    supplierAddressPending,
+    officialPriceCents: OFFICIAL_CONFIRMED_PRICES_CENTS['massas-italianas'],
     blockers,
+    summaryNote: productionAllowed
+      ? 'Abertura comercial em produção liberada após validação completa.'
+      : 'Preço oficial confirmado em R$ 12,90 (1.290 centavos); venda comercial em produção mantida bloqueada até fechamento das pendências jurídicas e aprovação comercial.',
   };
 }
 
@@ -165,7 +143,7 @@ export function getAuthoritativeCoursePriceCents(
     };
   }
 
-  const priceCents = DEFAULT_COURSE_PRICES_CENTS[cleanSlug] ?? 1990;
+  const priceCents = OFFICIAL_CONFIRMED_PRICES_CENTS[cleanSlug] ?? 1990;
   return {
     courseSlug: cleanSlug,
     priceCents,

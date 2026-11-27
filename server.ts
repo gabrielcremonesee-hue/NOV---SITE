@@ -18,11 +18,10 @@ import {
   getServerSupabaseEnvStatus,
   resolveAuthenticatedSupabaseUser,
 } from './src/utils/supabase/server.ts';
-import { registerCourseApiRoutes } from './src/server/courseApi.ts';
+import { enforceClaimedSession, registerCourseApiRoutes } from './src/server/courseApi.ts';
 import { resolveDeveloperCertificateAdmin } from './src/server/developerAuth.ts';
 import { syncPrimaryAdminAccount } from './src/server/primaryAdminSync.ts';
 import { financialGuard, getProgrammedChefReply } from './src/server/financialGuard.ts';
-import { singleSessionManager } from './src/server/singleSession.ts';
 import { createRateLimitMiddleware } from './src/server/rateLimit.ts';
 
 function isDevLocalAuthEnabled(): boolean {
@@ -293,40 +292,7 @@ export function createFervecExpressApp(deps?: ServerAppDeps): express.Express {
     if (supaAuth) {
       authenticated = true;
       const { supabase, user } = supaAuth;
-      const rawSid = String(req.headers['x-fervec-session-id'] || '').trim();
-      const dummySid = rawSid === 'server-session' || rawSid === 'browser-session' || rawSid === 'guest';
-      if (!rawSid || rawSid.length < 8 || dummySid) {
-        res.status(401).json({
-          code: 'SESSION_REQUIRED',
-          error: 'Identificador de sessão ativa obrigatório.',
-        });
-        return;
-      }
-      try {
-        const { data: activeSess } = await supabase
-          .from('user_active_sessions')
-          .select('session_id')
-          .eq('user_id', user.id)
-          .maybeSingle();
-        if (activeSess && typeof activeSess.session_id === 'string' && activeSess.session_id !== rawSid) {
-          singleSessionManager.claimSession(user.id, activeSess.session_id);
-          res.status(409).json({
-            code: 'SESSION_REPLACED_OTHER_DEVICE',
-            error: 'Sessão encerrada em outro dispositivo.',
-          });
-          return;
-        }
-      } catch {
-        // Optional when user_active_sessions isn't present in test mocks
-      }
-      const memCheck = singleSessionManager.verifyOrBindSession(user.id, rawSid);
-      if (!memCheck.ok) {
-        res.status(memCheck.code === 'SESSION_REQUIRED' ? 401 : 409).json({
-          code: memCheck.code === 'SESSION_REQUIRED' ? 'SESSION_REQUIRED' : 'SESSION_REPLACED_OTHER_DEVICE',
-          error: memCheck.message,
-        });
-        return;
-      }
+      if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
 
       const { data: profileRow } = await supabase
         .from('profiles')

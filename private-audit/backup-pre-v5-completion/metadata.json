@@ -1,0 +1,8 @@
+{
+  "name": "FerveC Gastronomia",
+  "description": "Leitor interativo e espaço gastronômico do e-book Massa Italiana: Do zero à massa fresca, com caderno de receitas, anotações, modo aprendiz e assistente.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

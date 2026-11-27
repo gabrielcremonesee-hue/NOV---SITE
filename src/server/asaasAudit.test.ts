@@ -224,18 +224,32 @@ test('GET /api/admin/asaas-audit enforces authentication (401), allows fervecrga
     const unauthRes = await fetch(`${baseUrl}/api/admin/asaas-audit`);
     assert.equal(unauthRes.status, 401);
 
+    const claimTokenForRole = async (role: 'student' | 'admin' | 'revoked_admin') => {
+      const claimRes = await fetch(`${baseUrl}/api/session/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-test-role': role },
+        body: JSON.stringify({ deviceLabel: `test-${role}` }),
+      });
+      assert.equal(claimRes.status, 200);
+      const claimJson = (await claimRes.json()) as { sessionId: string };
+      return claimJson.sessionId;
+    };
+
+    const studentSid = await claimTokenForRole('student');
     const studentRes = await fetch(`${baseUrl}/api/admin/asaas-audit`, {
-      headers: { 'x-test-role': 'student', 'x-fervec-session-id': 'sess-student-123456' },
+      headers: { 'x-test-role': 'student', 'x-fervec-session-id': studentSid },
     });
     assert.equal(studentRes.status, 403);
 
+    const revokedSid = await claimTokenForRole('revoked_admin');
     const revokedRes = await fetch(`${baseUrl}/api/admin/asaas-audit`, {
-      headers: { 'x-test-role': 'revoked_admin', 'x-fervec-session-id': 'sess-revoked-123456' },
+      headers: { 'x-test-role': 'revoked_admin', 'x-fervec-session-id': revokedSid },
     });
     assert.equal(revokedRes.status, 403);
 
+    const adminSid = await claimTokenForRole('admin');
     const adminRes = await fetch(`${baseUrl}/api/admin/asaas-audit`, {
-      headers: { 'x-test-role': 'admin', 'x-fervec-session-id': 'sess-admin-123456' },
+      headers: { 'x-test-role': 'admin', 'x-fervec-session-id': adminSid },
     });
     assert.equal(adminRes.status, 200);
     const body = (await adminRes.json()) as { ok: boolean; connectionStatus: string };

@@ -2058,7 +2058,9 @@ async function ensurePDF() {
   if (token) headers.Authorization = 'Bearer ' + token;
   if (state.currentUser?.email) headers['x-fervec-user-email'] = state.currentUser.email;
   try {
-    const sid = sessionStorage.getItem('fervec-client-session-id');
+    const sid =
+      localStorage.getItem('fervec-client-session-id') ||
+      sessionStorage.getItem('fervec-client-session-id');
     if (sid) headers['x-fervec-session-id'] = sid;
   } catch {}
   pdfLoading = pdfjsLib

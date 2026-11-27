@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 96" preserveAspectRatio="none">
+  <defs>
+    <linearGradient id="footerGoldSweep" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#e3a417"/>
+      <stop offset="35%" stop-color="#f6c73a"/>
+      <stop offset="70%" stop-color="#e5aa1d"/>
+      <stop offset="100%" stop-color="#f4c438"/>
+    </linearGradient>
+    <linearGradient id="footerMidnightNavy" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#071222"/>
+      <stop offset="100%" stop-color="#040b15"/>
+    </linearGradient>
+  </defs>
+  <!-- Prominent golden wedges on the far left (behind basil/tomatoes) and far right crest -->
+  <path d="M0 10 C150 30, 300 54, 460 36 C650 16, 870 20, 1080 38 C1230 48, 1350 24, 1440 0 L1440 96 L0 96 Z" fill="url(#footerGoldSweep)"/>
+  <!-- Deep midnight-navy wave cresting smoothly at ~35% width and dipping before the right golden rise -->
+  <path d="M0 58 C170 46, 350 6, 560 10 C780 14, 980 56, 1180 50 C1300 46, 1385 32, 1440 22 L1440 96 L0 96 Z" fill="url(#footerMidnightNavy)"/>
+</svg>

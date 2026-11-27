@@ -93,11 +93,13 @@ export interface RequestAsaasChargeInput {
   billingType?: CheckoutBillingType;
   customer?: CheckoutCustomerPayload;
   externalReference?: string;
+  couponCode?: string;
 }
 
 export interface RequestAsaasChargeOutcome {
   ok: boolean;
   environment?: string;
+  freeEnrollmentByCoupon?: boolean;
   reason?: 'already_processing' | 'unconfigured' | 'unauthenticated' | 'api_error' | 'network_error';
   errorCode?: string;
   error?: string;
@@ -180,6 +182,7 @@ export function mapAsaasStatusToUiStatus(
   if (
     ord === 'canceled' ||
     ord === 'refunded' ||
+    ord === 'refund_requested' ||
     pay === 'REFUNDED' ||
     pay === 'REFUND_REQUESTED' ||
     pay === 'CHARGEBACK_REQUESTED' ||
@@ -263,9 +266,10 @@ export async function fetchCoursePaymentSummary(
     const accessToken = await getToken().catch(() => null);
     const fetchImpl = deps?.fetchFn ?? fetch;
 
+    const sid = getOrCreateClientSessionId();
     const headers: Record<string, string> = {
       Accept: 'application/json',
-      'x-fervec-session-id': getOrCreateClientSessionId(),
+      ...(sid ? { 'x-fervec-session-id': sid } : {}),
     };
     if (accessToken) {
       headers.Authorization = `Bearer ${accessToken}`;
@@ -369,6 +373,11 @@ export async function fetchOrderPaymentStatus(
   uiStatus?: PaymentUiStatus;
   orderStatus?: string;
   isEnrolled?: boolean;
+  withdrawalStatus?: string | null;
+  protocolCode?: string | null;
+  refundProviderStatus?: string | null;
+  refundError?: string | null;
+  refundProcessedAt?: string | null;
   payment?: AsaasChargeResponsePayment | null;
   error?: string;
 }> {
@@ -383,18 +392,24 @@ export async function fetchOrderPaymentStatus(
     }
 
     const fetchImpl = deps?.fetchFn ?? fetch;
+    const sid = getOrCreateClientSessionId();
     const res = await fetchImpl(`/api/payments/status/${encodeURIComponent(orderId)}`, {
       method: 'GET',
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${accessToken}`,
-        'x-fervec-session-id': getOrCreateClientSessionId(),
+        ...(sid ? { 'x-fervec-session-id': sid } : {}),
       },
     });
     const data = (await res.json().catch(() => ({}))) as {
       ok?: boolean;
       orderStatus?: string;
       isEnrolled?: boolean;
+      withdrawalStatus?: string | null;
+      protocolCode?: string | null;
+      refundProviderStatus?: string | null;
+      refundError?: string | null;
+      refundProcessedAt?: string | null;
       payment?: AsaasChargeResponsePayment | null;
       error?: string;
     };
@@ -405,6 +420,11 @@ export async function fetchOrderPaymentStatus(
       ok: true,
       orderStatus: data.orderStatus,
       isEnrolled: Boolean(data.isEnrolled),
+      withdrawalStatus: data.withdrawalStatus ?? null,
+      protocolCode: data.protocolCode ?? null,
+      refundProviderStatus: data.refundProviderStatus ?? null,
+      refundError: data.refundError ?? null,
+      refundProcessedAt: data.refundProcessedAt ?? null,
       payment: data.payment ?? null,
       uiStatus: mapAsaasStatusToUiStatus(data.payment?.status, data.orderStatus, data.isEnrolled),
     };
@@ -461,6 +481,7 @@ export async function requestAsaasChargeCheckout(
 
     const fetchImpl = deps?.fetchFn ?? fetch;
     const endpoint = `${conn.url}/functions/v1/create-asaas-charge`;
+    const sid = getOrCreateClientSessionId();
 
     const response = await fetchImpl(endpoint, {
       method: 'POST',
@@ -468,7 +489,7 @@ export async function requestAsaasChargeCheckout(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
         apikey: conn.key,
-        'x-fervec-session-id': getOrCreateClientSessionId(),
+        ...(sid ? { 'x-fervec-session-id': sid } : {}),
       },
       body: JSON.stringify({
         courseSlug: input.courseSlug,
@@ -477,21 +498,23 @@ export async function requestAsaasChargeCheckout(
         description: `FerveC Gastronomia — ${input.courseTitle}`,
         ...(input.externalReference ? { externalReference: input.externalReference } : {}),
         ...(input.customer ? { customer: input.customer } : {}),
+        ...(input.couponCode ? { couponCode: input.couponCode } : {}),
       }),
     });
 
     const data = (await response.json().catch(() => ({}))) as {
       ok?: boolean;
       environment?: string;
+      freeEnrollmentByCoupon?: boolean;
       code?: string;
       error?: string;
       errors?: Array<{ field?: string; message?: string }>;
       orderId?: string | null;
       capabilities?: AsaasCapabilities;
-      payment?: AsaasChargeResponsePayment;
+      payment?: AsaasChargeResponsePayment | null;
     };
 
-    if (!response.ok || !data?.ok || !data?.payment) {
+    if (!response.ok || !data?.ok || (!data?.payment && !data?.freeEnrollmentByCoupon)) {
       const detail =
         data?.errors?.[0]?.message ||
         data?.error ||
@@ -509,14 +532,15 @@ export async function requestAsaasChargeCheckout(
     checkoutState = {
       ...checkoutState,
       lastError: null,
-      lastPayment: data.payment,
+      lastPayment: data.payment ?? null,
     };
 
     return {
       ok: true,
       environment: data.environment,
-      payment: data.payment,
-      orderId: data.orderId ?? data.payment.orderId ?? null,
+      freeEnrollmentByCoupon: Boolean(data.freeEnrollmentByCoupon),
+      payment: data.payment ?? undefined,
+      orderId: data.orderId ?? data.payment?.orderId ?? null,
       capabilities: data.capabilities,
     };
   } catch (err: unknown) {

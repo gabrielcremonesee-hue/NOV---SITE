@@ -1,108 +1,179 @@
 ================================================================================
-FERVEC GASTRONOMIA — RELATÓRIO FINAL DE IMPLEMENTAÇÃO, SEGURANÇA E CONFORMIDADE
+FERVEC GASTRONOMIA — RELATÓRIO FINAL DE IMPLEMENTAÇÃO, CORREÇÕES V5 E ENTREGA
 Data de consolidação: 27/11/2026
 Repositório base: gabrielcremonesee-hue/NOV---SITE (/app/applet)
 Versão do Documento Único Legal: v1.1 — 26/11/2026
 Titular / Fornecedor: Gabriel Cremonese (Pessoa Física • CPF ***.722.209-** • fervecrgastronomia@gmail.com)
 ================================================================================
 
-1. RESUMO EXECUTIVO DOS LOTES EXECUTADOS (A–G)
+1. SITUAÇÃO DAS QUATRO CORREÇÕES DO PROMPT V5 (CONCLUÍDAS LOCALMENTE)
 --------------------------------------------------------------------------------
-Todas as pendências executáveis localmente foram implementadas e verificadas sem alterar a identidade visual, a diagramação, a paleta, a tipografia, a linha pedagógica, os certificados ou a curadoria de conteúdo do curso FerveC Gastronomia:
+Todas as correções localmente executáveis do Prompt Final V5 foram implementadas, revisadas e verificadas por testes automatizados, checagem de tipos/lint, build e inspeção em navegador sem alterar layout, design, identidade do Chef Cremonese, 4 vozes masculinas, trava financeira de R$ 0, certificados ou posição das abas jurídicas:
 
-- Lote A (Paywall, Proteção de Conteúdo e Sessão Única):
-  • Conteúdo integral do curso (estágios 2–6 do módulo Carbonara e módulos 2–6 completos, além do gabarito/justificativas das 84 questões) isolado no servidor em `src/server/courseContentService.ts` e `src/server/courseApi.ts`, liberado apenas após verificação de autenticação e matrícula ativa.
-  • Aplicação de sessão única ativa por usuário via cabeçalho `x-fervec-session-id` e registro em `user_active_sessions` (`src/server/singleSession.ts`), alinhando parâmetros RPC (`p_session_id`, `p_device_hint`) e bloqueando sessões concorrentes com HTTP `401`/`409`.
-  • Proteção de rotas e ativos privados no Express (`server.ts` / `server.js`), bloqueando acesso direto a diretórios internos/arquivos privados (HTTP `403`) e servindo o PDF da biblioteca (`private-books/fervec-massa-italiana.pdf`) exclusivamente após autenticação e validação de acesso via `/api/library/book`.
+[1] ESTORNOS E REEMBOLSOS — VERIFICADO (LOCAL)
+- Separação explícita de estágios em pedidos e solicitações de arrependimento:
+  • Pedido em `orders.status`: `paid` -> `refund_requested` (durante solicitação/processamento/falha de estorno) -> `refunded` (somente após confirmação definitiva do Asaas).
+  • Solicitação em `withdrawal_requests.status`: `requested` -> `approved_refund_pending` (gateway aceitou POST `/refund` ou webhook `PAYMENT_REFUND_IN_PROGRESS`) | `refund_failed` (erro HTTP/timeout/recusa do gateway, permitindo reenvio idempotente sob o mesmo protocolo `ARR-*`) -> `refunded` (somente mediante confirmação confiável `PAYMENT_REFUNDED` no webhook autenticado ou consulta segura `GET /payments/{id}` retornando `REFUNDED`).
+- Proteções de concorrência, duplicidade e eventos fora de ordem:
+  • Bloqueio em voo `inFlightWithdrawals` (`409 WITHDRAWAL_IN_PROGRESS`) em `src/server/courseApi.ts`, bloqueio de duplicidade (`409 ALREADY_REQUESTED`), e trava de estado terminal (`lockedTerminalOrder` em `supabase/functions/asaas-webhook/logic.ts`) impedindo regressão por eventos tardios/duplicados.
+- Revogação comercial de matrícula e preservação pedagógica:
+  • Verifica existência de outros pedidos `paid` ativos para `(user_id, course_id)` antes de marcar `student_enrollments.status = 'canceled'` (`courseApi.ts` e `asaas-webhook/index.ts`).
+  • Preserva integralmente `assessment_attempts`, `module_progress`, `certificates` e demais compras válidas.
+  • UI em `Minha conta` (`src/fervecApp.ts`) exibe protocolo `ARR-*`, estado em processamento, motivo de falha com botão de reenvio (`refund_failed`) ou conclusão (`refunded`).
+- Nenhuma transação real foi executada.
 
-- Lote B (Autenticação, Maioridade 18+, Legal e Arrependimento Art. 49 CDC):
-  • Restrição estrita para maiores de 18 anos completos em `src/utils/profile.ts` e fluxo de cadastro (`#/criar-perfil`), validando consistência entre declaração de maioridade e data de nascimento no cliente e no servidor.
-  • Autenticação local de desenvolvimento bloqueada por padrão em produção (`403 DEV_AUTH_DISABLED`), habilitável somente fora de produção via `FERVEC_ENABLE_DEV_LOCAL_AUTH=true`.
-  • Alinhamento do endpoint `/api/legal/accept` com `legal_acceptances` e implementação do protocolo de direito de arrependimento em 7 dias (`POST /api/orders/:orderId/withdraw`), com bloqueio de duplicidade, proteção contra sobreposição via webhook (`refund_requested`) e preservação de tentativas/certificados existentes, apoiado pela migração `supabase/migrations/20261128_withdrawal_protocol_and_idempotency.sql`.
+[2] BLOQUEIO DE ACESSOS SIMULTÂNEOS — VERIFICADO (LOCAL)
+- Token assinado no servidor e vinculado ao usuário (`src/server/singleSession.ts`):
+  • Emissão server-side HMAC-SHA256 (`fv1.<sid>.<expMs>.<sig>`) vinculado ao `user_id` normalizado e com TTL (`DEFAULT_SESSION_TTL_MS = 12h`, configurável via `FERVEC_SESSION_TTL_SECONDS`).
+  • Rejeita identificadores inventados pelo cliente, headers ausentes/dummy (`401 SESSION_REQUIRED` / `SESSION_INVALID`), tokens adulterados, tokens de outro usuário, tokens expirados (`401 SESSION_EXPIRED`) e sessões substituídas (`409 SESSION_REPLACED_OTHER_DEVICE`).
+  • Removida qualquer auto-vinculação cega (cold-start auto-binding) na ausência de sessão válida.
+- Controle atômico no banco, preservação de abas e logout seguro:
+  • Migração aditiva preparada (NÃO aplicada remotamente): `supabase/migrations/20261129_v5_refunds_and_single_session.sql` (adiciona `expires_at` em `user_active_sessions` e atualiza `claim_active_session`, `clear_active_session` e `verify_active_session`).
+  • Abas do mesmo navegador compartilham `fervec-client-session-id` e `fervec-client-session-uid` em `localStorage` (com espelho em `sessionStorage`) em `src/utils/supabase/courseSync.ts` e `app.js`, usando `preserveIfValid: true` na hidratação inicial; novos logins explícitos em `src/utils/supabase/profileSync.ts` enviam `{ forceNew: true }` e substituem a sessão anterior.
+  • `/api/session/logout` e `clearSession` só revogam a sessão se `session_id` coincidir com a sessão ativa, impedindo que logout de sessão antiga encerre sessão nova.
+  • Enforçamento unificado via `enforceClaimedSession` em todas as rotas protegidas de `src/server/courseApi.ts` e em `/api/library/book` (`server.ts`).
 
-- Lote C (Idempotência Financeira, Cupons e E-mails):
-  • Idempotência de pagamento e retorno `409 ALREADY_ENROLLED` ao tentar recomprar módulo já ativo.
-  • Resgate atômico de cupom (`redeem_coupon_atomic`) na criação de cobrança (`supabase/functions/create-asaas-charge/validation.ts` e `index.ts`).
-  • Guarda contra alteração indevida de status em pedidos marcados como `refund_requested` em `supabase/functions/asaas-webhook/logic.ts`.
-  • Proteção de limite de envios transacionais (plano gratuito Resend) em `supabase/functions/send-payment-confirmation-email/logic.ts`.
-  • Manutenção rigorosa da trava comercial `FERVEC_PRICE_CONFIRMED=false` para impedir cobranças em produção antes da confirmação expressa de preços pelo titular.
+[3] DOCUMENTAÇÃO JURÍDICA — VERIFICADO (LOCAL)
+- Revisão completa do Documento Único Legal HTML (`/public/assets/aistudio/fervec_x5f_gastronomia_x5f_documento_x5f_unico__1___1__f38fd1c7.html`, v1.1 — 26/11/2026) e fontes em `src/config/legalConfig.ts`, `src/components/createProfileView.ts`, `src/components/paymentsView.ts`, `src/components/adminView.ts` e `src/fervecApp.ts`:
+  • Removidas integralmente todas as afirmações residuais de que "IA só para imagens" / "IA usada mais para criação de imagens" / "uso de IA na criação de imagens".
+  • Seção 05 e resumo descrevem com precisão os recursos reais: Chef Cremonese exclusivamente por texto com respostas locais programadas a custo R$ 0 (Google Gemini somente quando expressamente habilitado no servidor); narração por síntese local do navegador com 4 perfis masculinos (sem microfone, STT ou voz em tempo real); imagens ilustrativas geradas/aprimoradas por IA; curadoria autoral sem decisão automatizada em notas, certificados ou reembolsos.
+  • Harmonização LGPD (Seção 03 e 04): inclui CPF (cobrança/estorno/identificação contratual), telefone/WhatsApp opcional por opt-in, identificador técnico de sessão única, registro versionado de aceite, remoção de menção fiscal indevida, prestadores condicionais (Supabase, Asaas em Sandbox, Resend quando configurado, OpenStreetMap/OpenFreeMap/Nominatim, Gemini apenas quando autorizado) e inventário real de chaves `localStorage`/`sessionStorage` (`fervec-client-session-id`, `fervec-client-session-uid`, `fervec-supabase-auth`, `fervec-course-v2`, `fervec-profile-v1`, `fervec-voice-config-v1`, `fervec-osm-cache-v1:`).
+  • Pagamento (Cláusula 2.4 e Checklist #3): Pix e Boleto via Asaas (Sandbox; produção condicionada à homologação) e Cartão de Crédito estritamente condicional à confirmação na conta Asaas.
+  • Mantidos explicitamente: maioridade estrita de 18 anos completos, classificação como curso livre, fornecedor `Gabriel Cremonese` (`CPF 102.722.209-90`, mascarado em logs/relatórios, `fervecrgastronomia@gmail.com`), pendência explícita de endereço físico e prazo fixo de acesso (sem inventar valores), direito de arrependimento de 7 dias (Art. 49 CDC) sem declarar conformidade integral, e posição/aparência originais das abas jurídicas preservadas.
 
-- Lote D (Chaves Pagas, TTS e Rate Limiting):
-  • Travas de proteção de custos mantidas ativas (`FERVEC_ALLOW_EXTERNAL_TTS=false`, `FERVEC_ALLOW_PAID_AI=false`), com kill-switch em `/api/tts` antes de acionar `synthesizeMaleNeuralTts` (retornando HTTP `503` com `fallback: 'browser_speech'`).
-  • Preservação integral das 4 vozes masculinas do Chef (`Antonio`, `Brian`, `Giuseppe`, `Andrew`) para síntese via navegador, mantendo microfone/STT/Live WebSocket desativados.
-  • Implementação de `SlidingFixedRateLimiter` em `src/server/rateLimit.ts`, retornando HTTP `429` e cabeçalho `Retry-After`.
-
-- Lote E (Mapas, Biblioteca, Busca e Cabeçalhos HTTP):
-  • Limitação/saneamento de parâmetros da integração de mapas em `lib/maps_client.js` e debounce de 450 ms nas buscas da Biblioteca Interativa (`app.js`).
-  • Endurecimento dos cabeçalhos HTTP em `server.ts` / `server.js`, incluindo `Content-Security-Policy` e `X-Robots-Tag: noindex, nofollow, noarchive` nas respostas da API e rotas protegidas.
-
-- Lote F (Otimização de Mídia e Documento Único Legal v1.1):
-  • Compressão de 29 imagens JPEG em `src/assets/images/` (redimensionamento máximo 1600 px, remoção de metadados, JPEG progressivo 4:2:0, qualidade 82) e otimização de 5 arquivos PNG de alta resolução:
-    - Redução total observada nas mídias otimizadas: 31.756.816 bytes -> 7.480.366 bytes (economia de 24.276.450 bytes / ~76,4%).
-  • Atualização completa do Documento Único Legal (`/public/assets/aistudio/fervec_x5f_gastronomia_x5f_documento_x5f_unico__1___1__f38fd1c7.html`) para a versão `v1.1 — 26/11/2026`, com:
-    - 0 ocorrências remanescentes de faixas menores (`12 anos`, `12–17`, `12 a 17`), datas antigas (`16/11/2026`, `v1.0`) ou marcadores `A PREENCHER`;
-    - Dados do fornecedor pessoa física (`Gabriel Cremonese`, CPF ***.722.209-**, `fervecrgastronomia@gmail.com`, `@fervecgastronomia`), mantendo sinalização clara apenas nos itens dependentes de confirmação formal do titular antes da abertura comercial pública;
-    - Regra estrita de maioridade 18+, memorial exato de 5 massas + 2 molhos, carga horária total de `4 horas e 8 minutos`, nota mínima `70%`, 84 questões no curso (6 trabalho + 8 prova por módulo), lista de operadores e canal de arrependimento Art. 49 CDC.
-
-- Lote G (Testes Automatizados, Build e Verificação em Navegador):
-  • Correções de integração e tipagem em `src/server/courseContentService.ts` e `src/fervecApp.ts`.
-  • Cobertura de regressão expandida em `src/server/courseApi.test.ts`, `src/server/serverHardening.test.ts`, `src/server/complianceGuards.test.ts`, `src/server/asaasAudit.test.ts`, `src/utils/profile.test.ts` e `supabase/functions/asaas-webhook/logic.test.ts`.
+[4] PREÇO OFICIAL E TRAVA COMERCIAL — VERIFICADO (LOCAL)
+- Preço oficial do Módulo de Massas (`massas-italianas`) confirmado e preservado em `R$ 12,90` (`1290` centavos) em `src/server/coursePricing.ts`, `src/fervecApp.ts`, `src/components/paymentsView.ts`, `src/components/adminView.ts`, `.env.example` e Documento Único Legal (Seções 01, 01B, 2.5 e Checklist #7).
+- Configurado `FERVEC_PRICE_CONFIRMED=true` em `.env.example`, mantendo estritamente travada a abertura comercial em produção via `evaluateProductionLaunchLock` (`src/server/coursePricing.ts`) e `supabase/functions/create-asaas-charge/index.ts`:
+  • `FERVEC_COMMERCIAL_LAUNCH_APPROVED=false`
+  • `FERVEC_LEGAL_PENDING_CLEARED=false`
+  • `SUPPLIER_IDENTITY.addressPending=true` e prazo de acesso pendente.
+- Consistência garantida entre vitrine, resumo do pedido, cupom (`/api/coupons/validate`), pedido e cobrança (`create-asaas-charge` com limiar ajustado `>= 100` centavos para suportar `1290`), além de login obrigatório preservado antes da escolha da forma de pagamento.
 
 ================================================================================
-2. RESULTADOS VERIFICADOS DE TESTES, COMPILAÇÃO E BUILD
+2. ARQUIVOS ALTERADOS OU CRIADOS NA CONCLUSÃO V5
 --------------------------------------------------------------------------------
-1. Suíte Biblioteca (`node --test lib/*.test.js`):
-   - 64 / 64 testes aprovados (0 falhas).
-
-2. Suíte Portal, Servidor e Edge Functions (`node --import tsx --test` em `src` e `supabase`):
-   - 116 / 116 testes aprovados (0 falhas).
-
-3. Verificação de Tipos e Sintaxe (`lint_applet`: `tsc --noEmit` + `node --check` em `server.js`, `app.js`, `lib/*.js`):
-   - Aprovada sem erros (código de saída 0).
-
-4. Compilação e Bundle de Produção (`compile_applet` e `npm run build` / Vite):
-   - Aprovados sem erros.
-   - Tamanho do diretório `dist/`: 21.471.476 bytes.
-   - Arquivos `.map` em `dist/`: 0.
-   - Arquivos `.pdf` em `dist/`: 0 (`private-books/fervec-massa-italiana.pdf` mantido exclusivamente no servidor).
-   - Ausência confirmada de vazamento de gabaritos (`correctOptionId`, `correctIndex`, `why`) e receitas protegidas (estágios 2–6 / módulos 2–6) no bundle público de cliente.
-
-5. Verificação em Tempo de Execução (Servidor Express + Chromium Headless via `playwright-cli` em `http://127.0.0.1:3000`):
-   - `curl -sI http://127.0.0.1:3000/api/legal/documents`: HTTP `200 OK` com cabeçalhos `Content-Security-Policy` e `X-Robots-Tag: noindex, nofollow, noarchive`.
-   - Rotas inspecionadas: Home (`/`), `#/vendas`, `#/pagamentos` (sem autenticação redireciona para `#/vendas` e abre modal de login), `#/criar-perfil` (regra `18+` e aceite da versão `v1.1` visíveis), `#/biblioteca`, e `/assets/aistudio/fervec_x5f_gastronomia_x5f_documento_x5f_unico__1___1__f38fd1c7.html` (`v1.1`, `26/11/2026`, `18 anos`, `Gabriel Cremonese`, sem `A PREENCHER`).
-   - Imagens quebradas (`brokenImgs`): `[]` (0 imagens quebradas em todas as rotas verificadas).
-   - Layout Mobile (`390x844`): sem estouro horizontal (`overflowX: false`, largura `390 === 390`).
-   - Console do navegador: 0 erros de lógica da aplicação (apenas bloqueio esperado pela CSP à tentativa de WebSocket do HMR do Vite dev server, pois HMR está desabilitado).
+- `supabase/migrations/20261129_v5_refunds_and_single_session.sql` (119 linhas — novo arquivo aditivo, não aplicado remotamente)
+- `supabase/functions/asaas-webhook/logic.ts` (790 linhas — propagação `refundState`, trava terminal, `syncWithdrawalStatus`)
+- `supabase/functions/asaas-webhook/index.ts` (425 linhas — proteção multi-pedido na revogação de matrícula e sync em `withdrawal_requests`)
+- `supabase/functions/asaas-webhook/logic.test.ts` (560 linhas — testes de processamento, falha, confirmação, replay e fora de ordem)
+- `supabase/functions/create-asaas-charge/index.ts` (816 linhas — suporte a `1290` centavos e trava `COMMERCIAL_LAUNCH_LOCKED`)
+- `src/server/singleSession.ts` (488 linhas — token HMAC-SHA256 vinculado ao usuário, TTL, `preserveExistingIfValid`, logout condicional, sem auto-bind cego)
+- `src/server/coursePricing.ts` (155 linhas — `OFFICIAL_CONFIRMED_PRICES_CENTS` e `evaluateProductionLaunchLock`)
+- `src/server/courseApi.ts` (3.167 linhas — `enforceClaimedSession`, `/api/session/claim` & `/logout`, fluxo completo de `/api/orders/:orderId/withdraw` e `/api/payments/status/:orderId`, telemetria `launchLock`)
+- `src/server/complianceGuards.test.ts` (256 linhas — testes V5 de sessão HMAC, trava comercial e alinhamento do HTML legal)
+- `src/server/courseApi.test.ts` (1.221 linhas — testes V5 de sessão única HTTP, concorrência, falha/retry/confirmação de estorno e preservação multi-pedido)
+- `src/server/asaasAudit.test.ts` (261 linhas — uso de sessão emitida por `/api/session/claim`)
+- `src/server/serverHardening.test.ts` (163 linhas — verificação de sessão assinada e substituição em `/api/library/book`)
+- `server.ts` (891 linhas — reutilização de `enforceClaimedSession` em `/api/library/book`)
+- `src/utils/supabase/courseSync.ts` (925 linhas — `localStorage` compartilhado entre abas, `claimActiveServerSession`, `requestOrderWithdrawal`, `launchLock`)
+- `src/utils/supabase/profileSync.ts` (640 linhas — `{ forceNew: true }` nos fluxos de login/cadastro/verificação)
+- `src/utils/paymentCheckout.ts` (565 linhas — cupom server-side, `refund_requested` e metadados de estorno)
+- `src/components/adminView.ts` (898 linhas — painel administrativo atualizado para R$ 12,90 confirmado e `launchLock`)
+- `src/fervecApp.ts` (8.744 linhas — estados UI de estorno/retry em `Minha conta`, validação server-side de cupom, registro de aceite legal no checkout, import `getSupabaseClient`)
+- `app.js` (5.581 linhas — leitura de `fervec-client-session-id` em `localStorage` prioritariamente na Biblioteca)
+- `.env.example` (39 linhas — flags seguras sem segredos: `FERVEC_PRICE_CONFIRMED=true`, `FERVEC_COMMERCIAL_LAUNCH_APPROVED=false`, `FERVEC_LEGAL_PENDING_CLEARED=false`)
+- `public/assets/aistudio/fervec_x5f_gastronomia_x5f_documento_x5f_unico__1___1__f38fd1c7.html` (1.526.024 bytes — correções jurídicas, IA real, cookies/storage reais, pagamento condicional e preço R$ 12,90 confirmado com venda em produção bloqueada)
 
 ================================================================================
-3. ARTEFATOS DE ENTREGA GERADOS
+3. EVIDÊNCIAS, COMANDOS E RESULTADOS REAIS EXECUTADOS NESTE FECHAMENTO
 --------------------------------------------------------------------------------
-- Pacote limpo de release (sem `node_modules`, `.git`, `.env`, arquivos temporários ou `private-audit`):
-  `private-audit/fervec-gastronomia-release-20261127.zip`
-  - Arquivos empacotados: 423 arquivos (inclui código-fonte, `dist/`, `server.ts`, `server.js`, `app.js`, `lib/`, `public/`, `uploads/`, `data/fervec-db.json`, `private-books/`, `supabase/`, `.env.example`, manifestos e configurações).
-  - Tamanho do ZIP: 48.684.469 bytes (~46,4 MB).
-  - Teste de integridade ZIP (`zipfile.testzip()`): `None` (sem arquivos corrompidos).
-- Assinatura SHA-256 verificada (`private-audit/fervec-gastronomia-release-20261127.zip.sha256`):
-  `a7412ba8b1815b19488b8b191b029ec1ad91e776f974cbe6ed540a16d4a58035`
+1. Verificação de tipos e sintaxe (`npm run lint` / `lint_applet`):
+   - Comando: `tsc --noEmit && node --check server.js && node --check app.js && node --check lib/*.js`
+   - Resultado REAL: APROVADO (exit code 0, 0 erros).
+
+2. Testes unitários da Biblioteca (`node --test lib/*.test.js`):
+   - Resultado REAL: 64 / 64 testes aprovados (0 falhas, ~727 ms).
+
+3. Testes unitários de Portal, Servidor, Sessão, Preço, Documentação Legal e Edge Functions (`npx --yes tsx --test src/**/*.test.ts supabase/**/*.test.ts`):
+   - Resultado REAL: 108 / 108 testes aprovados (0 falhas, ~8.906 ms).
+   - Inclui regressões de estorno (`PAYMENT_REFUND_IN_PROGRESS`, `PAYMENT_REFUND_DENIED`, `PAYMENT_REFUNDED`, replay, fora de ordem, falha/retry no gateway, trava concorrente `WITHDRAWAL_IN_PROGRESS`, preservação de `assessment_attempts`/`certificates` e segundo pedido `paid`), sessão única (HMAC, TTL expirado, adulteração, outro usuário, logout antigo preservando sessão nova, preservação de abas e `/api/library/book`), trava comercial `R$ 12,90` e aderência do Documento Único HTML.
+
+4. Build de Produção (`npm run build` / `compile_applet`):
+   - Comando: `vite build`
+   - Resultado REAL: APROVADO (`2265 modules transformed`, `dist/index.html` + `dist/assets/index-BbKZZeie.js` 1.110,87 kB, construído em 1,51s).
+   - Auditoria de segurança em `dist/`: `0` arquivos `.map`, `0` arquivos `.pdf`, `0` exposições de CPF integral do fornecedor no bundle compilado; `private-books/fervec-massa-italiana.pdf` (6,3 MB) preservado exclusivamente no servidor privado.
+
+5. Verificação em Navegador Real (`playwright-cli` com Chromium headless em `http://localhost:3000`, `1440x900`):
+   - Home (`/`): carregada corretamente com identidade visual, botão `Perguntar ao Chef`, oferta `R$ 12,90` e rodapé legal (`Gabriel Cremonese`, `Termos v1.1`, `Privacidade (LGPD)`, `Memorial Descritivo`); 0 erros de execução da aplicação (apenas erro esperado de CSP ao tentar conectar WebSocket de HMR desativado do Vite).
+   - Documento Único Legal (`/assets/aistudio/fervec_x5f_...html#ia`): verificado via DOM e captura visual; `IA só para imagens` ausente (`false`), `Chef Cremonese por texto` presente (`true`), `confirmado oficialmente em R$ 12,90` presente (`true`), pendências de endereço físico e prazo de acesso visíveis no Checklist Final.
+   - Fluxo de Pagamentos e Cadastro (`Pagamentos` -> modal `Entrar na sua conta` -> `Criar cadastro` -> `#/criar-perfil`): login obrigatório antes da escolha do pagamento confirmado visualmente; formulário de cadastro exibindo `Idade (18+)`, `CPF*`, `Data de Nascimento*`, aceite `v1.1` e controlador `Gabriel Cremonese` (`true|true|true`).
 
 ================================================================================
-4. PENDÊNCIAS EXTERNAS E CONFIRMAÇÕES OBRIGATÓRIAS ANTES DA ABERTURA COMERCIAL
+4. CONFIRMAÇÃO DE PRESERVAÇÃO INTEGRAL DO PROJETO
 --------------------------------------------------------------------------------
-Os itens abaixo dependem de ambiente externo ou decisão/confirmação formal do titular (`Gabriel Cremonese`) e não podem ser executados apenas localmente:
+Confirmado nos arquivos-fonte, testes, build e inspeção visual em navegador:
+- Design, layout, cabeçalhos, rodapés, paleta, tipografia e todas as imagens preservados;
+- Textos pedagógicos, 6 módulos de Massas Italianas (5 massas + 2 molhos), 84 questões (6 trabalho + 8 prova por módulo) e carga horária de 4h08min intactos;
+- Identidade do Chef Cremonese por texto com trava R$ 0 (`FERVEC_ALLOW_PAID_AI=false`) e 4 vozes masculinas (`Antonio`, `Brian`, `Giuseppe`, `Andrew`) via navegador preservadas;
+- Microfone, transcrição (STT), conversa por voz ao vivo e TTS externo pagos (`FERVEC_ALLOW_EXTERNAL_TTS=false`) permanecem desativados;
+- Estrutura dos certificados, QR Code/memorial, Biblioteca Interativa (`private-books/fervec-massa-italiana.pdf`), Vinícola/Mapas e Jogo preservados;
+- Posição e aparência das abas jurídicas e links de Termos/Privacidade preservados.
 
-1. Supabase Remoto (Banco de Dados):
-   - Aplicar todas as migrações SQL em `supabase/migrations/`, com destaque para `20261126_assessment_versioning.sql`, `20261127_security_commerce_legal.sql` e `20261128_withdrawal_protocol_and_idempotency.sql` (não houve mutação do projeto remoto durante os trabalhos locais).
+================================================================================
+5. MATRIZ DE RASTREABILIDADE DAS 32 SEÇÕES (VERIFICADO LOCALMENTE vs NÃO VERIFICADO)
+--------------------------------------------------------------------------------
+Seção 01 — Missão e ordem de execução: VERIFICADO (LOCAL) [escopo estrito V5 concluído].
+Seção 02 — Preservação absoluta do projeto existente: VERIFICADO (LOCAL) [build + UI visual + 172 testes totais].
+Seção 03 — Livro digital protegido e integrado: VERIFICADO (LOCAL) [PDF em `private-books/`; `/assets/...pdf` -> 403; `/api/library/book` exige auth + matrícula + sessão HMAC].
+Seção 04 — Documentos internos e arquivos privados: VERIFICADO (LOCAL) [`/private-audit`, `/private-books`, `/data` retornam 403 HTTP; excluídos do ZIP limpo de release].
+Seção 05 — Direito de acesso comercial e matrículas: VERIFICADO (LOCAL) [`student_enrollments` verificado para curso pago e preservado se existir outro pedido `paid`].
+Seção 06 — Asaas: preparação Sandbox e Produção: PARCIALMENTE VERIFICADO — código/travas/auditoria verificados localmente; homologação com chaves reais externas NÃO VERIFICADA (dependência externa).
+Seção 07 — Pedidos, cobranças duplicadas e consistência: VERIFICADO (LOCAL) [idempotência, `409 ALREADY_ENROLLED`, consistência de preço].
+Seção 08 — Preço único (`R$ 12,90`) e cupons: VERIFICADO (LOCAL) [`1290` centavos consistente entre vitrine, resumo, `/api/coupons/validate`, pedido e `create-asaas-charge`; `FERVEC_PRICE_CONFIRMED=true`].
+Seção 09 — Confirmação do pagamento e webhook: VERIFICADO (LOCAL) [`asaas-webhook` valida token em tempo constante, redige logs e trata eventos].
+Seção 10 — Reembolso, cancelamento, estorno e contestação: VERIFICADO (LOCAL) [diferencia `requested`/`approved_refund_pending`/`refund_failed`/`refunded`; confirmação apenas via webhook/GET Asaas; retry seguro; preservação pedagógica e multi-pedido].
+Seção 11 — Desativar notificações tarifadas do Asaas: VERIFICADO (LOCAL) [`notificationDisabled: true` na criação de cliente/cobrança].
+Seção 12 — Autenticação única e sessões: VERIFICADO (LOCAL) [Supabase Auth + bloqueio `FERVEC_ENABLE_DEV_LOCAL_AUTH=false`].
+Seção 13 — Bloqueio de acessos simultâneos sem plano pago: VERIFICADO (LOCAL) [HMAC-SHA256 user-bound + TTL + `user_active_sessions` + abas do navegador preservadas + logout seguro].
+Seção 14 — Banco de dados, RLS e painel administrativo: VERIFICADO (LOCAL, mock RLS + SQL aditivo `20261129_v5_refunds_and_single_session.sql`); aplicação no Supabase remoto NÃO VERIFICADA (dependência externa).
+Seção 15 — Integridade pedagógica e sincronização: VERIFICADO (LOCAL) [gabaritos fora do bundle, `4 horas e 8 minutos`, nota mínima 70%, preservação após estorno].
+Seção 16 — Limpeza de dados de desenvolvimento: VERIFICADO (LOCAL) [`data/fervec-db.json` limpo, trava `FERVEC_ENABLE_DEV_LOCAL_AUTH=false`].
+Seção 17 — Regra financeira central R$ 0: VERIFICADO (LOCAL) [`FERVEC_ALLOW_PAID_AI=false`, `FERVEC_ALLOW_EXTERNAL_TTS=false`, rate limit e circuit breaker].
+Seção 18 — Chef Cremonese por texto e IA: VERIFICADO (LOCAL) [respostas programadas locais R$ 0; fallback automático].
+Seção 19 — Narração: preservar 4 vozes masculinas: VERIFICADO (LOCAL) [`Antonio`, `Brian`, `Giuseppe`, `Andrew` via navegador; kill-switch em `/api/tts` retorna 503].
+Seção 20 — Remover entrada de áudio do aluno: VERIFICADO (LOCAL) [microfone/STT/live audio desativados e testados].
+Seção 21 — Restaurantes próximos e mapas: VERIFICADO (LOCAL) [`lib/maps_client.js` e `lib/restaurants.test.js`].
+Seção 22 — E-mails, Supabase, monitoramento e dependências: VERIFICADO (LOCAL em simulação); envio real via Resend/Supabase remoto NÃO VERIFICADO (dependência externa).
+Seção 23 — Controles administrativos de consumo e abuso: VERIFICADO (LOCAL) [`SlidingFixedRateLimiter` + telemetria em `/api/admin/telemetry`].
+Seção 24 — Segredos, privacidade e segurança operacional: VERIFICADO (LOCAL) [0 segredos no repositório/ZIP, CPF mascarado em logs/relatórios/API].
+Seção 25 — Otimização sem alteração visual: VERIFICADO (LOCAL) [mídias otimizadas e build limpo].
+Seção 26 — SEO e proteção de conteúdo privado: VERIFICADO (LOCAL) [`X-Robots-Tag: noindex, nofollow, noarchive` e bloqueio de rotas privadas].
+Seção 27 — Backup, recuperação e falhas: VERIFICADO (LOCAL) [backup privado mantido fora do ZIP em `private-audit/backup-pre-v5-completion/`].
+Seção 28 — Verificações da implementação e entrega: VERIFICADO (LOCAL) [64 lib + 108 TS + lint + build + browser + testzip/SHA-256].
+Seção 29 — Critérios para futura homologação: NÃO EXECUTADO (etapa posterior após deploy e credenciais reais).
+Seção 30 — Ordem final e restrições de escopo: VERIFICADO (LOCAL) [nenhuma alteração fora do solicitado no Prompt V5].
+Seção 31 — Relatório final obrigatório: VERIFICADO (LOCAL) [este documento UTF-8 atualizado].
+Seção 32 — Adequação jurídica, 18+ e login antes do pagamento: VERIFICADO (LOCAL) nas subseções:
+  • 32.1 Localização e revisão integral do Documento Único: VERIFICADO (LOCAL)
+  • 32.2 Identificação real (`Gabriel Cremonese`, CPF, e-mail oficial): VERIFICADO (LOCAL); endereço físico pendente de confirmação do titular (NÃO VERIFICADO externamente).
+  • 32.3 Natureza curso livre e fidelidade à oferta: VERIFICADO (LOCAL)
+  • 32.4 Regra comercial 18 anos completos: VERIFICADO (LOCAL)
+  • 32.5 Login antes da seleção de pagamento e Asaas: VERIFICADO (LOCAL)
+  • 32.6 Contratação, preço (`R$ 12,90` confirmado), condições e trava comercial: VERIFICADO (LOCAL); prazo de acesso pendente do titular.
+  • 32.7 Aceitação dos termos, privacidade e versionamento (`v1.1`): VERIFICADO (LOCAL)
+  • 32.8 Atendimento, arrependimento Art. 49 CDC e direitos: VERIFICADO (LOCAL)
+  • 32.9 Privacidade LGPD: inventário real, bases e direitos: VERIFICADO (LOCAL)
+  • 32.10 Cookies, localização e transparência real sobre IA/áudio: VERIFICADO (LOCAL)
+  • 32.11 Critérios adicionais de teste e auditoria: VERIFICADO (LOCAL) [validação jurídica humana final externa não realizada nesta etapa].
 
-2. Supabase Edge Functions e Segredos:
-   - Fazer deploy das funções `create-asaas-charge`, `asaas-webhook` e `send-payment-confirmation-email`, configurando as variáveis de ambiente/segredos de produção no projeto Supabase (Asaas API Key/Webhook Token, Resend API Key, URLs de serviço).
+================================================================================
+6. PACOTE LIMPO DE RELEASE GERADO E VERIFICADO
+--------------------------------------------------------------------------------
+- Arquivo: `fervec-gastronomia-release-20261127.zip` (na raiz do projeto `/app/applet/fervec-gastronomia-release-20261127.zip`)
+- Arquivo de verificação: `fervec-gastronomia-release-20261127.zip.sha256` (e cópia em `private-audit/fervec-gastronomia-release-20261127.zip.sha256`)
+- SHA-256 verificado: `59d296f8c77a37630e36546aed5846c4afbc4dd29b06cc39bc0850c6e0133473`
+- Quantidade de arquivos no pacote: `381` arquivos
+- Tamanho exato do ZIP: `48.634.119` bytes
+- Teste de integridade (`zipfile.testzip()`): `None` (sem arquivos corrompidos)
+- Garantias auditadas no conteúdo do ZIP:
+  • Contém código-fonte final, `dist/` compilado, `server.ts`, `server.js`, `app.js`, `lib/`, `public/` (incluindo Documento Único HTML atualizado), `uploads/`, `data/fervec-db.json`, `supabase/` (incluindo migração V5) e `private-books/fervec-massa-italiana.pdf`.
+  • Exclui integralmente: `node_modules/`, `.git/`, `.env`, `.env.local`, `private-audit/`, backups, `.playwright-cli/`, arquivos de teste (`*.test.*`), documentos/prompts internos (`FerveC_Prompt_*`), `.map` e quaisquer cópias públicas `.pdf`.
 
-3. Confirmações Formais do Titular no Documento Único Legal (`v1.1` e `src/config/legalConfig.ts`):
-   - Confirmar o endereço físico completo do fornecedor (exigência do art. 2º do Decreto nº 7.962/2013 antes da venda pública).
-   - Confirmar o prazo fixo oficial de duração de acesso e política de expiração por módulo.
-
-4. Abertura Comercial e Precificação Final:
-   - Revisar e confirmar o preço final oficial de venda na página do módulo e habilitar `FERVEC_PRICE_CONFIRMED=true` no servidor de produção somente após essa validação.
-
-5. Infraestrutura de Produção e DNS:
-   - Configurar credenciais reais de produção (Asaas, Resend, Supabase), definir domínio oficial, certificado SSL/HTTPS e atualizar URLs canônicas em `sitemap.xml` / `robots.txt` / variáveis de ambiente de produção.
+================================================================================
+7. PENDÊNCIAS EXTERNAS — NÃO EXECUTAR AGORA (DEPENDENTES DE AMBIENTE / TITULAR)
+--------------------------------------------------------------------------------
+1. Preenchimento pelo proprietário (`Gabriel Cremonese`) do **endereço físico completo** e definição oficial do **prazo fixo de duração de acesso / expiração**, bem como revisão jurídica humana final antes da abertura comercial pública.
+2. Aplicação das migrações SQL no Supabase remoto (incluindo `supabase/migrations/20261129_v5_refunds_and_single_session.sql`) e deploy das Edge Functions (`create-asaas-charge`, `asaas-webhook`, `send-payment-confirmation-email`).
+3. Configuração de segredos e credenciais reais de Sandbox/Produção (Asaas, Resend, Supabase, `FERVEC_SESSION_SECRET`) e confirmação na conta Asaas caso Cartão de Crédito venha a ser habilitado.
+4. Homologação ponta a ponta integrada em Sandbox antes de alterar `FERVEC_COMMERCIAL_LAUNCH_APPROVED=true` e `FERVEC_LEGAL_PENDING_CLEARED=true` (a venda real em produção permanece bloqueada até a conclusão dessas etapas).
 ================================================================================

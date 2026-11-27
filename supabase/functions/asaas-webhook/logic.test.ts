@@ -30,12 +30,30 @@ function createInMemoryRepo(
   enrollments: Map<string, { status: string }>;
   payments: Map<string, Record<string, unknown>>;
   webhookLogs: StoredWebhookLog[];
+  withdrawalSyncs: Array<{
+    orderId: string;
+    userId: string;
+    status: string;
+    refundProviderId?: string | null;
+    refundProviderStatus?: string | null;
+    errorMessage?: string | null;
+    processedAt?: string | null;
+  }>;
 } {
   const orders = new Map(initialOrders.map((o) => [o.id, { ...o }]));
   const processedEvents = new Set<string>();
   const enrollments = new Map<string, { status: string }>();
   const payments = new Map<string, Record<string, unknown>>();
   const webhookLogs: StoredWebhookLog[] = [];
+  const withdrawalSyncs: Array<{
+    orderId: string;
+    userId: string;
+    status: string;
+    refundProviderId?: string | null;
+    refundProviderStatus?: string | null;
+    errorMessage?: string | null;
+    processedAt?: string | null;
+  }> = [];
 
   const repo: WebhookRepository = {
     async createWebhookLog(input) {
@@ -98,9 +116,20 @@ function createInMemoryRepo(
         enrollments.set(key, { status: 'canceled' });
       }
     },
+    async syncWithdrawalStatus(input) {
+      withdrawalSyncs.push({
+        orderId: input.orderId,
+        userId: input.userId,
+        status: input.status,
+        refundProviderId: input.refundProviderId,
+        refundProviderStatus: input.refundProviderStatus,
+        errorMessage: input.errorMessage,
+        processedAt: input.processedAt,
+      });
+    },
   };
 
-  return { repo, orders, processedEvents, enrollments, payments, webhookLogs };
+  return { repo, orders, processedEvents, enrollments, payments, webhookLogs, withdrawalSyncs };
 }
 
 test('verifyWebhookToken enforces constant-time exact token match', () => {
@@ -399,6 +428,133 @@ test('processAsaasWebhook blocks automatic access re-grant when order is in refu
   assert.equal(res.body.accessGranted, false);
   assert.equal(mem.enrollments.size, 0);
   assert.equal(mem.orders.get(orderId)?.status, 'refund_requested');
+});
+
+test('processAsaasWebhook differentiates refund in-progress, failed/denied, confirmed, replay, and out-of-order late events', async () => {
+  const orderId = '77777777-7777-4777-8777-777777777777';
+  const mem = createInMemoryRepo([
+    {
+      id: orderId,
+      user_id: 'user-refund-lifecycle',
+      course_id: 'course-italiana',
+      status: 'paid',
+      amount_cents: 1290,
+      asaas_payment_id: 'pay_ref_life',
+      paid_at: '2026-11-20T10:00:00.000Z',
+    },
+  ]);
+
+  // 1. PAYMENT_REFUND_IN_PROGRESS -> stays refund_requested (NOT refunded!) and sets approved_refund_pending
+  const inProgressRes = await processAsaasWebhook({
+    rawBody: {
+      id: 'evt_ref_progress',
+      event: 'PAYMENT_REFUND_IN_PROGRESS',
+      payment: {
+        id: 'pay_ref_life',
+        status: 'REFUND_IN_PROGRESS',
+        value: 12.9,
+        externalReference: orderId,
+      },
+    },
+    providedToken: 'secret-sandbox-token',
+    expectedToken: 'secret-sandbox-token',
+    repo: mem.repo,
+    nowIso: '2026-11-21T10:00:00.000Z',
+  });
+  assert.equal(inProgressRes.statusCode, 200);
+  assert.equal(inProgressRes.body.orderStatus, 'refund_requested');
+  assert.equal(inProgressRes.body.refundState, 'processing');
+  assert.equal(mem.orders.get(orderId)?.status, 'refund_requested');
+  assert.equal(mem.withdrawalSyncs.at(-1)?.status, 'approved_refund_pending');
+
+  // 2. PAYMENT_REFUND_DENIED -> keeps refund_requested and marks withdrawal refund_failed (never marks refunded)
+  const failedRes = await processAsaasWebhook({
+    rawBody: {
+      id: 'evt_ref_denied',
+      event: 'PAYMENT_REFUND_DENIED',
+      payment: {
+        id: 'pay_ref_life',
+        status: 'REFUND_DENIED',
+        value: 12.9,
+        externalReference: orderId,
+      },
+    },
+    providedToken: 'secret-sandbox-token',
+    expectedToken: 'secret-sandbox-token',
+    repo: mem.repo,
+    nowIso: '2026-11-21T10:05:00.000Z',
+  });
+  assert.equal(failedRes.statusCode, 200);
+  assert.equal(failedRes.body.orderStatus, 'refund_requested');
+  assert.equal(failedRes.body.refundState, 'failed');
+  assert.equal(mem.orders.get(orderId)?.status, 'refund_requested');
+  assert.equal(mem.withdrawalSyncs.at(-1)?.status, 'refund_failed');
+  assert.match(mem.withdrawalSyncs.at(-1)?.errorMessage || '', /PAYMENT_REFUND_DENIED/);
+
+  // 3. Definitive PAYMENT_REFUNDED -> transitions to refunded with processedAt
+  const confirmedRes = await processAsaasWebhook({
+    rawBody: {
+      id: 'evt_ref_confirmed',
+      event: 'PAYMENT_REFUNDED',
+      payment: {
+        id: 'pay_ref_life',
+        status: 'REFUNDED',
+        value: 12.9,
+        externalReference: orderId,
+      },
+    },
+    providedToken: 'secret-sandbox-token',
+    expectedToken: 'secret-sandbox-token',
+    repo: mem.repo,
+    nowIso: '2026-11-21T10:15:00.000Z',
+  });
+  assert.equal(confirmedRes.statusCode, 200);
+  assert.equal(confirmedRes.body.orderStatus, 'refunded');
+  assert.equal(confirmedRes.body.refundState, 'confirmed');
+  assert.equal(mem.orders.get(orderId)?.status, 'refunded');
+  assert.equal(mem.withdrawalSyncs.at(-1)?.status, 'refunded');
+  assert.equal(mem.withdrawalSyncs.at(-1)?.processedAt, '2026-11-21T10:15:00.000Z');
+
+  // 4. Replay of PAYMENT_REFUNDED -> idempotent duplicate
+  const replayRes = await processAsaasWebhook({
+    rawBody: {
+      id: 'evt_ref_confirmed',
+      event: 'PAYMENT_REFUNDED',
+      payment: {
+        id: 'pay_ref_life',
+        status: 'REFUNDED',
+        value: 12.9,
+        externalReference: orderId,
+      },
+    },
+    providedToken: 'secret-sandbox-token',
+    expectedToken: 'secret-sandbox-token',
+    repo: mem.repo,
+  });
+  assert.equal(replayRes.statusCode, 200);
+  assert.equal(replayRes.body.duplicate, true);
+
+  // 5. Out-of-order late event (e.g. PAYMENT_REFUND_IN_PROGRESS or PAYMENT_CONFIRMED arriving after refunded) CANNOT downgrade terminal refunded state
+  const outOfOrderRes = await processAsaasWebhook({
+    rawBody: {
+      id: 'evt_out_of_order_confirm',
+      event: 'PAYMENT_CONFIRMED',
+      payment: {
+        id: 'pay_ref_life',
+        status: 'CONFIRMED',
+        value: 12.9,
+        externalReference: orderId,
+      },
+    },
+    providedToken: 'secret-sandbox-token',
+    expectedToken: 'secret-sandbox-token',
+    repo: mem.repo,
+    nowIso: '2026-11-21T10:20:00.000Z',
+  });
+  assert.equal(outOfOrderRes.statusCode, 200);
+  assert.equal(outOfOrderRes.body.orderStatus, 'refunded');
+  assert.equal(outOfOrderRes.body.accessGranted, false);
+  assert.equal(mem.orders.get(orderId)?.status, 'refunded');
 });
 
 

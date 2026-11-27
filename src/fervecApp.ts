@@ -63,6 +63,7 @@ import {
   validateProfileForm,
 } from './utils/profile';
 import {
+  getSupabaseClient,
   initSupabaseRuntimeConfig,
   isSupabaseConfigured,
 } from './utils/supabase/client';
@@ -77,11 +78,13 @@ import {
 } from './utils/supabase/profileSync';
 import {
   checkWorkAnswerOnServer,
+  claimActiveServerSession,
   downloadCertificatePdfBlob,
   fetchAdminTelemetry,
   fetchProtectedCourseContent,
   fetchSanitizedAssessmentQuestions,
   fetchWorkspaceState,
+  getOrCreateClientSessionId,
   hydrateCourseStateFromWorkspace,
   issueOrFetchCertificate,
   logoutServerSession,
@@ -417,6 +420,15 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   let paymentsPreContractAccepted = false;
   let adminTelemetry: ServerAdminTelemetry | null = null;
   let adminTelemetryLoaded = false;
+  let withdrawalUiInfo: {
+    status: string | null;
+    protocolCode: string | null;
+    errorMessage: string | null;
+  } = {
+    status: null,
+    protocolCode: null,
+    errorMessage: null,
+  };
 
   type ProtectedExtraRecipe = ProtectedCourseContentPayload['extraRecipes'][number];
   let protectedContent: ProtectedCourseContentPayload | null = null;
@@ -3407,11 +3419,45 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           o.studentEmail.toLowerCase() === userProfile!.email.toLowerCase() &&
           o.status !== 'withdrawn_art49'
       );
+      const serverOrderStatus = String(paymentSummary.latestOrderStatus || '').toLowerCase();
       const serverOrderEligible =
         isSupabase &&
         activeOrderId &&
-        (paymentSummary.latestOrderStatus === 'paid' || paymentSummary.isEnrolled);
+        (serverOrderStatus === 'paid' ||
+          paymentSummary.isEnrolled ||
+          serverOrderStatus === 'refund_requested' ||
+          serverOrderStatus === 'refunded');
       const withdrawalOrderId = serverOrderEligible ? activeOrderId : localOrders[0]?.id || null;
+
+      let withdrawalBodyHtml = '';
+      if (isSupabase && activeOrderId && serverOrderStatus === 'refunded') {
+        withdrawalBodyHtml = `<p class="account-withdrawal-status is-refunded">Reembolso confirmado pelo gateway Asaas${
+          withdrawalUiInfo.protocolCode ? ` · Protocolo ${esc(withdrawalUiInfo.protocolCode)}` : ''
+        }. Acesso comercial encerrado com histórico preservado.</p>`;
+      } else if (
+        isSupabase &&
+        activeOrderId &&
+        serverOrderStatus === 'refund_requested' &&
+        withdrawalUiInfo.status === 'refund_failed'
+      ) {
+        withdrawalBodyHtml = `<p class="account-withdrawal-status is-error">${esc(
+          withdrawalUiInfo.errorMessage ||
+            'Falha ao solicitar estorno no gateway Asaas. É possível reenviar a solicitação.'
+        )}</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-red" data-action="request-withdrawal" data-order-id="${esc(activeOrderId)}">Tentar reenviar estorno (${esc(withdrawalUiInfo.protocolCode || activeOrderId)})</button>
+          <button type="button" class="btn btn-outline-dark" data-action="refresh-payment-status">Verificar status</button>
+        </div>`;
+      } else if (isSupabase && activeOrderId && serverOrderStatus === 'refund_requested') {
+        withdrawalBodyHtml = `<p class="account-withdrawal-status is-pending">Solicitação registrada${
+          withdrawalUiInfo.protocolCode ? ` (Protocolo ${esc(withdrawalUiInfo.protocolCode)})` : ''
+        }. Estorno em processamento aguardando confirmação definitiva do Asaas.</p>
+        <button type="button" class="btn btn-outline-dark" data-action="refresh-payment-status">Verificar confirmação no Asaas</button>`;
+      } else if (withdrawalOrderId) {
+        withdrawalBodyHtml = `<button type="button" class="btn btn-outline-dark" data-action="request-withdrawal" data-order-id="${esc(withdrawalOrderId)}">Solicitar Arrependimento (Art. 49 CDC · Pedido ${esc(withdrawalOrderId)})</button>`;
+      } else {
+        withdrawalBodyHtml = `<small>Nenhum pedido ativo elegível localizado no momento. Atendimento oficial: <a href="mailto:${esc(SUPPLIER_IDENTITY.officialEmail)}">${esc(SUPPLIER_IDENTITY.officialEmail)}</a>.</small>`;
+      }
 
       return `<main class="page-wrap">
         <section class="account-page">
@@ -3434,11 +3480,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           <div class="account-withdrawal-card" aria-label="Direito de Arrependimento Art. 49 CDC">
             <strong>Direito de Arrependimento (Art. 49 do CDC — 7 dias)</strong>
             <p>Nos termos do Art. 49 do Código de Defesa do Consumidor e Art. 5º do Decreto 7.962/2013, você pode desistir da contratação em até 7 dias corridos com revogação do acesso e restituição integral.</p>
-            ${
-              withdrawalOrderId
-                ? `<button type="button" class="btn btn-outline-dark" data-action="request-withdrawal" data-order-id="${esc(withdrawalOrderId)}">Solicitar Arrependimento (Art. 49 CDC · Pedido ${esc(withdrawalOrderId)})</button>`
-                : `<small>Nenhum pedido ativo elegível localizado no momento. Atendimento oficial: <a href="mailto:${esc(SUPPLIER_IDENTITY.officialEmail)}">${esc(SUPPLIER_IDENTITY.officialEmail)}</a>.</small>`
-            }
+            ${withdrawalBodyHtml}
           </div>
 
           <div class="lesson-actions" style="justify-content:center;flex-wrap:wrap;">
@@ -5645,6 +5687,21 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       };
     }
 
+    if (result.orderStatus === 'refund_requested' || result.orderStatus === 'refunded') {
+      paymentSummary = {
+        ...paymentSummary,
+        isEnrolled: Boolean(result.isEnrolled),
+        latestOrderStatus: result.orderStatus,
+      };
+      withdrawalUiInfo = {
+        status:
+          result.withdrawalStatus ||
+          (result.orderStatus === 'refunded' ? 'refunded' : 'approved_refund_pending'),
+        protocolCode: result.protocolCode ?? withdrawalUiInfo.protocolCode,
+        errorMessage: result.refundError ?? null,
+      };
+    }
+
     const nextStatus = result.uiStatus || 'awaiting_confirmation';
     paymentsUiStatus = nextStatus;
 
@@ -5659,6 +5716,19 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         'Pagamento confirmado pelo webhook do Asaas. Seu acesso ao Curso de Massas foi liberado!';
       toast.success('Pagamento aprovado!', 'Seu curso já está liberado.');
       void hydrateAuthenticatedWorkspace();
+    } else if (result.orderStatus === 'refunded') {
+      stopPaymentPollTimer();
+      paymentsStatusMessage = `Reembolso confirmado pelo Asaas${
+        result.protocolCode ? ` (Protocolo ${result.protocolCode})` : ''
+      }.`;
+    } else if (result.orderStatus === 'refund_requested') {
+      stopPaymentPollTimer();
+      paymentsStatusMessage =
+        result.withdrawalStatus === 'refund_failed'
+          ? result.refundError || 'Falha no estorno junto ao Asaas. Tente reenviar em Minha Conta.'
+          : `Estorno em processamento no Asaas${
+              result.protocolCode ? ` (Protocolo ${result.protocolCode})` : ''
+            }. Aguardando confirmação definitiva.`;
     } else if (nextStatus === 'expired') {
       stopPaymentPollTimer();
       paymentsStatusMessage = 'Esta cobrança expirou. Selecione a forma de pagamento e gere uma nova cobrança.';
@@ -5678,7 +5748,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       }
     }
 
-    if (route === 'payments') render();
+    if (route === 'payments' || route === 'account') render();
   }
 
   function startPaymentPollTimer(orderId: string): void {
@@ -5932,26 +6002,53 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       courseTitle: paymentSummary.courseTitle || 'Curso de Massas',
       billingType,
       ...(sessionBillingCustomer ? { customer: sessionBillingCustomer } : {}),
+      ...(appliedPaymentCoupon?.code ? { couponCode: appliedPaymentCoupon.code } : {}),
     });
 
     if (outcome.reason === 'already_processing') return;
 
-    if (outcome.ok && outcome.payment) {
+    if (outcome.ok && (outcome.payment || outcome.freeEnrollmentByCoupon)) {
+      void recordLegalAcceptance({
+        courseSlug: paymentSummary.courseSlug || 'massas-italianas',
+        orderId: outcome.orderId || outcome.payment?.orderId || undefined,
+        acceptanceKind: 'checkout',
+        termsVersion: SUPPLIER_IDENTITY.termsVersion,
+        privacyVersion: SUPPLIER_IDENTITY.privacyVersion,
+        preContractAccepted: true,
+        source: 'checkout',
+      });
+
+      if (outcome.freeEnrollmentByCoupon) {
+        activeOrderId = outcome.orderId ?? activeOrderId;
+        activePaymentCharge = null;
+        paymentSummary = {
+          ...paymentSummary,
+          isEnrolled: true,
+          latestOrderStatus: 'paid',
+        };
+        paymentsUiStatus = 'approved';
+        paymentsStatusMessage = `Cupom 100% (#${appliedPaymentCoupon?.code || ''}) aplicado no servidor. Seu acesso ao curso foi liberado!`;
+        toast.success('Matrícula liberada com cupom 100%!', 'Seu acesso ao curso já está ativo.');
+        void hydrateAuthenticatedWorkspace();
+        render();
+        return;
+      }
+
       const chargeIsSandbox = (outcome.environment || paymentSummary.environment) === 'sandbox';
       const chargeProviderLabel = chargeIsSandbox ? 'Asaas Sandbox' : 'Asaas';
       if (outcome.environment) {
         paymentSummary = { ...paymentSummary, environment: outcome.environment };
       }
-      if (outcome.payment.customerId && paymentSummary.customerProfile) {
+      if (outcome.payment!.customerId && paymentSummary.customerProfile) {
         paymentSummary.customerProfile.hasAsaasCustomerId = true;
       }
-      activePaymentCharge = outcome.payment;
-      activeOrderId = outcome.orderId ?? outcome.payment.orderId ?? activeOrderId;
+      activePaymentCharge = outcome.payment!;
+      activeOrderId = outcome.orderId ?? outcome.payment!.orderId ?? activeOrderId;
       if (outcome.capabilities) {
         paymentSummary = { ...paymentSummary, capabilities: outcome.capabilities };
       }
 
-      const nextStatus = mapAsaasStatusToUiStatus(outcome.payment.status, null, false);
+      const nextStatus = mapAsaasStatusToUiStatus(outcome.payment!.status, null, false);
       paymentsUiStatus = nextStatus === 'awaiting_selection' ? 'awaiting_confirmation' : nextStatus;
 
       if (billingType === 'PIX') {
@@ -7388,6 +7485,60 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       void hydratePaymentsSummary(true);
     } else if (a === 'apply-coupon') {
       const code = normalizeCouponCode(paymentCouponInput);
+      if (!PHASE_1_OFFLINE_ONLY && SUPABASE_CONNECTED && userProfile?.authSource === 'supabase') {
+        void (async () => {
+          const supabaseClient = getSupabaseClient();
+          const tokenData = supabaseClient ? await supabaseClient.auth.getSession() : null;
+          const accessToken = tokenData?.data?.session?.access_token;
+          const sid = getOrCreateClientSessionId();
+          if (!accessToken) {
+            toast.warning('Entre na sua conta', 'Autentique-se antes de validar um cupom.');
+            return;
+          }
+          try {
+            const resp = await fetch('/api/coupons/validate', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${accessToken}`,
+                ...(sid ? { 'x-fervec-session-id': sid } : {}),
+              },
+              body: JSON.stringify({ code, courseSlug: paymentSummary.courseSlug }),
+            });
+            const body = (await resp.json().catch(() => ({}))) as {
+              ok?: boolean;
+              code?: string;
+              discountPercent?: number;
+              discountCents?: number;
+              totalCents?: number;
+              isFree?: boolean;
+              error?: string;
+            };
+            if (!resp.ok || !body.ok || typeof body.discountPercent !== 'number') {
+              appliedPaymentCoupon = null;
+              const msg = body.error || 'Cupom inválido ou indisponível no servidor.';
+              paymentCouponFeedback = { ok: false, message: msg };
+              toast.warning('Cupom inválido', msg);
+            } else {
+              appliedPaymentCoupon = {
+                code: body.code || code,
+                discountPercent: body.discountPercent,
+                discountCents: Number(body.discountCents || 0),
+                totalCents: Number(body.totalCents ?? paymentSummary.priceCents),
+                isFree: Boolean(body.isFree),
+              };
+              const okMsg = `Cupom #${appliedPaymentCoupon.code} aplicado (${appliedPaymentCoupon.discountPercent}% de desconto).`;
+              paymentCouponFeedback = { ok: true, message: okMsg };
+              toast.success('Cupom aplicado!', okMsg);
+            }
+          } catch {
+            paymentCouponFeedback = { ok: false, message: 'Erro de comunicação ao validar cupom.' };
+          }
+          render();
+        })();
+        return;
+      }
+
       const coupons = listProvisionalCoupons();
       const validation = validateCouponForCourse(code, coupons, paymentSummary.courseSlug);
       if (!validation.ok || !validation.coupon) {
@@ -7536,12 +7687,29 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             toast.error('Arrependimento não processado', res.message || 'Tente novamente ou contate fervecrgastronomia@gmail.com.');
             return;
           }
+          const nextOrderStatus = res.status || 'refund_requested';
+          const nextWStatus = res.withdrawalStatus || 'approved_refund_pending';
+          withdrawalUiInfo = {
+            status: nextWStatus,
+            protocolCode: res.protocolCode ?? withdrawalUiInfo.protocolCode,
+            errorMessage: res.refundError ?? null,
+          };
           paymentSummary = {
             ...paymentSummary,
             isEnrolled: false,
-            latestOrderStatus: 'refund_requested',
+            latestOrderStatus: nextOrderStatus,
           };
-          toast.success('Solicitação registrada (Art. 49 CDC)', res.message || 'Pedido cancelado dentro do prazo legal.');
+          if (nextWStatus === 'refund_failed') {
+            toast.warning(
+              'Protocolo registrado com falha no gateway',
+              res.message || 'O estorno falhou no Asaas; clique em tentar reenviar em Minha Conta.'
+            );
+          } else {
+            toast.success(
+              'Solicitação registrada (Art. 49 CDC)',
+              res.message || 'Pedido em processamento de estorno aguardando confirmação do Asaas.'
+            );
+          }
           void hydratePaymentsSummary(true);
           render();
           return;
@@ -8502,8 +8670,9 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     if (authBootstrapped || !isSupabaseConfigured()) return;
     authBootstrapped = true;
     const refreshFromSupabaseSession = () => {
-      void fetchCurrentSupabaseProfile(userProfile).then((synced) => {
+      void fetchCurrentSupabaseProfile(userProfile).then(async (synced) => {
         if (synced) {
+          await claimActiveServerSession({ forceNew: false }).catch(() => false);
           userProfile = synced;
           syncProgressScope(synced);
           profileDraft = createInitialProfileDraft(synced);

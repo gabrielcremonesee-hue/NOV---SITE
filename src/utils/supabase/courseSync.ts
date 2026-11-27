@@ -92,50 +92,110 @@ export interface WorkspaceHydrationResponse {
   certificate: ServerCertificateRecord | null;
 }
 
-async function getAccessToken(): Promise<string | null> {
+const CLIENT_SESSION_KEY = 'fervec-client-session-id';
+const CLIENT_SESSION_UID_KEY = 'fervec-client-session-uid';
+let inMemoryFallbackSessionId: string | null = null;
+let inMemoryFallbackUid: string | null = null;
+
+async function getCurrentSessionInfo(): Promise<{ accessToken: string | null; userId: string | null }> {
   const supabase = getSupabaseClient();
-  if (!supabase) return null;
+  if (!supabase) return { accessToken: null, userId: null };
   try {
     const { data } = await supabase.auth.getSession();
-    return data?.session?.access_token ?? null;
+    return {
+      accessToken: data?.session?.access_token ?? null,
+      userId: data?.session?.user?.id ? String(data.session.user.id).trim().toLowerCase() : null,
+    };
   } catch {
-    return null;
+    return { accessToken: null, userId: null };
   }
 }
 
-const CLIENT_SESSION_KEY = 'fervec-client-session-id';
-let inMemoryFallbackSessionId: string | null = null;
+async function getAccessToken(): Promise<string | null> {
+  const info = await getCurrentSessionInfo();
+  return info.accessToken;
+}
 
-function generateSessionUuid(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
+function readStoredSessionId(): string {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const fromLocal = localStorage.getItem(CLIENT_SESSION_KEY);
+      if (fromLocal && fromLocal.trim()) {
+        inMemoryFallbackSessionId = fromLocal.trim();
+        return fromLocal.trim();
+      }
+    }
+  } catch {
+    // ignore storage errors
   }
-  return `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      const fromSession = sessionStorage.getItem(CLIENT_SESSION_KEY);
+      if (fromSession && fromSession.trim()) {
+        inMemoryFallbackSessionId = fromSession.trim();
+        return fromSession.trim();
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return inMemoryFallbackSessionId || '';
+}
+
+function readStoredSessionUid(): string {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const uid = localStorage.getItem(CLIENT_SESSION_UID_KEY);
+      if (uid && uid.trim()) return uid.trim().toLowerCase();
+    }
+  } catch {
+    // ignore
+  }
+  return inMemoryFallbackUid || '';
+}
+
+export function setClientSessionId(sessionId: string, userId?: string | null): void {
+  const cleanSid = String(sessionId || '').trim();
+  const cleanUid = userId ? String(userId).trim().toLowerCase() : null;
+  if (!cleanSid) return;
+  inMemoryFallbackSessionId = cleanSid;
+  if (cleanUid) inMemoryFallbackUid = cleanUid;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(CLIENT_SESSION_KEY, cleanSid);
+      if (cleanUid) localStorage.setItem(CLIENT_SESSION_UID_KEY, cleanUid);
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(CLIENT_SESSION_KEY, cleanSid);
+    }
+  } catch {
+    // ignore
+  }
 }
 
 export function getOrCreateClientSessionId(): string {
-  if (typeof sessionStorage === 'undefined') {
-    if (!inMemoryFallbackSessionId) inMemoryFallbackSessionId = generateSessionUuid();
-    return inMemoryFallbackSessionId;
-  }
-  try {
-    let existing = sessionStorage.getItem(CLIENT_SESSION_KEY);
-    if (!existing || existing.length < 8 || existing === 'server-session' || existing === 'browser-session') {
-      existing = generateSessionUuid();
-      sessionStorage.setItem(CLIENT_SESSION_KEY, existing);
-    }
-    return existing;
-  } catch {
-    if (!inMemoryFallbackSessionId) inMemoryFallbackSessionId = generateSessionUuid();
-    return inMemoryFallbackSessionId;
-  }
+  return readStoredSessionId();
 }
 
 export function resetClientSessionId(): void {
   inMemoryFallbackSessionId = null;
-  if (typeof sessionStorage === 'undefined') return;
+  inMemoryFallbackUid = null;
   try {
-    sessionStorage.removeItem(CLIENT_SESSION_KEY);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(CLIENT_SESSION_KEY);
+      localStorage.removeItem(CLIENT_SESSION_UID_KEY);
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.removeItem(CLIENT_SESSION_KEY);
+    }
   } catch {
     // ignore
   }
@@ -147,7 +207,10 @@ async function authFetch(input: string, init: RequestInit = {}): Promise<Respons
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
-  headers.set('x-fervec-session-id', getOrCreateClientSessionId());
+  const activeSid = readStoredSessionId();
+  if (activeSid && !headers.has('x-fervec-session-id')) {
+    headers.set('x-fervec-session-id', activeSid);
+  }
   if (init.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
@@ -158,15 +221,32 @@ async function authFetch(input: string, init: RequestInit = {}): Promise<Respons
   });
 }
 
-export async function claimActiveServerSession(): Promise<boolean> {
+export async function claimActiveServerSession(options?: { forceNew?: boolean }): Promise<boolean> {
   try {
-    const token = await getAccessToken();
-    if (!token) return false;
+    const info = await getCurrentSessionInfo();
+    if (!info.accessToken) return false;
+    const currentSid = readStoredSessionId();
+    const storedUid = readStoredSessionUid();
+    const preserveIfValid =
+      !options?.forceNew &&
+      Boolean(currentSid) &&
+      (!storedUid || !info.userId || storedUid === info.userId);
+
     const res = await authFetch('/api/session/claim', {
       method: 'POST',
-      body: JSON.stringify({ sessionId: getOrCreateClientSessionId() }),
+      headers: preserveIfValid && currentSid ? { 'x-fervec-session-id': currentSid } : {},
+      body: JSON.stringify({
+        preserveIfValid,
+        ...(preserveIfValid && currentSid ? { sessionId: currentSid } : {}),
+        deviceLabel: typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 80) : '',
+      }),
     });
-    return res.ok;
+    if (!res.ok) return false;
+    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; sessionId?: string };
+    if (data?.sessionId) {
+      setClientSessionId(data.sessionId, info.userId);
+    }
+    return true;
   } catch {
     return false;
   }
@@ -212,7 +292,15 @@ export async function recordLegalAcceptance(payload: {
 export async function requestOrderWithdrawal(
   orderId: string,
   reason?: string
-): Promise<{ ok: boolean; message?: string; status?: string; orderId?: string }> {
+): Promise<{
+  ok: boolean;
+  message?: string;
+  status?: string;
+  withdrawalStatus?: string;
+  protocolCode?: string | null;
+  refundError?: string | null;
+  orderId?: string;
+}> {
   try {
     const token = await getAccessToken();
     if (!token) {
@@ -227,15 +315,26 @@ export async function requestOrderWithdrawal(
       error?: string;
       message?: string;
       status?: string;
+      withdrawalStatus?: string;
+      protocolCode?: string | null;
+      refundError?: string | null;
       orderId?: string;
     };
     if (!res.ok) {
-      return { ok: false, message: data.error || data.message || 'Não foi possível processar o arrependimento.' };
+      return {
+        ok: false,
+        status: data.status,
+        protocolCode: data.protocolCode ?? null,
+        message: data.error || data.message || 'Não foi possível processar o arrependimento.',
+      };
     }
     return {
       ok: true,
       message: data.message || 'Solicitação de arrependimento (Art. 49 CDC) registrada.',
       status: data.status,
+      withdrawalStatus: data.withdrawalStatus,
+      protocolCode: data.protocolCode ?? null,
+      refundError: data.refundError ?? null,
       orderId: data.orderId || orderId,
     };
   } catch {
@@ -262,6 +361,16 @@ export interface ServerAdminTelemetry {
     confirmed: boolean;
     envVarName?: string;
     note?: string | null;
+  };
+  launchLock?: {
+    productionAllowed: boolean;
+    priceConfirmed: boolean;
+    commercialLaunchApproved: boolean;
+    legalPendingCleared: boolean;
+    supplierAddressPending: boolean;
+    officialPriceCents: number;
+    blockers: string[];
+    summaryNote: string;
   };
   supplierMaskedCpf?: string;
   addressPending?: boolean;

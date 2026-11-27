@@ -1,0 +1,13 @@
+# FerveC Gastronomia — Configuração das Supabase Edge Functions
+# Desativa verificação de JWT no Gateway para permitir:
+# - Webhooks externos do Asaas Sandbox (autenticados via asaas-access-token em tempo constante)
+# - Autenticação interna explícita via supabase.auth.getUser() / service_role nas funções
+
+[functions.create-asaas-charge]
+verify_jwt = false
+
+[functions.asaas-webhook]
+verify_jwt = false
+
+[functions.send-payment-confirmation-email]
+verify_jwt = false

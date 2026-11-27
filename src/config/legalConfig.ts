@@ -17,7 +17,6 @@ export const SUPPLIER_IDENTITY = {
     'Endereço físico completo pendente de confirmação oficial do titular antes da abertura comercial pública',
   addressDisplay:
     'Endereço físico completo pendente de confirmação oficial do titular antes da abertura comercial pública',
-  accessDurationPending: true,
   accessDurationPendingLabel:
     'Prazo de acesso e política de expiração pendentes de confirmação oficial do titular',
   accessDurationSummary:

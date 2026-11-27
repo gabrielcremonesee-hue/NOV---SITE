@@ -26,15 +26,20 @@ import {
   resolveDeveloperCertificateAdmin,
 } from './developerAuth.ts';
 import { runAsaasConnectionAudit } from './asaasAudit.ts';
-import { getAuthoritativeCoursePriceCents, isCoursePriceConfirmedForProduction } from './coursePricing.ts';
+import {
+  evaluateProductionLaunchLock,
+  getAuthoritativeCoursePriceCents,
+  isCoursePriceConfirmedForProduction,
+} from './coursePricing.ts';
 import { financialGuard } from './financialGuard.ts';
-import { singleSessionManager } from './singleSession.ts';
+import { singleSessionManager, type VerifySessionOptions } from './singleSession.ts';
 import { SUPPLIER_IDENTITY, getLegalDocumentVersions, maskCpfForLogs } from '../config/legalConfig.ts';
 import { calculateAge } from '../utils/profile.ts';
 
 const DEFAULT_COURSE_SLUG = 'massas-italianas';
 const CERTIFICATES_STORAGE_BUCKET = 'certificates';
 const inFlightCertificateIssues = new Map<string, Promise<{ certificate: CertificateRow | null; alreadyIssued: boolean; error?: string }>>();
+const inFlightWithdrawals = new Set<string>();
 
 const MODULE_LIMITS: Record<string, { steps: number; mise: number }> = {
   carbonara: { steps: 6, mise: 7 },
@@ -481,7 +486,7 @@ async function checkOrProvisionCommercialEnrollment(
 
 const DUMMY_SESSION_IDS = new Set(['server-session', 'browser-session', 'guest', 'undefined', 'null']);
 
-async function enforceClaimedSession(
+export async function enforceClaimedSession(
   req: Request,
   res: Response,
   supabase: SupabaseClient,
@@ -498,32 +503,60 @@ async function enforceClaimedSession(
     return false;
   }
 
-  // Verifica primeiro a tabela user_active_sessions no banco para resistir a cold-start / múltiplas instâncias
+  // Validação criptográfica e de expiração vinculada à identidade antes de consultar persistência
+  const sigCheck = singleSessionManager.verifySignedTokenForUser(userId, sessionId);
+  if (!sigCheck.valid) {
+    res.status(401).json({
+      ok: false,
+      code: sigCheck.reason,
+      error:
+        sigCheck.reason === 'SESSION_EXPIRED'
+          ? 'Sua sessão expirou. Faça login novamente para continuar.'
+          : 'Identificador de sessão inválido ou adulterado.',
+    });
+    return false;
+  }
+
+  // Consulta user_active_sessions no banco para resistir a cold-start / múltiplas instâncias sem nunca auto-vincular token desconhecido
+  let verifyOpts: VerifySessionOptions | undefined;
   try {
-    const { data, error } = await supabase
+    let dbRes = await supabase
       .from('user_active_sessions')
-      .select('session_id')
+      .select('session_id, expires_at, device_hint')
       .eq('user_id', userId)
       .maybeSingle();
-    if (!error && data && typeof data.session_id === 'string' && data.session_id !== sessionId) {
-      singleSessionManager.claimSession(userId, data.session_id);
-      res.status(409).json({
-        ok: false,
-        code: 'SESSION_REPLACED_OTHER_DEVICE',
-        error: 'Sua sessão foi encerrada porque a conta entrou em outro dispositivo ou navegador.',
-      });
-      return false;
+
+    if (dbRes.error && /column|expires_at|device_hint/i.test(String(dbRes.error.message || ''))) {
+      dbRes = await supabase
+        .from('user_active_sessions')
+        .select('session_id')
+        .eq('user_id', userId)
+        .maybeSingle();
+    }
+
+    if (!dbRes.error) {
+      const dbRow = dbRes.data as { session_id?: string; expires_at?: string | null; device_hint?: string | null } | null;
+      verifyOpts = {
+        activeRecordFromDb:
+          dbRow && typeof dbRow.session_id === 'string'
+            ? {
+                sessionId: dbRow.session_id,
+                expiresAt: dbRow.expires_at ?? null,
+                deviceLabel: dbRow.device_hint ?? null,
+              }
+            : null,
+      };
     }
   } catch {
     // Tabela opcional em bancos antigos/mocks sem user_active_sessions
   }
 
-  const memCheck = singleSessionManager.verifyOrBindSession(userId, sessionId);
+  const memCheck = singleSessionManager.verifySession(userId, sessionId, verifyOpts);
   if (!memCheck.ok) {
-    const isReq = memCheck.code === 'SESSION_REQUIRED';
-    res.status(isReq ? 401 : 409).json({
+    const isSuperseded = memCheck.code === 'SESSION_SUPERSEDED';
+    res.status(isSuperseded ? 409 : 401).json({
       ok: false,
-      code: isReq ? 'SESSION_REQUIRED' : 'SESSION_REPLACED_OTHER_DEVICE',
+      code: isSuperseded ? 'SESSION_REPLACED_OTHER_DEVICE' : memCheck.code,
       error: memCheck.message,
     });
     return false;
@@ -828,10 +861,12 @@ export function registerCourseApiRoutes(
   deps?: {
     resolveAuth?: typeof resolveAuthenticatedSupabaseUser;
     runAsaasAudit?: typeof runAsaasConnectionAudit;
+    fetchFn?: typeof fetch;
   }
 ): void {
   const resolveAuth = deps?.resolveAuth ?? resolveAuthenticatedSupabaseUser;
   const runAsaasAudit = deps?.runAsaasAudit ?? runAsaasConnectionAudit;
+  const fetchFn = deps?.fetchFn ?? fetch;
 
   // Hydrate authenticated student workspace (profile, course, modules, enrollment, progress, attempts, certificate)
   app.get('/api/workspace/state', async (req: Request, res: Response) => {
@@ -2059,6 +2094,9 @@ export function registerCourseApiRoutes(
     const referenceTitle = courseSlug === 'massas-italianas' ? 'Curso de Massas' : 'Curso FerveC Gastronomia';
 
     const auth = await resolveAuth(req, res).catch(() => null);
+    if (auth?.user) {
+      if (!(await enforceClaimedSession(req, res, auth.supabase, auth.user.id))) return;
+    }
     let queryClient: SupabaseClient | null = auth?.supabase ?? null;
     if (!queryClient) {
       const publicEnv = getServerSupabaseEnv();
@@ -2257,7 +2295,7 @@ export function registerCourseApiRoutes(
       return;
     }
 
-    const [{ data: paymentRow }, { data: enrollmentRow }] = await Promise.all([
+    const [{ data: paymentRow }, { data: enrollmentRow }, withdrawalQuery] = await Promise.all([
       supabase
         .from('payments')
         .select('asaas_payment_id, status, billing_type, value_cents, due_date, invoice_url, bank_slip_url')
@@ -2272,9 +2310,160 @@ export function registerCourseApiRoutes(
         .eq('user_id', user.id)
         .eq('course_id', orderRow.course_id)
         .maybeSingle(),
+      supabase
+        .from('withdrawal_requests')
+        .select('id, status, protocol_code, refund_provider_status, last_refund_error, processed_at')
+        .eq('order_id', orderRow.id)
+        .eq('user_id', user.id)
+        .maybeSingle(),
     ]);
 
-    const paidViaOrder = orderRow.status === 'paid';
+    let withdrawalRow = withdrawalQuery.data as {
+      id?: string;
+      status?: string | null;
+      protocol_code?: string | null;
+      refund_provider_status?: string | null;
+      last_refund_error?: string | null;
+      processed_at?: string | null;
+    } | null;
+
+    if (
+      withdrawalQuery.error &&
+      /column|last_refund_error/i.test(String(withdrawalQuery.error.message || ''))
+    ) {
+      const fallbackWq = await supabase
+        .from('withdrawal_requests')
+        .select('id, status, protocol_code, refund_provider_status, processed_at')
+        .eq('order_id', orderRow.id)
+        .eq('user_id', user.id)
+        .maybeSingle();
+      withdrawalRow = (fallbackWq.data as typeof withdrawalRow) || null;
+    }
+
+    let currentOrderStatus = String(orderRow.status || 'pending');
+    let currentWithdrawalStatus = withdrawalRow?.status ? String(withdrawalRow.status) : null;
+    let currentRefundProviderStatus = withdrawalRow?.refund_provider_status
+      ? String(withdrawalRow.refund_provider_status)
+      : null;
+    let currentRefundError = withdrawalRow?.last_refund_error
+      ? String(withdrawalRow.last_refund_error)
+      : null;
+    let currentRefundProcessedAt = withdrawalRow?.processed_at
+      ? String(withdrawalRow.processed_at)
+      : null;
+
+    // Consulta segura somente leitura ao Asaas quando o pedido está com estorno em processamento
+    const asaasEnv =
+      String(process.env.ASAAS_ENVIRONMENT || '').trim().toLowerCase() === 'production'
+        ? 'production'
+        : 'sandbox';
+    const asaasKey =
+      asaasEnv === 'production'
+        ? process.env.ASAAS_API_KEY?.trim()
+        : process.env.ASAAS_SANDBOX_API_KEY?.trim() || process.env.ASAAS_API_KEY?.trim();
+
+    if (
+      currentOrderStatus === 'refund_requested' &&
+      asaasKey &&
+      orderRow.asaas_payment_id
+    ) {
+      const baseUrl =
+        asaasEnv === 'production'
+          ? (process.env.ASAAS_API_URL || 'https://api.asaas.com/v3').replace(/\/+$/, '')
+          : (process.env.ASAAS_SANDBOX_URL || 'https://api-sandbox.asaas.com/v3').replace(/\/+$/, '');
+      try {
+        const checkRes = await fetchFn(
+          `${baseUrl}/payments/${encodeURIComponent(String(orderRow.asaas_payment_id))}`,
+          {
+            method: 'GET',
+            headers: {
+              Accept: 'application/json',
+              access_token: asaasKey,
+            },
+            signal: AbortSignal.timeout(5000),
+          }
+        );
+        if (checkRes.ok) {
+          const payJson = (await checkRes.json().catch(() => ({}))) as { status?: string };
+          const providerSt = String(payJson.status || '').trim().toUpperCase();
+          const nowIso = new Date().toISOString();
+          if (providerSt === 'REFUNDED') {
+            currentOrderStatus = 'refunded';
+            currentWithdrawalStatus = 'refunded';
+            currentRefundProviderStatus = 'REFUNDED';
+            currentRefundError = null;
+            currentRefundProcessedAt = nowIso;
+
+            await supabase
+              .from('orders')
+              .update({ status: 'refunded', updated_at: nowIso })
+              .eq('id', orderRow.id)
+              .eq('user_id', user.id);
+
+            if (withdrawalRow?.id) {
+              const wrUpd = await supabase
+                .from('withdrawal_requests')
+                .update({
+                  status: 'refunded',
+                  refund_provider_status: 'REFUNDED',
+                  last_refund_error: null,
+                  processed_at: nowIso,
+                  updated_at: nowIso,
+                })
+                .eq('id', withdrawalRow.id);
+              if (wrUpd.error && isMissingVersioningColumnError(wrUpd.error)) {
+                await supabase
+                  .from('withdrawal_requests')
+                  .update({
+                    status: 'refunded',
+                    refund_provider_status: 'REFUNDED',
+                    processed_at: nowIso,
+                    updated_at: nowIso,
+                  })
+                  .eq('id', withdrawalRow.id);
+              }
+            }
+
+            const { data: otherPaid } = await supabase
+              .from('orders')
+              .select('id')
+              .eq('user_id', user.id)
+              .eq('course_id', orderRow.course_id)
+              .eq('status', 'paid')
+              .neq('id', orderRow.id)
+              .limit(1);
+            if (!Array.isArray(otherPaid) || otherPaid.length === 0) {
+              await supabase
+                .from('student_enrollments')
+                .update({ status: 'canceled', updated_at: nowIso })
+                .eq('user_id', user.id)
+                .eq('course_id', orderRow.course_id);
+            }
+          } else if (providerSt === 'REFUND_FAILED' || providerSt === 'REFUND_DENIED') {
+            currentWithdrawalStatus = 'refund_failed';
+            currentRefundProviderStatus = providerSt;
+            currentRefundError = `Estorno recusado pelo gateway Asaas (${providerSt}).`;
+            if (withdrawalRow?.id) {
+              await supabase
+                .from('withdrawal_requests')
+                .update({
+                  status: 'refund_failed',
+                  refund_provider_status: providerSt,
+                  last_refund_error: currentRefundError,
+                  updated_at: nowIso,
+                })
+                .eq('id', withdrawalRow.id);
+            }
+          } else if (providerSt) {
+            currentRefundProviderStatus = providerSt;
+          }
+        }
+      } catch {
+        // Falha transitória de rede na consulta não altera estado persistido
+      }
+    }
+
+    const paidViaOrder = currentOrderStatus === 'paid';
     const enrStatus = String(enrollmentRow?.status || '').toLowerCase();
     const isEnrolled =
       paidViaOrder ||
@@ -2286,8 +2475,13 @@ export function registerCourseApiRoutes(
     res.json({
       ok: true,
       orderId: orderRow.id,
-      orderStatus: orderRow.status,
+      orderStatus: currentOrderStatus,
       isEnrolled,
+      withdrawalStatus: currentWithdrawalStatus,
+      protocolCode: withdrawalRow?.protocol_code || null,
+      refundProviderStatus: currentRefundProviderStatus,
+      refundError: currentRefundError,
+      refundProcessedAt: currentRefundProcessedAt,
       payment: paymentRow
         ? {
             id: paymentRow.asaas_payment_id,
@@ -2339,7 +2533,7 @@ export function registerCourseApiRoutes(
     res.json(report);
   });
 
-  // Single-session claim & logout
+  // Single-session claim & logout (server-issued HMAC token bound to authenticated user)
   app.post('/api/session/claim', async (req: Request, res: Response) => {
     const auth = await resolveAuth(req, res);
     if (!auth) {
@@ -2347,36 +2541,106 @@ export function registerCourseApiRoutes(
       return;
     }
     const { supabase, user } = auth;
-    const body = (req.body || {}) as { sessionId?: string; deviceLabel?: string };
+    const body = (req.body || {}) as {
+      sessionId?: string;
+      deviceLabel?: string;
+      preserveIfValid?: boolean;
+      ttlSeconds?: number;
+    };
     const headerSid =
-      typeof req.headers['x-fervec-session-id'] === 'string' ? req.headers['x-fervec-session-id'].trim() : '';
-    const rawSid = (typeof body.sessionId === 'string' && body.sessionId.trim()) || headerSid;
-    const sid =
-      rawSid && rawSid.length >= 8 && !DUMMY_SESSION_IDS.has(rawSid.toLowerCase())
-        ? rawSid
-        : crypto.randomUUID();
-    const record = singleSessionManager.claimSession(user.id, sid, body.deviceLabel || '');
-    try {
-      await supabase.rpc('claim_active_session', {
-        p_session_id: record.sessionId,
-        p_device_hint: body.deviceLabel || null,
-      });
-    } catch {
-      // RPC opcional quando SQL migration ainda não foi aplicada
+      typeof req.headers['x-fervec-session-id'] === 'string'
+        ? req.headers['x-fervec-session-id'].trim()
+        : '';
+    const candidateSid =
+      headerSid || (typeof body.sessionId === 'string' ? body.sessionId.trim() : '');
+
+    let existingDbSession: {
+      sessionId: string;
+      expiresAt?: string | null;
+      deviceLabel?: string | null;
+    } | null = null;
+    if (body.preserveIfValid && candidateSid) {
+      try {
+        let dbRes = await supabase
+          .from('user_active_sessions')
+          .select('session_id, expires_at, device_hint')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (dbRes.error && /column|expires_at|device_hint/i.test(String(dbRes.error.message || ''))) {
+          dbRes = await supabase
+            .from('user_active_sessions')
+            .select('session_id')
+            .eq('user_id', user.id)
+            .maybeSingle();
+        }
+        const row = dbRes.data as { session_id?: string; expires_at?: string | null; device_hint?: string | null } | null;
+        if (!dbRes.error && row && typeof row.session_id === 'string') {
+          existingDbSession = {
+            sessionId: row.session_id,
+            expiresAt: row.expires_at ?? null,
+            deviceLabel: row.device_hint ?? null,
+          };
+        }
+      } catch {
+        existingDbSession = null;
+      }
     }
-    res.json({ ok: true, sessionId: record.sessionId, claimedAt: record.claimedAt });
+
+    const ttlMs =
+      typeof body.ttlSeconds === 'number' && Number.isFinite(body.ttlSeconds) && body.ttlSeconds >= 1
+        ? body.ttlSeconds * 1000
+        : undefined;
+
+    const record = singleSessionManager.claimSession(
+      user.id,
+      body.preserveIfValid ? candidateSid : undefined,
+      body.deviceLabel || '',
+      {
+        preserveExistingIfValid: Boolean(body.preserveIfValid),
+        existingDbSession,
+        ttlMs,
+      }
+    );
+
+    if (!record.preserved) {
+      try {
+        const rpcRes = await supabase.rpc('claim_active_session', {
+          p_session_id: record.sessionId,
+          p_device_hint: body.deviceLabel || null,
+          p_expires_at: record.expiresAt,
+        });
+        if (rpcRes?.error && /function|argument|p_expires_at/i.test(String(rpcRes.error.message || ''))) {
+          await supabase.rpc('claim_active_session', {
+            p_session_id: record.sessionId,
+            p_device_hint: body.deviceLabel || null,
+          });
+        }
+      } catch {
+        // RPC opcional quando SQL migration ainda não foi aplicada
+      }
+    }
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      ok: true,
+      sessionId: record.sessionId,
+      claimedAt: record.claimedAt,
+      expiresAt: record.expiresAt,
+      preserved: Boolean(record.preserved),
+    });
   });
 
   app.post('/api/session/logout', async (req: Request, res: Response) => {
     const auth = await resolveAuth(req, res).catch(() => null);
     if (!auth) {
-      res.json({ ok: true });
+      res.json({ ok: true, cleared: false });
       return;
     }
     const rawSid = req.headers['x-fervec-session-id'];
     const sid = typeof rawSid === 'string' ? rawSid.trim() : '';
+    let cleared = false;
     if (sid) {
-      singleSessionManager.clearSession(auth.user.id, sid);
+      cleared = singleSessionManager.clearSession(auth.user.id, sid);
       try {
         await auth.supabase.rpc('clear_active_session', {
           p_session_id: sid,
@@ -2385,7 +2649,7 @@ export function registerCourseApiRoutes(
         // optional
       }
     }
-    res.json({ ok: true });
+    res.json({ ok: true, cleared });
   });
 
   // Server-authoritative coupon validation
@@ -2560,186 +2824,308 @@ export function registerCourseApiRoutes(
       res.status(400).json({ ok: false, error: 'ID do pedido inválido.' });
       return;
     }
-    const body = (req.body || {}) as { reason?: string };
 
-    const { data: orderRow } = await supabase
-      .from('orders')
-      .select('id, user_id, course_id, status, amount_cents, asaas_payment_id, paid_at, created_at')
-      .eq('id', orderId)
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-    if (!orderRow) {
-      res.status(404).json({ ok: false, error: 'Pedido não encontrado para a conta autenticada.' });
-      return;
-    }
-
-    const { data: existingWithdrawal } = await supabase
-      .from('withdrawal_requests')
-      .select('id, status, protocol_code, requested_at')
-      .eq('order_id', orderRow.id)
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-    if (
-      existingWithdrawal ||
-      orderRow.status === 'refund_requested' ||
-      orderRow.status === 'refunded'
-    ) {
+    if (inFlightWithdrawals.has(orderId)) {
       res.status(409).json({
         ok: false,
-        code: 'ALREADY_REQUESTED',
-        protocolCode: (existingWithdrawal as { protocol_code?: string } | null)?.protocol_code || null,
-        status: existingWithdrawal?.status || orderRow.status,
-        error: 'Solicitação de arrependimento já registrada para este pedido.',
+        code: 'WITHDRAWAL_IN_PROGRESS',
+        error: 'Solicitação de arrependimento já está em processamento para este pedido. Aguarde alguns segundos.',
       });
       return;
     }
 
-    if (orderRow.status !== 'paid') {
-      res.status(400).json({
-        ok: false,
-        error: 'A solicitação de arrependimento Art. 49 CDC aplica-se apenas a pedidos com pagamento confirmado.',
-      });
-      return;
-    }
+    inFlightWithdrawals.add(orderId);
+    try {
+      const body = (req.body || {}) as { reason?: string };
 
-    const paidTime = Date.parse(String(orderRow.paid_at || orderRow.created_at || ''));
-    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-    if (!Number.isFinite(paidTime) || Date.now() - paidTime > sevenDaysMs) {
-      res.status(400).json({
-        ok: false,
-        code: 'WITHDRAWAL_WINDOW_EXPIRED',
-        error: 'O prazo legal de 7 dias corridos (Art. 49 do CDC) para este pedido já foi encerrado.',
-      });
-      return;
-    }
+      const { data: orderRow } = await supabase
+        .from('orders')
+        .select('id, user_id, course_id, status, amount_cents, asaas_payment_id, paid_at, created_at')
+        .eq('id', orderId)
+        .eq('user_id', user.id)
+        .maybeSingle();
 
-    const nowIso = new Date().toISOString();
-    const protocolCode = `ARR-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
-    const cleanReason =
-      typeof body.reason === 'string' && body.reason.trim()
-        ? body.reason.trim().slice(0, 400)
-        : 'Arrependimento Art. 49 CDC (7 dias)';
-
-    let withdrawalStatus: 'requested' | 'approved_refund_pending' | 'refunded' = 'approved_refund_pending';
-    let nextOrderStatus: 'refund_requested' | 'refunded' = 'refund_requested';
-    let refundProviderId: string | null = null;
-    let refundProviderStatus: string | null = null;
-
-    const asaasEnv =
-      String(process.env.ASAAS_ENVIRONMENT || '').trim().toLowerCase() === 'production'
-        ? 'production'
-        : 'sandbox';
-    const asaasKey =
-      asaasEnv === 'production'
-        ? process.env.ASAAS_API_KEY?.trim()
-        : process.env.ASAAS_SANDBOX_API_KEY?.trim() || process.env.ASAAS_API_KEY?.trim();
-
-    if (asaasKey && orderRow.asaas_payment_id) {
-      const baseUrl =
-        asaasEnv === 'production'
-          ? (process.env.ASAAS_API_URL || 'https://api.asaas.com/v3').replace(/\/+$/, '')
-          : (process.env.ASAAS_SANDBOX_URL || 'https://api-sandbox.asaas.com/v3').replace(/\/+$/, '');
-      try {
-        const refundRes = await fetch(
-          `${baseUrl}/payments/${encodeURIComponent(String(orderRow.asaas_payment_id))}/refund`,
-          {
-            method: 'POST',
-            headers: {
-              Accept: 'application/json',
-              'Content-Type': 'application/json',
-              access_token: asaasKey,
-            },
-            body: JSON.stringify({ description: `Arrependimento Art. 49 CDC — Protocolo ${protocolCode}` }),
-            signal: AbortSignal.timeout(6000),
-          }
-        );
-        const refundJson = (await refundRes.json().catch(() => ({}))) as {
-          id?: string;
-          status?: string;
-        };
-        if (refundRes.ok) {
-          withdrawalStatus = 'refunded';
-          nextOrderStatus = 'refunded';
-          refundProviderId = refundJson.id || String(orderRow.asaas_payment_id);
-          refundProviderStatus = refundJson.status || 'REFUNDED';
-        } else {
-          refundProviderStatus = `PENDING_MANUAL_${refundRes.status}`;
-        }
-      } catch {
-        refundProviderStatus = 'PENDING_MANUAL_TIMEOUT';
+      if (!orderRow) {
+        res.status(404).json({ ok: false, error: 'Pedido não encontrado para a conta autenticada.' });
+        return;
       }
-    }
 
-    const baseWithdrawalRow = {
-      user_id: user.id,
-      order_id: orderRow.id,
-      course_id: orderRow.course_id,
-      reason: cleanReason,
-      status: withdrawalStatus,
-      requested_at: nowIso,
-      processed_at: withdrawalStatus === 'refunded' ? nowIso : null,
-    };
+      let existingQuery = await supabase
+        .from('withdrawal_requests')
+        .select('id, status, protocol_code, requested_at, refund_attempts')
+        .eq('order_id', orderRow.id)
+        .eq('user_id', user.id)
+        .maybeSingle();
 
-    let insertRes = await supabase.from('withdrawal_requests').insert({
-      ...baseWithdrawalRow,
-      protocol_code: protocolCode,
-      refund_provider_id: refundProviderId,
-      refund_provider_status: refundProviderStatus,
-    });
+      if (
+        existingQuery.error &&
+        /column|refund_attempts/i.test(String(existingQuery.error.message || ''))
+      ) {
+        existingQuery = await supabase
+          .from('withdrawal_requests')
+          .select('id, status, protocol_code, requested_at')
+          .eq('order_id', orderRow.id)
+          .eq('user_id', user.id)
+          .maybeSingle();
+      }
 
-    if (insertRes.error && isMissingVersioningColumnError(insertRes.error)) {
-      insertRes = await supabase.from('withdrawal_requests').insert(baseWithdrawalRow);
-    }
+      const existingWithdrawal = existingQuery.data as {
+        id?: string;
+        status?: string;
+        protocol_code?: string | null;
+        requested_at?: string | null;
+        refund_attempts?: number | null;
+      } | null;
 
-    if (insertRes.error) {
-      const dup = insertRes.error.code === '23505' || /duplicate/i.test(insertRes.error.message || '');
-      if (dup) {
+      const isRetryAfterFailure =
+        orderRow.status === 'refund_requested' &&
+        existingWithdrawal?.status === 'refund_failed';
+
+      if (
+        !isRetryAfterFailure &&
+        (existingWithdrawal ||
+          orderRow.status === 'refund_requested' ||
+          orderRow.status === 'refunded')
+      ) {
         res.status(409).json({
           ok: false,
           code: 'ALREADY_REQUESTED',
+          protocolCode: existingWithdrawal?.protocol_code || null,
+          status: existingWithdrawal?.status || orderRow.status,
           error: 'Solicitação de arrependimento já registrada para este pedido.',
         });
         return;
       }
-      res.status(500).json({
-        ok: false,
-        error: 'Não foi possível registrar a solicitação de arrependimento no banco de dados.',
+
+      if (!isRetryAfterFailure && orderRow.status !== 'paid') {
+        res.status(400).json({
+          ok: false,
+          error: 'A solicitação de arrependimento Art. 49 CDC aplica-se apenas a pedidos com pagamento confirmado.',
+        });
+        return;
+      }
+
+      const paidTime = Date.parse(String(orderRow.paid_at || orderRow.created_at || ''));
+      const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+      if (!isRetryAfterFailure && (!Number.isFinite(paidTime) || Date.now() - paidTime > sevenDaysMs)) {
+        res.status(400).json({
+          ok: false,
+          code: 'WITHDRAWAL_WINDOW_EXPIRED',
+          error: 'O prazo legal de 7 dias corridos (Art. 49 do CDC) para este pedido já foi encerrado.',
+        });
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const protocolCode =
+        (isRetryAfterFailure && existingWithdrawal?.protocol_code) ||
+        `ARR-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+      const cleanReason =
+        typeof body.reason === 'string' && body.reason.trim()
+          ? body.reason.trim().slice(0, 400)
+          : 'Arrependimento Art. 49 CDC (7 dias)';
+
+      // Regra estrita: POST de solicitação aceita pelo Asaas NÃO marca 'refunded' imediatamente;
+      // mantém estado intermediário até confirmação definitiva por webhook autenticado ou consulta segura GET.
+      let withdrawalStatus: 'requested' | 'approved_refund_pending' | 'refund_failed' =
+        'approved_refund_pending';
+      const nextOrderStatus: 'refund_requested' = 'refund_requested';
+      let refundProviderId: string | null = null;
+      let refundProviderStatus: string | null = 'AWAITING_GATEWAY_CONFIRMATION';
+      let refundErrorMessage: string | null = null;
+
+      const asaasEnv =
+        String(process.env.ASAAS_ENVIRONMENT || '').trim().toLowerCase() === 'production'
+          ? 'production'
+          : 'sandbox';
+      const asaasKey =
+        asaasEnv === 'production'
+          ? process.env.ASAAS_API_KEY?.trim()
+          : process.env.ASAAS_SANDBOX_API_KEY?.trim() || process.env.ASAAS_API_KEY?.trim();
+
+      if (asaasKey && orderRow.asaas_payment_id) {
+        const baseUrl =
+          asaasEnv === 'production'
+            ? (process.env.ASAAS_API_URL || 'https://api.asaas.com/v3').replace(/\/+$/, '')
+            : (process.env.ASAAS_SANDBOX_URL || 'https://api-sandbox.asaas.com/v3').replace(/\/+$/, '');
+        try {
+          const refundRes = await fetchFn(
+            `${baseUrl}/payments/${encodeURIComponent(String(orderRow.asaas_payment_id))}/refund`,
+            {
+              method: 'POST',
+              headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                access_token: asaasKey,
+              },
+              body: JSON.stringify({ description: `Arrependimento Art. 49 CDC — Protocolo ${protocolCode}` }),
+              signal: AbortSignal.timeout(6000),
+            }
+          );
+          const refundJson = (await refundRes.json().catch(() => ({}))) as {
+            id?: string;
+            status?: string;
+            errors?: Array<{ description?: string; code?: string }>;
+          };
+          if (refundRes.ok) {
+            withdrawalStatus = 'approved_refund_pending';
+            refundProviderId = refundJson.id || String(orderRow.asaas_payment_id);
+            refundProviderStatus = refundJson.status
+              ? `GATEWAY_ACCEPTED_${String(refundJson.status).toUpperCase()}`
+              : 'REFUND_IN_PROGRESS';
+            refundErrorMessage = null;
+          } else {
+            withdrawalStatus = 'refund_failed';
+            refundProviderStatus = `REFUND_FAILED_HTTP_${refundRes.status}`;
+            const gatewayDesc = refundJson.errors?.[0]?.description;
+            refundErrorMessage =
+              gatewayDesc ||
+              `Gateway Asaas retornou HTTP ${refundRes.status} ao solicitar o estorno. É possível tentar novamente.`;
+          }
+        } catch (err: unknown) {
+          withdrawalStatus = 'refund_failed';
+          refundProviderStatus = 'REFUND_REQUEST_TIMEOUT';
+          refundErrorMessage =
+            err instanceof Error && err.message
+              ? `Falha de comunicação ao solicitar estorno no Asaas: ${err.message}`
+              : 'Tempo limite ou erro de rede ao solicitar estorno no Asaas. É possível tentar novamente.';
+        }
+      }
+
+      const nextAttempts = Number(existingWithdrawal?.refund_attempts || 0) + 1;
+
+      if (isRetryAfterFailure && existingWithdrawal?.id) {
+        let retryRes = await supabase
+          .from('withdrawal_requests')
+          .update({
+            status: withdrawalStatus,
+            refund_provider_id: refundProviderId,
+            refund_provider_status: refundProviderStatus,
+            refund_attempts: nextAttempts,
+            last_refund_error: refundErrorMessage,
+            updated_at: nowIso,
+          })
+          .eq('id', existingWithdrawal.id)
+          .eq('user_id', user.id);
+
+        if (retryRes.error && isMissingVersioningColumnError(retryRes.error)) {
+          retryRes = await supabase
+            .from('withdrawal_requests')
+            .update({
+              status: withdrawalStatus === 'refund_failed' ? 'approved_refund_pending' : withdrawalStatus,
+              refund_provider_id: refundProviderId,
+              refund_provider_status: refundProviderStatus,
+              updated_at: nowIso,
+            })
+            .eq('id', existingWithdrawal.id)
+            .eq('user_id', user.id);
+        }
+
+        if (retryRes.error) {
+          res.status(500).json({
+            ok: false,
+            error: 'Não foi possível atualizar a tentativa de estorno no banco de dados.',
+          });
+          return;
+        }
+      } else {
+        const baseWithdrawalRow = {
+          user_id: user.id,
+          order_id: orderRow.id,
+          course_id: orderRow.course_id,
+          reason: cleanReason,
+          status: withdrawalStatus === 'refund_failed' ? 'approved_refund_pending' : withdrawalStatus,
+          requested_at: nowIso,
+          processed_at: null,
+        };
+
+        let insertRes = await supabase.from('withdrawal_requests').insert({
+          ...baseWithdrawalRow,
+          status: withdrawalStatus,
+          protocol_code: protocolCode,
+          refund_provider_id: refundProviderId,
+          refund_provider_status: refundProviderStatus,
+          refund_attempts: nextAttempts,
+          last_refund_error: refundErrorMessage,
+        });
+
+        if (insertRes.error && isMissingVersioningColumnError(insertRes.error)) {
+          insertRes = await supabase.from('withdrawal_requests').insert(baseWithdrawalRow);
+        }
+
+        if (insertRes.error) {
+          const dup =
+            insertRes.error.code === '23505' || /duplicate/i.test(insertRes.error.message || '');
+          if (dup) {
+            res.status(409).json({
+              ok: false,
+              code: 'ALREADY_REQUESTED',
+              error: 'Solicitação de arrependimento já registrada para este pedido.',
+            });
+            return;
+          }
+          res.status(500).json({
+            ok: false,
+            error: 'Não foi possível registrar a solicitação de arrependimento no banco de dados.',
+          });
+          return;
+        }
+      }
+
+      const { error: orderUpdateErr } = await supabase
+        .from('orders')
+        .update({ status: nextOrderStatus, updated_at: nowIso })
+        .eq('id', orderRow.id)
+        .eq('user_id', user.id);
+
+      if (orderUpdateErr) {
+        res.status(500).json({
+          ok: false,
+          error: 'Protocolo criado, mas falhou ao atualizar o status do pedido.',
+        });
+        return;
+      }
+
+      // Revoga matrícula comercial mantendo intactos assessment_attempts, module_progress e certificates,
+      // desde que não exista outro pedido 'paid' válido para o mesmo (user_id, course_id).
+      let enrollmentRevoked = false;
+      const { data: otherPaidOrders } = await supabase
+        .from('orders')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('course_id', orderRow.course_id)
+        .eq('status', 'paid')
+        .neq('id', orderRow.id)
+        .limit(1);
+
+      if (!Array.isArray(otherPaidOrders) || otherPaidOrders.length === 0) {
+        await supabase
+          .from('student_enrollments')
+          .update({ status: 'canceled', updated_at: nowIso })
+          .eq('user_id', user.id)
+          .eq('course_id', orderRow.course_id);
+        enrollmentRevoked = true;
+      }
+
+      const message =
+        withdrawalStatus === 'refund_failed'
+          ? `Protocolo ${protocolCode} registrado e acesso revogado, porém o gateway Asaas falhou ao iniciar o estorno (${refundErrorMessage || 'erro externo'}). Você pode tentar reenviar ou contatar fervecrgastronomia@gmail.com.`
+          : `Solicitação de arrependimento (Art. 49 do CDC) registrada sob protocolo ${protocolCode}. O estorno está em processamento aguardando confirmação definitiva do Asaas; dúvidas: fervecrgastronomia@gmail.com.`;
+
+      res.json({
+        ok: true,
+        orderId: orderRow.id,
+        protocolCode,
+        status: nextOrderStatus,
+        withdrawalStatus,
+        refundProviderStatus,
+        refundError: refundErrorMessage,
+        enrollmentRevoked,
+        message,
       });
-      return;
+    } finally {
+      inFlightWithdrawals.delete(orderId);
     }
-
-    const { error: orderUpdateErr } = await supabase
-      .from('orders')
-      .update({ status: nextOrderStatus, updated_at: nowIso })
-      .eq('id', orderRow.id)
-      .eq('user_id', user.id);
-
-    if (orderUpdateErr) {
-      res.status(500).json({
-        ok: false,
-        error: 'Protocolo criado, mas falhou ao atualizar o status do pedido.',
-      });
-      return;
-    }
-
-    // Revoga matrícula comercial mantendo intacto o histórico auditável de assessment_attempts e certificates
-    await supabase
-      .from('student_enrollments')
-      .update({ status: 'canceled', updated_at: nowIso })
-      .eq('user_id', user.id)
-      .eq('course_id', orderRow.course_id);
-
-    res.json({
-      ok: true,
-      orderId: orderRow.id,
-      protocolCode,
-      status: nextOrderStatus,
-      withdrawalStatus,
-      message:
-        `Solicitação de arrependimento (Art. 49 do CDC) registrada sob protocolo ${protocolCode}. O acesso ao curso foi revogado e o estorno segue pelo meio de pagamento original; dúvidas: fervecrgastronomia@gmail.com.`,
-    });
   });
 
   // Admin-only financial telemetry, kill-switch visibility, and masked audit summary
@@ -2764,11 +3150,13 @@ export function registerCourseApiRoutes(
 
     const guardTelemetry = financialGuard.getTelemetry();
     const priceCheck = isCoursePriceConfirmedForProduction();
+    const launchLock = evaluateProductionLaunchLock();
     res.setHeader('Cache-Control', 'no-store');
     res.json({
       ok: true,
       financialGuard: guardTelemetry,
       priceConfirmation: priceCheck,
+      launchLock,
       supplierMaskedCpf: maskCpfForLogs(SUPPLIER_IDENTITY.cpf),
       addressPending: SUPPLIER_IDENTITY.addressPending,
       singleSessionActiveCount: singleSessionManager.getActiveCount(),

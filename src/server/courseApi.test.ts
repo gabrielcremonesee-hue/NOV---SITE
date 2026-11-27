@@ -10,9 +10,12 @@ import { singleSessionManager } from './singleSession';
 import { exam } from '../data/courseData';
 
 function sessionHeaders(uid: string, extra: Record<string, string> = {}): Record<string, string> {
+  const active =
+    singleSessionManager.getActiveSession(uid) ||
+    singleSessionManager.claimSession(uid, undefined, 'test-suite');
   return {
     'x-test-user': uid,
-    'x-fervec-session-id': `sess-${uid}-12345678`,
+    'x-fervec-session-id': active.sessionId,
     ...extra,
   };
 }
@@ -204,6 +207,10 @@ function createMockSupabaseDb() {
         },
         eq(col: string, val: unknown) {
           filters.push((r) => r[col] === val);
+          return builder;
+        },
+        neq(col: string, val: unknown) {
+          filters.push((r) => r[col] !== val);
           return builder;
         },
         order(col: string, opts?: { ascending?: boolean }) {
@@ -858,7 +865,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     });
     assert.equal(paidContentRes.status, 200);
 
-    // Test 14: Single-session enforcement rejects missing/dummy header (401) & replaced session via DB + memory (409)
+    // Test 14: Single-session enforcement rejects missing/dummy/forged/cross-user headers (401), preserves same-browser tabs, prevents old-session logout from killing new session, & blocks replaced session via DB + memory (409)
     const missingSidRes = await fetch(`${baseUrl}/api/workspace/state`, {
       headers: { 'x-test-user': 'user-unpaid' },
     });
@@ -871,6 +878,24 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     });
     assert.equal(dummySidRes.status, 401);
 
+    const oldUnpaidSid = sessionHeaders('user-unpaid')['x-fervec-session-id'];
+
+    // Same-browser tab claim with preserveIfValid=true keeps existing valid token intact
+    const sameTabClaim = await fetch(`${baseUrl}/api/session/claim`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-test-user': 'user-unpaid',
+        'x-fervec-session-id': oldUnpaidSid,
+      },
+      body: JSON.stringify({ deviceLabel: 'Same Browser Tab 2', preserveIfValid: true }),
+    });
+    assert.equal(sameTabClaim.status, 200);
+    const sameTabJson = (await sameTabClaim.json()) as Record<string, any>;
+    assert.equal(sameTabJson.sessionId, oldUnpaidSid);
+    assert.equal(sameTabJson.preserved, true);
+
+    // Independent login from Second Browser ignores client-chosen ID and mints new HMAC session token
     const claimNewDevice = await fetch(`${baseUrl}/api/session/claim`, {
       method: 'POST',
       headers: {
@@ -881,15 +906,47 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
       body: JSON.stringify({ deviceLabel: 'Second Browser' }),
     });
     assert.equal(claimNewDevice.status, 200);
+    const claimNewJson = (await claimNewDevice.json()) as Record<string, any>;
+    const claimedNewSid = String(claimNewJson.sessionId || '');
+    assert.notEqual(claimedNewSid, 'sess-new-device-99999');
+    assert.match(claimedNewSid, /^fv1\.[a-f0-9]+\.\d+\.[a-f0-9]{64}$/);
+    assert.equal(claimNewJson.preserved, false);
 
-    // Even after memory cache reset (simulated cold start), DB user_active_sessions rejects old session
+    // Even after memory cache reset (simulated cold start), DB user_active_sessions rejects old session without blind auto-binding
     singleSessionManager.resetForTests();
     const kickedOldSidRes = await fetch(`${baseUrl}/api/workspace/state`, {
-      headers: sessionHeaders('user-unpaid'),
+      headers: {
+        'x-test-user': 'user-unpaid',
+        'x-fervec-session-id': oldUnpaidSid,
+      },
     });
     assert.equal(kickedOldSidRes.status, 409);
     const kickedJson = (await kickedOldSidRes.json()) as Record<string, any>;
     assert.equal(kickedJson.code, 'SESSION_REPLACED_OTHER_DEVICE');
+
+    // Old session calling /api/session/logout MUST NOT terminate the new active session
+    const oldLogoutRes = await fetch(`${baseUrl}/api/session/logout`, {
+      method: 'POST',
+      headers: {
+        'x-test-user': 'user-unpaid',
+        'x-fervec-session-id': oldUnpaidSid,
+      },
+    });
+    assert.equal(oldLogoutRes.status, 200);
+    const oldLogoutJson = (await oldLogoutRes.json()) as Record<string, any>;
+    assert.equal(oldLogoutJson.cleared, false);
+
+    // Cross-user token replay & tampered tokens fail with 401
+    const crossUserTokenRes = await fetch(`${baseUrl}/api/workspace/state`, {
+      headers: { 'x-test-user': 'user-a', 'x-fervec-session-id': claimedNewSid },
+    });
+    assert.equal(crossUserTokenRes.status, 401);
+
+    const tamperedSid = `${claimedNewSid.slice(0, -1)}${claimedNewSid.endsWith('a') ? 'b' : 'a'}`;
+    const tamperedRes = await fetch(`${baseUrl}/api/workspace/state`, {
+      headers: { 'x-test-user': 'user-unpaid', 'x-fervec-session-id': tamperedSid },
+    });
+    assert.equal(tamperedRes.status, 401);
 
     // Test 15: Legal acceptance records acceptance_kind & marketing preferences in DB
     const legalRes = await fetch(`${baseUrl}/api/legal/accept`, {
@@ -897,7 +954,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
       headers: {
         'Content-Type': 'application/json',
         'x-test-user': 'user-unpaid',
-        'x-fervec-session-id': 'sess-new-device-99999',
+        'x-fervec-session-id': claimedNewSid,
       },
       body: JSON.stringify({
         courseSlug: 'massas-italianas',
@@ -919,7 +976,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
       headers: {
         'Content-Type': 'application/json',
         'x-test-user': 'user-unpaid',
-        'x-fervec-session-id': 'sess-new-device-99999',
+        'x-fervec-session-id': claimedNewSid,
       },
       body: JSON.stringify({ reason: 'Desistência dentro de 7 dias' }),
     });
@@ -936,7 +993,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
       headers: {
         'Content-Type': 'application/json',
         'x-test-user': 'user-unpaid',
-        'x-fervec-session-id': 'sess-new-device-99999',
+        'x-fervec-session-id': claimedNewSid,
       },
       body: JSON.stringify({ reason: 'Tentativa duplicada' }),
     });
@@ -949,6 +1006,215 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     assert.ok(db.certificates.some((c) => c.user_id === 'user-a'));
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test('V5 Refund lifecycle: gateway pending/failure/retry/definitive confirmation, concurrency lock, and multi-order enrollment preservation', async () => {
+  const prevAsaasEnv = process.env.ASAAS_ENVIRONMENT;
+  const prevSandboxKey = process.env.ASAAS_SANDBOX_API_KEY;
+  process.env.ASAAS_ENVIRONMENT = 'sandbox';
+  process.env.ASAAS_SANDBOX_API_KEY = '$aact_hmlg_test_refund_key';
+
+  const { db, makeClientForUser } = createMockSupabaseDb();
+  const courseId = '8a3c38ad-d5de-424a-868d-325420b7470b';
+  const nowIso = new Date().toISOString();
+
+  // Seed user-a with TWO valid paid orders (ord-paid-a + ord-paid-a-2) plus enrollment & module progress
+  db.orders[0].paid_at = nowIso;
+  db.orders.push(
+    {
+      id: 'ord-paid-a-2',
+      user_id: 'user-a',
+      course_id: courseId,
+      status: 'paid',
+      amount_cents: 1290,
+      asaas_payment_id: 'pay_seed_a_2',
+      paid_at: nowIso,
+      created_at: nowIso,
+    },
+    {
+      id: 'ord-paid-b-retry',
+      user_id: 'user-b',
+      course_id: courseId,
+      status: 'paid',
+      amount_cents: 1290,
+      asaas_payment_id: 'pay_retry_b',
+      paid_at: nowIso,
+      created_at: nowIso,
+    }
+  );
+  // Make user-b have only 1 paid order inside refund test window
+  db.orders = db.orders.filter((o) => o.id !== 'ord-paid-b');
+  db.student_enrollments.push(
+    {
+      id: 'enr-a',
+      user_id: 'user-a',
+      course_id: courseId,
+      status: 'in_progress',
+      last_module_key: 'carbonara',
+      enrolled_at: nowIso,
+      updated_at: nowIso,
+    },
+    {
+      id: 'enr-b',
+      user_id: 'user-b',
+      course_id: courseId,
+      status: 'in_progress',
+      last_module_key: 'carbonara',
+      enrolled_at: nowIso,
+      updated_at: nowIso,
+    }
+  );
+  db.assessment_attempts.push({
+    id: 'att-b-preserve',
+    user_id: 'user-b',
+    course_id: courseId,
+    module_key: 'carbonara',
+    attempt_type: 'work',
+    score: 83,
+    passed: true,
+    answers: [0, 1, 2, 0, 1, 2],
+    attempted_at: nowIso,
+  });
+
+  let asaasRefundMode: 'fail_once' | 'accept_pending' = 'fail_once';
+  let asaasGetStatusMode: 'REFUND_IN_PROGRESS' | 'REFUNDED' = 'REFUND_IN_PROGRESS';
+  let refundPostCalls = 0;
+
+  const app = express();
+  app.use(express.json());
+  singleSessionManager.resetForTests();
+
+  registerCourseApiRoutes(app, {
+    resolveAuth: async (req) => {
+      const uid = req.headers['x-test-user'] as string | undefined;
+      if (!uid) return null;
+      return {
+        supabase: makeClientForUser(uid) as never,
+        user: {
+          id: uid,
+          email: uid === 'user-a' ? 'ana@fervec.test' : 'bruno@fervec.test',
+          created_at: '2026-11-15T12:00:00.000Z',
+          email_confirmed_at: '2026-11-15T12:05:00.000Z',
+        } as never,
+      };
+    },
+    fetchFn: async (input, init) => {
+      const url = String(input);
+      const method = String(init?.method || 'GET').toUpperCase();
+      if (url.endsWith('/refund') && method === 'POST') {
+        refundPostCalls += 1;
+        await new Promise((r) => setTimeout(r, 40));
+        if (asaasRefundMode === 'fail_once') {
+          return new Response(JSON.stringify({ errors: [{ description: 'Gateway timeout simulado' }] }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(
+          JSON.stringify({ id: 'pay_refund_tx_1', status: 'REFUND_IN_PROGRESS' }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url.includes('/payments/') && method === 'GET') {
+        return new Response(JSON.stringify({ status: asaasGetStatusMode }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('Not Found', { status: 404 });
+    },
+  });
+
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  try {
+    // 1. Gateway failure marks refund_failed (NOT refunded) and allows safe retry under same protocol
+    const [bFail, bConcurrent] = await Promise.all([
+      fetch(`${baseUrl}/api/orders/ord-paid-b-retry/withdraw`, {
+        method: 'POST',
+        headers: sessionHeaders('user-b', { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ reason: 'Teste falha gateway' }),
+      }),
+      fetch(`${baseUrl}/api/orders/ord-paid-b-retry/withdraw`, {
+        method: 'POST',
+        headers: sessionHeaders('user-b', { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ reason: 'Requisição concorrente' }),
+      }),
+    ]);
+
+    const statuses = [bFail.status, bConcurrent.status].sort();
+    assert.deepEqual(statuses, [200, 409]);
+    const okFailResp = bFail.status === 200 ? bFail : bConcurrent;
+    const conflictResp = bFail.status === 409 ? bFail : bConcurrent;
+    const conflictJson = (await conflictResp.json()) as Record<string, any>;
+    assert.equal(conflictJson.code, 'WITHDRAWAL_IN_PROGRESS');
+
+    const failJson = (await okFailResp.json()) as Record<string, any>;
+    assert.equal(failJson.status, 'refund_requested');
+    assert.equal(failJson.withdrawalStatus, 'refund_failed');
+    assert.match(failJson.refundError || '', /Gateway timeout simulado/);
+    const protoB = failJson.protocolCode;
+
+    // 2. Retry after failure succeeds against gateway -> approved_refund_pending (STILL NOT 'refunded'!)
+    asaasRefundMode = 'accept_pending';
+    const bRetryRes = await fetch(`${baseUrl}/api/orders/ord-paid-b-retry/withdraw`, {
+      method: 'POST',
+      headers: sessionHeaders('user-b', { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ reason: 'Reenvio após falha' }),
+    });
+    assert.equal(bRetryRes.status, 200);
+    const bRetryJson = (await bRetryRes.json()) as Record<string, any>;
+    assert.equal(bRetryJson.protocolCode, protoB);
+    assert.equal(bRetryJson.status, 'refund_requested');
+    assert.equal(bRetryJson.withdrawalStatus, 'approved_refund_pending');
+    assert.equal(db.orders.find((o) => o.id === 'ord-paid-b-retry')?.status, 'refund_requested');
+
+    // 3. Read-only status polling while gateway returns REFUND_IN_PROGRESS stays refund_requested / approved_refund_pending
+    asaasGetStatusMode = 'REFUND_IN_PROGRESS';
+    const pollPending = await fetch(`${baseUrl}/api/payments/status/ord-paid-b-retry`, {
+      headers: sessionHeaders('user-b'),
+    });
+    assert.equal(pollPending.status, 200);
+    const pollPendingJson = (await pollPending.json()) as Record<string, any>;
+    assert.equal(pollPendingJson.orderStatus, 'refund_requested');
+    assert.equal(pollPendingJson.withdrawalStatus, 'approved_refund_pending');
+
+    // 4. Read-only status polling once gateway confirms REFUNDED promotes to refunded
+    asaasGetStatusMode = 'REFUNDED';
+    const pollConfirmed = await fetch(`${baseUrl}/api/payments/status/ord-paid-b-retry`, {
+      headers: sessionHeaders('user-b'),
+    });
+    assert.equal(pollConfirmed.status, 200);
+    const pollConfirmedJson = (await pollConfirmed.json()) as Record<string, any>;
+    assert.equal(pollConfirmedJson.orderStatus, 'refunded');
+    assert.equal(pollConfirmedJson.withdrawalStatus, 'refunded');
+    assert.equal(pollConfirmedJson.protocolCode, protoB);
+    assert.equal(db.orders.find((o) => o.id === 'ord-paid-b-retry')?.status, 'refunded');
+
+    // Pedagogical attempts & progress preserved even after refund completion
+    assert.equal(db.assessment_attempts.some((a) => a.id === 'att-b-preserve'), true);
+
+    // 5. Refunding 1 of 2 paid orders for user-a keeps user-a's enrollment active
+    const aWithdrawRes = await fetch(`${baseUrl}/api/orders/ord-paid-a/withdraw`, {
+      method: 'POST',
+      headers: sessionHeaders('user-a', { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ reason: 'Pedido duplicado' }),
+    });
+    assert.equal(aWithdrawRes.status, 200);
+    const aWithdrawJson = (await aWithdrawRes.json()) as Record<string, any>;
+    assert.equal(aWithdrawJson.enrollmentRevoked, false);
+    assert.equal(db.student_enrollments.find((e) => e.user_id === 'user-a')?.status, 'in_progress');
+    assert.ok(refundPostCalls >= 3);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (prevAsaasEnv === undefined) delete process.env.ASAAS_ENVIRONMENT;
+    else process.env.ASAAS_ENVIRONMENT = prevAsaasEnv;
+    if (prevSandboxKey === undefined) delete process.env.ASAAS_SANDBOX_API_KEY;
+    else process.env.ASAAS_SANDBOX_API_KEY = prevSandboxKey;
   }
 });
 

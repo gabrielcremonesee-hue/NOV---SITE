@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 420" fill="none">
+  <rect width="640" height="420" fill="#E8D8BE"/>
+  <rect x="0" y="290" width="640" height="130" fill="#C9A679"/>
+  <!-- Flour dust -->
+  <ellipse cx="320" cy="325" rx="220" ry="62" fill="#F9F3E8" opacity="0.75"/>
+  <!-- Fresh pasta ribbons -->
+  <path d="M140 280c45-38 110-42 180-18 65 22 130 14 175-14" stroke="#E8B94E" stroke-width="14" stroke-linecap="round"/>
+  <path d="M155 302c50-30 115-32 185-10 60 18 120 12 165-12" stroke="#D9A136" stroke-width="12" stroke-linecap="round"/>
+  <path d="M170 322c45-24 105-24 170-6 55 15 108 10 148-8" stroke="#F0C75E" stroke-width="10" stroke-linecap="round"/>
+  <!-- Rolling pin -->
+  <rect x="210" y="138" width="220" height="36" rx="18" transform="rotate(-12 320 156)" fill="#B67E4A" stroke="#6E4420" stroke-width="3"/>
+  <rect x="160" y="168" width="52" height="16" rx="8" transform="rotate(-12 186 176)" fill="#8B582C"/>
+  <rect x="428" y="112" width="52" height="16" rx="8" transform="rotate(-12 454 120)" fill="#8B582C"/>
+  <!-- Tomatoes & basil -->
+  <circle cx="485" cy="340" r="28" fill="#A83D32"/>
+  <circle cx="525" cy="352" r="22" fill="#C24739"/>
+  <path d="M485 312c-4-8-10-10-10-10s6-1 10 4c4-5 10-4 10-4s-6 2-10 10Z" fill="#5D8446"/>
+  <ellipse cx="145" cy="345" rx="34" ry="22" fill="#FFF8EC" stroke="#D9C7AB" stroke-width="3"/>
+  <circle cx="145" cy="345" r="10" fill="#E5A928"/>
+</svg>

@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Allow: /assets/aistudio/fervec_x5f_gastronomia_x5f_documento_x5f_unico__1___1__f38fd1c7.html
+Disallow: /api/
+Disallow: /data/
+Disallow: /private-books/
+Disallow: /private-audit/
+Disallow: /supabase/

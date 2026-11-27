@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 68" fill="none">
+  <!-- Arched oval double-border seal matching the user's Home design -->
+  <path d="M16 42 C16 20, 44 14, 105 14 C166 14, 194 20, 194 42 L194 52 C194 58, 189 62, 182 62 L28 62 C21 62, 16 58, 16 52 Z" fill="#FFF8E8" stroke="#1E140D" stroke-width="2.4"/>
+  <path d="M21 43 C21 24, 48 18.5, 105 18.5 C162 18.5, 189 24, 189 43 L189 51 C189 55, 185 57.5, 180 57.5 L30 57.5 C25 57.5, 21 55, 21 51 Z" fill="none" stroke="#1E140D" stroke-width="1"/>
+  <!-- Chef toque peeking above the arch -->
+  <path d="M84 19 L82 14 C78 13, 76 9.5, 78 6.5 C80 3.5, 84.5 3.5, 87 5 C89.5 1.8, 95 0.8, 105 0.8 C115 0.8, 120.5 1.8, 123 5 C125.5 3.5, 130 3.5, 132 6.5 C134 9.5, 132 13, 128 14 L126 19 Z" fill="#FFFDF8" stroke="#1E140D" stroke-width="2.2" stroke-linejoin="round"/>
+  <path d="M86 17.5 H124" stroke="#B71C22" stroke-width="1.8" stroke-linecap="round"/>
+  <!-- FerveC Typography + dark bottom band for GASTRONOMIA -->
+  <text x="105" y="42" text-anchor="middle" font-family="'Playfair Display', Georgia, serif" font-size="25" font-weight="800" letter-spacing="-0.4" fill="#18100A">Ferve<tspan fill="#A71920">C</tspan></text>
+  <rect x="34" y="45.5" width="142" height="11" rx="3" fill="#18100A"/>
+  <text x="105" y="53.6" text-anchor="middle" font-family="'DM Sans', Arial, sans-serif" font-size="8" font-weight="800" letter-spacing="2.8" fill="#FFF7E4">GASTRONOMIA</text>
+</svg>

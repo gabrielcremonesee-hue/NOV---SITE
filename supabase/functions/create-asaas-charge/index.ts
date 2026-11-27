@@ -131,7 +131,7 @@ async function resolveCourseAuthoritativePrice(
 
     if (row) {
       const dbPrice =
-        typeof row.price_cents === 'number' && Number.isFinite(row.price_cents) && row.price_cents >= 500
+        typeof row.price_cents === 'number' && Number.isFinite(row.price_cents) && row.price_cents >= 100
           ? Math.round(row.price_cents)
           : null;
       const fallbackRef = REFERENCE_COURSE_PRICES_CENTS[courseSlug];
@@ -328,20 +328,26 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ ok: false, error: 'Método não permitido. Utilize GET ou POST.' }, 405, corsHeaders);
   }
 
-  if (
-    environment === 'production' &&
-    Deno.env.get('FERVEC_PRICE_CONFIRMED')?.trim().toLowerCase() !== 'true'
-  ) {
-    return jsonResponse(
-      {
-        ok: false,
-        code: 'PRICE_CONFIRMATION_REQUIRED',
-        error:
-          'Cobranças em produção bloqueadas até a confirmação formal do preço oficial pelo proprietário (FERVEC_PRICE_CONFIRMED=true).',
-      },
-      403,
-      corsHeaders
-    );
+  if (environment === 'production') {
+    const priceConfirmed =
+      Deno.env.get('FERVEC_PRICE_CONFIRMED')?.trim().toLowerCase() === 'true';
+    const launchApproved =
+      Deno.env.get('FERVEC_COMMERCIAL_LAUNCH_APPROVED')?.trim().toLowerCase() === 'true';
+    const legalCleared =
+      Deno.env.get('FERVEC_LEGAL_PENDING_CLEARED')?.trim().toLowerCase() === 'true';
+
+    if (!priceConfirmed || !launchApproved || !legalCleared) {
+      return jsonResponse(
+        {
+          ok: false,
+          code: 'COMMERCIAL_LAUNCH_LOCKED',
+          error:
+            'Cobranças em produção seguem bloqueadas até a liberação formal das pendências jurídicas (endereço físico, prazo de acesso) e aprovação comercial (FERVEC_PRICE_CONFIRMED=true, FERVEC_COMMERCIAL_LAUNCH_APPROVED=true e FERVEC_LEGAL_PENDING_CLEARED=true).',
+        },
+        403,
+        corsHeaders
+      );
+    }
   }
 
   const apiKey = readAsaasApiKey(environment);

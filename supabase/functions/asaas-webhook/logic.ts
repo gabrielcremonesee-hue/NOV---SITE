@@ -31,6 +31,8 @@ export interface AsaasWebhookPayment {
   bankSlipUrl?: string | null;
 }
 
+export type WebhookRefundState = 'processing' | 'failed' | 'confirmed' | null;
+
 export interface ParsedAsaasWebhook {
   eventId: string;
   event: string;
@@ -39,6 +41,7 @@ export interface ParsedAsaasWebhook {
   orderStatus: InternalOrderStatus;
   shouldGrantAccess: boolean;
   shouldRevokeAccess: boolean;
+  refundState: WebhookRefundState;
 }
 
 const UUID_REGEX =
@@ -110,6 +113,7 @@ export function mapAsaasEventToOrderStatus(
   orderStatus: InternalOrderStatus;
   shouldGrantAccess: boolean;
   shouldRevokeAccess: boolean;
+  refundState: WebhookRefundState;
 } {
   const evt = event.trim().toUpperCase();
   const payStatus = (paymentStatus || '').trim().toUpperCase();
@@ -123,13 +127,34 @@ export function mapAsaasEventToOrderStatus(
       orderStatus: 'paid',
       shouldGrantAccess: true,
       shouldRevokeAccess: false,
+      refundState: null,
     };
   }
 
+  // Em processamento no Asaas: revoga acesso comercial conservadoramente, mas NÃO marca como refunded antes da confirmação definitiva
+  if (evt === 'PAYMENT_REFUND_IN_PROGRESS') {
+    return {
+      orderStatus: 'refund_requested',
+      shouldGrantAccess: false,
+      shouldRevokeAccess: true,
+      refundState: 'processing',
+    };
+  }
+
+  // Falha ou recusa no estorno: mantém em análise/falha de reembolso e não libera nem conclui estorno indevidamente
+  if (evt === 'PAYMENT_REFUND_DENIED' || evt === 'PAYMENT_REFUND_FAILED') {
+    return {
+      orderStatus: 'refund_requested',
+      shouldGrantAccess: false,
+      shouldRevokeAccess: false,
+      refundState: 'failed',
+    };
+  }
+
+  // Confirmação definitiva de estorno / chargeback
   if (
     evt === 'PAYMENT_REFUNDED' ||
     evt === 'PAYMENT_PARTIALLY_REFUNDED' ||
-    evt === 'PAYMENT_REFUND_IN_PROGRESS' ||
     evt === 'PAYMENT_CHARGEBACK_REQUESTED' ||
     evt === 'PAYMENT_CHARGEBACK_DISPUTE'
   ) {
@@ -137,6 +162,7 @@ export function mapAsaasEventToOrderStatus(
       orderStatus: 'refunded',
       shouldGrantAccess: false,
       shouldRevokeAccess: true,
+      refundState: 'confirmed',
     };
   }
 
@@ -148,6 +174,7 @@ export function mapAsaasEventToOrderStatus(
       orderStatus: 'canceled',
       shouldGrantAccess: false,
       shouldRevokeAccess: true,
+      refundState: null,
     };
   }
 
@@ -156,6 +183,7 @@ export function mapAsaasEventToOrderStatus(
       orderStatus: 'overdue',
       shouldGrantAccess: false,
       shouldRevokeAccess: false,
+      refundState: null,
     };
   }
 
@@ -164,6 +192,25 @@ export function mapAsaasEventToOrderStatus(
       orderStatus: 'paid',
       shouldGrantAccess: true,
       shouldRevokeAccess: false,
+      refundState: null,
+    };
+  }
+
+  if (payStatus === 'REFUND_REQUESTED' || payStatus === 'REFUND_IN_PROGRESS') {
+    return {
+      orderStatus: 'refund_requested',
+      shouldGrantAccess: false,
+      shouldRevokeAccess: true,
+      refundState: 'processing',
+    };
+  }
+
+  if (payStatus === 'REFUND_DENIED' || payStatus === 'REFUND_FAILED') {
+    return {
+      orderStatus: 'refund_requested',
+      shouldGrantAccess: false,
+      shouldRevokeAccess: false,
+      refundState: 'failed',
     };
   }
 
@@ -172,6 +219,7 @@ export function mapAsaasEventToOrderStatus(
       orderStatus: 'refunded',
       shouldGrantAccess: false,
       shouldRevokeAccess: true,
+      refundState: 'confirmed',
     };
   }
 
@@ -180,6 +228,7 @@ export function mapAsaasEventToOrderStatus(
       orderStatus: 'overdue',
       shouldGrantAccess: false,
       shouldRevokeAccess: false,
+      refundState: null,
     };
   }
 
@@ -187,6 +236,7 @@ export function mapAsaasEventToOrderStatus(
     orderStatus: 'pending',
     shouldGrantAccess: false,
     shouldRevokeAccess: false,
+    refundState: null,
   };
 }
 
@@ -300,6 +350,7 @@ export function parseAsaasWebhookPayload(
       orderStatus: mapping.orderStatus,
       shouldGrantAccess: mapping.shouldGrantAccess,
       shouldRevokeAccess: mapping.shouldRevokeAccess,
+      refundState: mapping.refundState,
     },
   };
 }
@@ -397,10 +448,21 @@ export interface WebhookRepository {
     updatedAt: string;
   }): Promise<void>;
   syncEnrollmentAccess(params: {
+    orderId?: string;
     userId: string;
     courseId: string;
     grantAccess: boolean;
     revokeAccess: boolean;
+    updatedAt: string;
+  }): Promise<void>;
+  syncWithdrawalStatus?(params: {
+    orderId: string;
+    userId: string;
+    status: 'approved_refund_pending' | 'refund_failed' | 'refunded';
+    refundProviderId?: string | null;
+    refundProviderStatus?: string | null;
+    errorMessage?: string | null;
+    processedAt?: string | null;
     updatedAt: string;
   }): Promise<void>;
   notifyPaymentConfirmed?(params: {
@@ -580,6 +642,8 @@ export async function processAsaasWebhook(params: {
     const lockedTerminalOrder = order.status === 'refunded' || order.status === 'canceled';
     const withdrawalRequested = order.status === 'refund_requested';
     const effectiveGrantAccess = webhook.shouldGrantAccess && !lockedTerminalOrder && !withdrawalRequested;
+    const effectiveRevokeAccess =
+      webhook.shouldRevokeAccess && !lockedTerminalOrder && webhook.refundState !== 'failed';
 
     const paidAt = effectiveGrantAccess
       ? order.paid_at ||
@@ -588,14 +652,31 @@ export async function processAsaasWebhook(params: {
         nowIso
       : order.paid_at ?? null;
 
-    // Não regride um pedido já pago/em arrependimento em eventos tardios não-reembolso, nem regride refunded para paid
-    const nextStatus: InternalOrderStatus = lockedTerminalOrder
-      ? (order.status as InternalOrderStatus)
-      : withdrawalRequested && !webhook.shouldRevokeAccess
-        ? 'refund_requested'
-        : order.status === 'paid' && !webhook.shouldRevokeAccess
-          ? 'paid'
-          : webhook.orderStatus;
+    // Não regride um pedido terminal, nem conclui estorno antes de confirmação definitiva no Asaas
+    let nextStatus: InternalOrderStatus;
+    if (lockedTerminalOrder) {
+      nextStatus = order.status as InternalOrderStatus;
+    } else if (withdrawalRequested) {
+      if (webhook.refundState === 'confirmed') {
+        nextStatus = 'refunded';
+      } else if (webhook.orderStatus === 'canceled') {
+        nextStatus = 'canceled';
+      } else {
+        nextStatus = 'refund_requested';
+      }
+    } else if (order.status === 'paid') {
+      if (webhook.refundState === 'confirmed') {
+        nextStatus = 'refunded';
+      } else if (webhook.refundState === 'processing' || webhook.refundState === 'failed') {
+        nextStatus = 'refund_requested';
+      } else if (webhook.orderStatus === 'canceled') {
+        nextStatus = 'canceled';
+      } else {
+        nextStatus = 'paid';
+      }
+    } else {
+      nextStatus = webhook.orderStatus;
+    }
 
     const updatedOrder = await params.repo.updateOrderStatus({
       orderId: order.id,
@@ -612,12 +693,35 @@ export async function processAsaasWebhook(params: {
       updatedAt: nowIso,
     });
 
-    if (effectiveGrantAccess || webhook.shouldRevokeAccess) {
+    if (effectiveGrantAccess || effectiveRevokeAccess) {
       await params.repo.syncEnrollmentAccess({
+        orderId: order.id,
         userId: order.user_id,
         courseId: order.course_id,
         grantAccess: effectiveGrantAccess,
-        revokeAccess: webhook.shouldRevokeAccess,
+        revokeAccess: effectiveRevokeAccess,
+        updatedAt: nowIso,
+      });
+    }
+
+    if (!lockedTerminalOrder && webhook.refundState !== null && params.repo.syncWithdrawalStatus) {
+      const withdrawalStatus =
+        webhook.refundState === 'confirmed'
+          ? 'refunded'
+          : webhook.refundState === 'failed'
+            ? 'refund_failed'
+            : 'approved_refund_pending';
+      await params.repo.syncWithdrawalStatus({
+        orderId: order.id,
+        userId: order.user_id,
+        status: withdrawalStatus,
+        refundProviderId: webhook.payment.id,
+        refundProviderStatus: webhook.payment.status || webhook.event,
+        errorMessage:
+          webhook.refundState === 'failed'
+            ? `Estorno recusado ou falhou no gateway (${webhook.event}${webhook.payment.status ? `: ${webhook.payment.status}` : ''}).`
+            : null,
+        processedAt: webhook.refundState === 'confirmed' ? nowIso : null,
         updatedAt: nowIso,
       });
     }
@@ -630,7 +734,7 @@ export async function processAsaasWebhook(params: {
     });
 
     if (
-      webhook.shouldGrantAccess &&
+      effectiveGrantAccess &&
       order.status !== 'paid' &&
       params.repo.notifyPaymentConfirmed
     ) {
@@ -664,8 +768,9 @@ export async function processAsaasWebhook(params: {
         event: webhook.event,
         orderId: updatedOrder?.id ?? order.id,
         orderStatus: updatedOrder?.status ?? nextStatus,
+        refundState: webhook.refundState,
         accessGranted: effectiveGrantAccess,
-        accessRevoked: webhook.shouldRevokeAccess,
+        accessRevoked: effectiveRevokeAccess,
       },
     };
   } catch (err: unknown) {

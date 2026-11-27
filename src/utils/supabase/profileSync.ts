@@ -352,6 +352,7 @@ export async function registerOrUpdateSupabaseProfile(
             emailConfirmed: Boolean(signInAttempt.data.user.email_confirmed_at),
           };
           await tryUpsertProfilesTable(signInAttempt.data.user.id, finalProfile);
+          await claimActiveServerSession({ forceNew: true }).catch(() => false);
           saveProfile(finalProfile);
           return {
             ok: true,
@@ -416,7 +417,7 @@ export async function registerOrUpdateSupabaseProfile(
       };
       if (hasSession) {
         await tryUpsertProfilesTable(user.id, finalProfile);
-        await claimActiveServerSession().catch(() => false);
+        await claimActiveServerSession({ forceNew: true }).catch(() => false);
       }
       saveProfile(finalProfile);
       return {
@@ -493,7 +494,7 @@ export async function signInSupabaseAccount(
       await tryUpsertProfilesTable(data.user.id, mapped);
     }
 
-    await claimActiveServerSession().catch(() => false);
+    await claimActiveServerSession({ forceNew: true }).catch(() => false);
     saveProfile(mapped);
     return { ok: true, profile: mapped };
   } catch {
@@ -575,7 +576,7 @@ export async function verifySupabaseSignupCode(
     if (!dbRow) {
       await tryUpsertProfilesTable(data.user.id, mapped);
     }
-    await claimActiveServerSession().catch(() => false);
+    await claimActiveServerSession({ forceNew: true }).catch(() => false);
     saveProfile(mapped);
     return { ok: true, profile: mapped };
   } catch {
