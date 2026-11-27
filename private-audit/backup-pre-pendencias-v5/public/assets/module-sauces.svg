@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" fill="none">
+  <rect width="600" height="400" fill="#F2E7D6"/>
+  <rect x="0" y="290" width="600" height="110" fill="#D3BC9E"/>
+  <!-- Left pan: Pomodoro -->
+  <circle cx="190" cy="205" r="95" fill="#463E38" stroke="#2B2420" stroke-width="5"/>
+  <circle cx="190" cy="205" r="78" fill="#C43B2E"/>
+  <path d="M182 182c12-14 28-10 30 0-10 8-20 8-30 0Z" fill="#5B8242"/>
+  <rect x="65" y="196" width="52" height="16" rx="8" fill="#382F29"/>
+  <!-- Right pan: Burro e Salvia -->
+  <circle cx="410" cy="205" r="95" fill="#463E38" stroke="#2B2420" stroke-width="5"/>
+  <circle cx="410" cy="205" r="78" fill="#F2C95D"/>
+  <path d="M378 196c14-14 34-8 36 4-12 8-26 8-36-4ZM412 222c14-14 32-8 34 4-12 8-24 8-34-4Z" fill="#638748"/>
+  <rect x="483" y="196" width="52" height="16" rx="8" fill="#382F29"/>
+  <text x="190" y="335" text-anchor="middle" font-family="Georgia, serif" font-size="16" font-weight="700" fill="#A83D32">Pomodoro</text>
+  <text x="410" y="335" text-anchor="middle" font-family="Georgia, serif" font-size="16" font-weight="700" fill="#697454">Burro e Salvia</text>
+</svg>

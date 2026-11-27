@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 420" fill="none">
+  <rect width="640" height="420" fill="#ECE0CE"/>
+  <rect x="440" y="200" width="155" height="22" rx="11" fill="#382F29"/>
+  <circle cx="295" cy="210" r="148" fill="#463E38" stroke="#2B2420" stroke-width="6"/>
+  <circle cx="295" cy="210" r="126" fill="#F0C75E"/>
+  <path d="M202 202c46-32 132-34 186-2M206 226c48-24 134-24 180 4M224 182c42-18 108-18 152 0" stroke="#D49A2B" stroke-width="7" stroke-linecap="round"/>
+  <rect x="255" y="185" width="22" height="14" rx="3" transform="rotate(14 255 185)" fill="#A83D32"/>
+  <rect x="322" y="198" width="20" height="14" rx="3" transform="rotate(-14 322 198)" fill="#9B3328"/>
+  <rect x="285" y="226" width="22" height="14" rx="3" fill="#A83D32"/>
+  <!-- Steam wisps showing gentle residual heat -->
+  <path d="M245 120c-8-14 8-24 0-38M295 112c-8-14 8-24 0-38M345 120c-8-14 8-24 0-38" stroke="#FFFCF6" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
+</svg>

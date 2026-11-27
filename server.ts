@@ -34,16 +34,16 @@ function isDevLocalAuthEnabled(): boolean {
 
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: blob: https://*.openstreetmap.org https://tiles.openfreemap.org",
-  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://tiles.openfreemap.org https://*.openfreemap.org https://overpass-api.de https://overpass.kumi.systems https://nominatim.openstreetmap.org https://tile.openstreetmap.org https://fonts.googleapis.com https://fonts.gstatic.com",
-  "worker-src 'self' blob:",
+  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://tiles.openfreemap.org https://*.openfreemap.org https://overpass-api.de https://overpass.kumi.systems https://nominatim.openstreetmap.org https://tile.openstreetmap.org https://fonts.googleapis.com https://fonts.gstatic.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
+  "worker-src 'self' blob: https://cdnjs.cloudflare.com",
   "frame-src 'self' blob:",
   "media-src 'self' data: blob:",
   "object-src 'none'",
-  "frame-ancestors 'self'",
+  "frame-ancestors 'self' https://aistudio.google.com https://*.google.com https://*.googleusercontent.com https://*.run.app",
   "base-uri 'self'",
   "form-action 'self'",
 ].join('; ');
@@ -194,7 +194,6 @@ export function createFervecExpressApp(deps?: ServerAppDeps): express.Express {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('Permissions-Policy', 'microphone=(), camera=()');
-    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
 
     if (req.path.startsWith('/api/')) {

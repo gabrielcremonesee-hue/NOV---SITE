@@ -126,6 +126,18 @@ async function ensureLibraryBooted(action: EnvOptions['libraryAction'] = 'defaul
         .catch((err) => {
           libraryLoadingPromise = null;
           console.error('[FerveC Portal] Falha ao carregar Biblioteca Interativa:', err);
+          const appContainer = document.querySelector('#library-app-root #app');
+          if (appContainer) {
+            appContainer.innerHTML =
+              '<div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;font-family:Plus Jakarta Sans,sans-serif;color:#2f2014;">' +
+              '<h2 style="margin:0;font-size:22px;">Não foi possível carregar a Biblioteca Interativa</h2>' +
+              '<p style="margin:0;max-width:440px;color:#5e4835;">Verifique sua conexão e tente novamente ou volte ao portal principal.</p>' +
+              '<button type="button" id="fervec-library-back-btn" style="padding:10px 18px;border-radius:999px;border:0;background:#98151b;color:#fff;font-weight:700;cursor:pointer;">Voltar ao portal</button>' +
+              '</div>';
+            document
+              .getElementById('fervec-library-back-btn')
+              ?.addEventListener('click', () => switchEnvironment('site'));
+          }
         });
     }
     await libraryLoadingPromise;
@@ -233,6 +245,15 @@ export function initEnvironmentController(): void {
       initialResolution.libraryEntry === 'auth' ? 'auth-login' : 'demo';
     void ensureLibraryBooted(entryAction);
   }
+
+  window.addEventListener('hashchange', () => {
+    if (currentEnv === 'library') {
+      const next = resolveInitialEnvironment(window.location.search, window.location.hash);
+      if (next.env === 'site' && window.location.hash.startsWith('#/')) {
+        switchEnvironment('site');
+      }
+    }
+  });
 }
 
 export function subscribeEnvironment(cb: (env: ActiveEnvironment) => void): () => void {

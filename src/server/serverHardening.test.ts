@@ -31,10 +31,14 @@ test('serverHardening: CSP, X-Robots-Tag, TTS kill-switch, dev-auth gate, /api/l
   const baseUrl = `http://127.0.0.1:${port}`;
 
   try {
-    // 1. /api/legal/documents sets CSP + X-Robots-Tag
+    // 1. /api/legal/documents sets CSP (allowing AI Studio iframe + Biblioteca PDF.js) + X-Robots-Tag, without X-Frame-Options: SAMEORIGIN
     const legalRes = await fetch(`${baseUrl}/api/legal/documents`);
     assert.equal(legalRes.status, 200);
-    assert.ok(legalRes.headers.get('content-security-policy')?.includes("default-src 'self'"));
+    const csp = legalRes.headers.get('content-security-policy') || '';
+    assert.ok(csp.includes("default-src 'self'"));
+    assert.ok(csp.includes('https://aistudio.google.com'));
+    assert.ok(csp.includes('https://cdnjs.cloudflare.com'));
+    assert.equal(legalRes.headers.get('x-frame-options'), null);
     assert.equal(legalRes.headers.get('x-robots-tag'), 'noindex, nofollow, noarchive');
 
     // 2. /api/auth/register blocks dev-local auth when FERVEC_ENABLE_DEV_LOCAL_AUTH !== 'true'

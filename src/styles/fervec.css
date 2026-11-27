@@ -10555,7 +10555,9 @@ body:has(.home-page) .chef-chat-root {
   color: #d6c2a5;
 }
 .cockpit-outside-meta .local-note,
-.cert-outside-meta .local-note {
+.cert-outside-meta .local-note,
+.cockpit-outside-meta .footer-supplier-line,
+.cert-outside-meta .footer-supplier-line {
   color: #ccb89c;
   border-top-color: rgba(213, 186, 142, 0.25);
 }

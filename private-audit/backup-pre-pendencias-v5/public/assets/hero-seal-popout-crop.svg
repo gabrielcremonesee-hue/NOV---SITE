@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 190" fill="none">
+  <defs>
+    <radialGradient id="sealGold" cx="42%" cy="34%" r="68%">
+      <stop offset="0%" stop-color="#FFE687"/>
+      <stop offset="55%" stop-color="#EDC043"/>
+      <stop offset="100%" stop-color="#BA7D14"/>
+    </radialGradient>
+    <linearGradient id="ribbonRed" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#C91D26"/>
+      <stop offset="100%" stop-color="#870D14"/>
+    </linearGradient>
+  </defs>
+  <!-- Crimson swallowtail ribbons -->
+  <path d="M62 126 L44 176 L69 164 L82 182 L90 138 Z" fill="url(#ribbonRed)" stroke="#5E080D" stroke-width="1.2"/>
+  <path d="M118 126 L136 176 L111 164 L98 182 L90 138 Z" fill="url(#ribbonRed)" stroke="#5E080D" stroke-width="1.2"/>
+  <!-- Scalloped 18-point starburst seal -->
+  <path d="M90 10 L102 18 L116 14 L125 25 L139 26 L144 39 L157 45 L157 59 L167 69 L162 82 L168 95 L159 106 L160 120 L147 127 L143 140 L129 142 L120 153 L106 150 L94 157 L86 157 L74 150 L60 153 L51 142 L37 140 L33 127 L20 120 L21 106 L12 95 L18 82 L13 69 L23 59 L23 45 L36 39 L41 26 L55 25 L64 14 L78 18 Z" fill="url(#sealGold)" stroke="#9A640D" stroke-width="2"/>
+  <circle cx="90" cy="84" r="57" fill="#F8D264" stroke="#B47A16" stroke-width="1.8"/>
+  <circle cx="90" cy="84" r="51" fill="none" stroke="#8E5B0E" stroke-width="1" stroke-dasharray="3 2.5"/>
+  <!-- Mortarboard graduation cap -->
+  <path d="M90 42 L120 55 L90 68 L60 55 Z" fill="#1F140C"/>
+  <path d="M72 62 V73 C72 78, 108 78, 108 73 V62 L90 70 Z" fill="#2C1D13"/>
+  <path d="M114 58 V74" stroke="#1F140C" stroke-width="2.2" stroke-linecap="round"/>
+  <circle cx="114" cy="76" r="2.6" fill="#9E1B22"/>
+  <!-- Seal text -->
+  <text x="90" y="96" text-anchor="middle" font-family="'Playfair Display', Georgia, serif" font-size="14.5" font-weight="800" fill="#1D120A">Certificado</text>
+  <text x="90" y="112" text-anchor="middle" font-family="'Playfair Display', Georgia, serif" font-size="11.5" font-weight="700" fill="#3B2513">de Conclusão</text>
+</svg>

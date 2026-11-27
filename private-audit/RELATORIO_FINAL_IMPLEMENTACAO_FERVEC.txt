@@ -80,10 +80,10 @@ Todas as pendências executáveis localmente foram implementadas e verificadas s
 - Pacote limpo de release (sem `node_modules`, `.git`, `.env`, arquivos temporários ou `private-audit`):
   `private-audit/fervec-gastronomia-release-20261127.zip`
   - Arquivos empacotados: 423 arquivos (inclui código-fonte, `dist/`, `server.ts`, `server.js`, `app.js`, `lib/`, `public/`, `uploads/`, `data/fervec-db.json`, `private-books/`, `supabase/`, `.env.example`, manifestos e configurações).
-  - Tamanho do ZIP: 48.683.294 bytes (~46,4 MB).
+  - Tamanho do ZIP: 48.684.469 bytes (~46,4 MB).
   - Teste de integridade ZIP (`zipfile.testzip()`): `None` (sem arquivos corrompidos).
 - Assinatura SHA-256 verificada (`private-audit/fervec-gastronomia-release-20261127.zip.sha256`):
-  `9259aa97c0bd36a6edf6fbbc3166ed260530159d66f48b161aab6ee7b062a586`
+  `a7412ba8b1815b19488b8b191b029ec1ad91e776f974cbe6ed540a16d4a58035`
 
 ================================================================================
 4. PENDÊNCIAS EXTERNAS E CONFIRMAÇÕES OBRIGATÓRIAS ANTES DA ABERTURA COMERCIAL
