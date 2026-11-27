@@ -5,6 +5,7 @@ import type { User } from '@supabase/supabase-js';
 import { runAsaasConnectionAudit } from './asaasAudit.ts';
 import { registerCourseApiRoutes } from './courseApi.ts';
 import { resetDeveloperLatchForTests } from './developerAuth.ts';
+import { singleSessionManager } from './singleSession.ts';
 
 test('runAsaasConnectionAudit reports disconnected and missing settings when Asaas credentials are absent', async () => {
   const report = await runAsaasConnectionAudit({
@@ -137,6 +138,7 @@ test('runAsaasConnectionAudit detects auth_error on 401 and sandbox mode from sa
 
 test('GET /api/admin/asaas-audit enforces authentication (401), allows fervecrgastronomia@gmail.com (200), and blocks students & revoked gabrielcremonesee@gmail.com (403)', async () => {
   resetDeveloperLatchForTests();
+  singleSessionManager.resetForTests();
   const app = express();
   app.use(express.json());
 
@@ -223,17 +225,17 @@ test('GET /api/admin/asaas-audit enforces authentication (401), allows fervecrga
     assert.equal(unauthRes.status, 401);
 
     const studentRes = await fetch(`${baseUrl}/api/admin/asaas-audit`, {
-      headers: { 'x-test-role': 'student' },
+      headers: { 'x-test-role': 'student', 'x-fervec-session-id': 'sess-student-123456' },
     });
     assert.equal(studentRes.status, 403);
 
     const revokedRes = await fetch(`${baseUrl}/api/admin/asaas-audit`, {
-      headers: { 'x-test-role': 'revoked_admin' },
+      headers: { 'x-test-role': 'revoked_admin', 'x-fervec-session-id': 'sess-revoked-123456' },
     });
     assert.equal(revokedRes.status, 403);
 
     const adminRes = await fetch(`${baseUrl}/api/admin/asaas-audit`, {
-      headers: { 'x-test-role': 'admin' },
+      headers: { 'x-test-role': 'admin', 'x-fervec-session-id': 'sess-admin-123456' },
     });
     assert.equal(adminRes.status, 200);
     const body = (await adminRes.json()) as { ok: boolean; connectionStatus: string };

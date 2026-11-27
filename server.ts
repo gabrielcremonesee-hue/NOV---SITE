@@ -23,6 +23,30 @@ import { resolveDeveloperCertificateAdmin } from './src/server/developerAuth.ts'
 import { syncPrimaryAdminAccount } from './src/server/primaryAdminSync.ts';
 import { financialGuard, getProgrammedChefReply } from './src/server/financialGuard.ts';
 import { singleSessionManager } from './src/server/singleSession.ts';
+import { createRateLimitMiddleware } from './src/server/rateLimit.ts';
+
+function isDevLocalAuthEnabled(): boolean {
+  return (
+    process.env.NODE_ENV !== 'production' &&
+    String(process.env.FERVEC_ENABLE_DEV_LOCAL_AUTH || '').trim().toLowerCase() === 'true'
+  );
+}
+
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com data:",
+  "img-src 'self' data: blob: https://*.openstreetmap.org https://tiles.openfreemap.org",
+  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://tiles.openfreemap.org https://*.openfreemap.org https://overpass-api.de https://overpass.kumi.systems https://nominatim.openstreetmap.org https://tile.openstreetmap.org https://fonts.googleapis.com https://fonts.gstatic.com",
+  "worker-src 'self' blob:",
+  "frame-src 'self' blob:",
+  "media-src 'self' data: blob:",
+  "object-src 'none'",
+  "frame-ancestors 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join('; ');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -150,11 +174,32 @@ export function createFervecExpressApp(deps?: ServerAppDeps): express.Express {
   const bookPath = deps?.privateBookPath || PRIVATE_BOOK_PATH;
   const resolveSupa = deps?.resolveSupabaseAuth || resolveAuthenticatedSupabaseUser;
 
+  const apiWriteRateLimiter = createRateLimitMiddleware({
+    windowMs: 60_000,
+    maxRequests: 45,
+    name: 'api-write',
+  }).middleware;
+  const authRateLimiter = createRateLimitMiddleware({
+    windowMs: 60_000,
+    maxRequests: 25,
+    name: 'auth',
+  }).middleware;
+  const ttsChatRateLimiter = createRateLimitMiddleware({
+    windowMs: 60_000,
+    maxRequests: 35,
+    name: 'tts-chat',
+  }).middleware;
+
   app.use((req: Request, res: Response, next: NextFunction) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('Permissions-Policy', 'microphone=(), camera=()');
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
+
+    if (req.path.startsWith('/api/')) {
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+    }
 
     const origin = String(req.headers.origin || '').trim();
     if (origin && req.path.startsWith('/api/')) {
@@ -182,6 +227,13 @@ export function createFervecExpressApp(deps?: ServerAppDeps): express.Express {
   });
 
   app.use(express.json({ limit: '4mb' }));
+  app.use('/api/auth', authRateLimiter);
+  app.use('/api/coupons', apiWriteRateLimiter);
+  app.use('/api/legal', apiWriteRateLimiter);
+  app.use('/api/orders', apiWriteRateLimiter);
+  app.use('/api/assessments', apiWriteRateLimiter);
+  app.use('/api/chat', ttsChatRateLimiter);
+  app.use('/api/tts', ttsChatRateLimiter);
   app.use(supabaseSessionMiddleware);
 
   // --- Site FerveC (Supabase Config, Health, Courses, Payments & Certificates) ---
@@ -243,15 +295,38 @@ export function createFervecExpressApp(deps?: ServerAppDeps): express.Express {
       authenticated = true;
       const { supabase, user } = supaAuth;
       const rawSid = String(req.headers['x-fervec-session-id'] || '').trim();
-      if (rawSid) {
-        const memCheck = singleSessionManager.verifyOrBindSession(user.id, rawSid);
-        if (!memCheck.ok) {
+      const dummySid = rawSid === 'server-session' || rawSid === 'browser-session' || rawSid === 'guest';
+      if (!rawSid || rawSid.length < 8 || dummySid) {
+        res.status(401).json({
+          code: 'SESSION_REQUIRED',
+          error: 'Identificador de sessão ativa obrigatório.',
+        });
+        return;
+      }
+      try {
+        const { data: activeSess } = await supabase
+          .from('user_active_sessions')
+          .select('session_id')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (activeSess && typeof activeSess.session_id === 'string' && activeSess.session_id !== rawSid) {
+          singleSessionManager.claimSession(user.id, activeSess.session_id);
           res.status(409).json({
             code: 'SESSION_REPLACED_OTHER_DEVICE',
             error: 'Sessão encerrada em outro dispositivo.',
           });
           return;
         }
+      } catch {
+        // Optional when user_active_sessions isn't present in test mocks
+      }
+      const memCheck = singleSessionManager.verifyOrBindSession(user.id, rawSid);
+      if (!memCheck.ok) {
+        res.status(memCheck.code === 'SESSION_REQUIRED' ? 401 : 409).json({
+          code: memCheck.code === 'SESSION_REQUIRED' ? 'SESSION_REQUIRED' : 'SESSION_REPLACED_OTHER_DEVICE',
+          error: memCheck.message,
+        });
+        return;
       }
 
       const { data: profileRow } = await supabase
@@ -301,7 +376,7 @@ export function createFervecExpressApp(deps?: ServerAppDeps): express.Express {
             enrStatus === 'completed';
         }
       }
-    } else {
+    } else if (deps?.dbPath || isDevLocalAuthEnabled()) {
       const token = readBearerToken(req);
       if (token) {
         const sess = activeDb.getSession(token);
@@ -381,8 +456,19 @@ export function createFervecExpressApp(deps?: ServerAppDeps): express.Express {
   app.get('/api/library/book', handleLibraryBookRequest);
   app.head('/api/library/book', handleLibraryBookRequest);
 
-  // --- Biblioteca Interativa Persistent Database Endpoints (Auth + User Data) ---
+  // --- Biblioteca Interativa Dev-Only Local Database Endpoints (Gated behind FERVEC_ENABLE_DEV_LOCAL_AUTH=true) ---
+  const ensureDevLocalAuth = (res: Response): boolean => {
+    if (deps?.dbPath || isDevLocalAuthEnabled()) return true;
+    res.status(403).json({
+      ok: false,
+      code: 'DEV_AUTH_DISABLED',
+      error: 'Autenticação local de desenvolvimento desativada. Utilize o fluxo oficial do Supabase.',
+    });
+    return false;
+  };
+
   app.post('/api/auth/register', (req: Request, res: Response) => {
+    if (!ensureDevLocalAuth(res)) return;
     const { name = '', email = '', password = '', age = undefined, initialData = {} } = req.body || {};
     const result = activeDb.registerUser({ name, email, password, age, initialData });
     if (!result.ok) {
@@ -397,6 +483,7 @@ export function createFervecExpressApp(deps?: ServerAppDeps): express.Express {
   });
 
   app.post('/api/auth/login', (req: Request, res: Response) => {
+    if (!ensureDevLocalAuth(res)) return;
     const { email = '', password = '' } = req.body || {};
     const result = activeDb.loginUser({ email, password });
     if (!result.ok) {
@@ -411,6 +498,7 @@ export function createFervecExpressApp(deps?: ServerAppDeps): express.Express {
   });
 
   app.get('/api/auth/session', (req: Request, res: Response) => {
+    if (!ensureDevLocalAuth(res)) return;
     const token = readBearerToken(req);
     const result = activeDb.getSession(token);
     if (!result.ok) {
@@ -420,12 +508,14 @@ export function createFervecExpressApp(deps?: ServerAppDeps): express.Express {
   });
 
   app.post('/api/auth/logout', (req: Request, res: Response) => {
+    if (!ensureDevLocalAuth(res)) return;
     const token = readBearerToken(req);
     activeDb.logoutSession(token);
     return res.json({ ok: true });
   });
 
   app.get('/api/user/data', (req: Request, res: Response) => {
+    if (!ensureDevLocalAuth(res)) return;
     const token = readBearerToken(req);
     const result = activeDb.getSession(token);
     if (!result.ok) {
@@ -435,6 +525,7 @@ export function createFervecExpressApp(deps?: ServerAppDeps): express.Express {
   });
 
   app.put('/api/user/data', (req: Request, res: Response) => {
+    if (!ensureDevLocalAuth(res)) return;
     const token = readBearerToken(req);
     const payload =
       req.body?.data && typeof req.body.data === 'object' ? req.body.data : req.body;
@@ -661,6 +752,16 @@ export function createFervecExpressApp(deps?: ServerAppDeps): express.Express {
         return res.status(400).json({ error: 'Texto vazio para leitura em voz.' });
       }
 
+      const guardKey = resolveUserRateKey(req);
+      const ttsGuard = financialGuard.canUseExternalTts(guardKey);
+      if (!ttsGuard.allowed) {
+        return res.status(ttsGuard.status || 503).json({
+          fallback: 'browser_speech',
+          reason: ttsGuard.reason,
+          error: 'Síntese neural externa desativada; utilize o leitor de voz nativo do navegador.',
+        });
+      }
+
       const voiceProfile = resolveMaleNeuralVoice(String(req.body?.voiceName || ''));
       const rate = Number(req.body?.rate);
       const pitch = Number(req.body?.pitch);
@@ -677,13 +778,11 @@ export function createFervecExpressApp(deps?: ServerAppDeps): express.Express {
         console.warn('[API /api/tts neural fallback]', neuralErr instanceof Error ? neuralErr.message : neuralErr);
       }
 
-      const guardKey = resolveUserRateKey(req);
-      const ttsGuard = financialGuard.canUseExternalTts(guardKey);
       const apiKey = process.env.GEMINI_API_KEY;
-      if (!ttsGuard.allowed || !apiKey) {
+      if (!apiKey) {
         return res.status(503).json({
           fallback: 'browser_speech',
-          reason: !ttsGuard.allowed ? ttsGuard.reason : 'no_api_key',
+          reason: 'no_api_key',
           error: 'Síntese neural externa desativada; utilize o leitor de voz nativo do navegador.',
         });
       }

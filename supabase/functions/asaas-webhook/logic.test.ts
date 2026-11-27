@@ -366,3 +366,39 @@ test('processAsaasWebhook triggers notifyPaymentConfirmed once on payment confir
   assert.equal(emailCalls, 1);
 });
 
+test('processAsaasWebhook blocks automatic access re-grant when order is in refund_requested state', async () => {
+  const orderId = '66666666-6666-4666-8666-666666666666';
+  const mem = createInMemoryRepo([
+    {
+      id: orderId,
+      user_id: 'user-refund-req',
+      course_id: 'course-italiana',
+      status: 'refund_requested',
+      asaas_payment_id: 'pay_ref_req',
+    },
+  ]);
+
+  const res = await processAsaasWebhook({
+    rawBody: {
+      id: 'evt_late_confirm',
+      event: 'PAYMENT_CONFIRMED',
+      payment: {
+        id: 'pay_ref_req',
+        status: 'CONFIRMED',
+        value: 12.9,
+        billingType: 'PIX',
+        externalReference: orderId,
+      },
+    },
+    providedToken: 'secret-sandbox-token',
+    expectedToken: 'secret-sandbox-token',
+    repo: mem.repo,
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.accessGranted, false);
+  assert.equal(mem.enrollments.size, 0);
+  assert.equal(mem.orders.get(orderId)?.status, 'refund_requested');
+});
+
+

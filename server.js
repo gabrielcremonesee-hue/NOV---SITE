@@ -63,21 +63,79 @@ function isTransientGeminiError(err) {
   );
 }
 
+function isDevLocalAuthEnabled() {
+  return (
+    process.env.NODE_ENV !== 'production' &&
+    String(process.env.FERVEC_ENABLE_DEV_LOCAL_AUTH || '').trim().toLowerCase() === 'true'
+  );
+}
+
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com data:",
+  "img-src 'self' data: blob: https://*.openstreetmap.org https://tiles.openfreemap.org",
+  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://tiles.openfreemap.org https://*.openfreemap.org https://overpass-api.de https://overpass.kumi.systems https://nominatim.openstreetmap.org https://tile.openstreetmap.org https://fonts.googleapis.com https://fonts.gstatic.com",
+  "worker-src 'self' blob:",
+  "frame-src 'self' blob:",
+  "media-src 'self' data: blob:",
+  "object-src 'none'",
+  "frame-ancestors 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join('; ');
+
+const rateBuckets = new Map();
+function simpleRateLimit(maxPerMin) {
+  return (req, res, next) => {
+    const key = String(req.headers['x-forwarded-for'] || req.ip || 'local').split(',')[0].trim();
+    const now = Date.now();
+    let entry = rateBuckets.get(key);
+    if (!entry || now >= entry.resetAt) {
+      entry = { count: 0, resetAt: now + 60_000 };
+      rateBuckets.set(key, entry);
+    }
+    if (entry.count >= maxPerMin) {
+      const retry = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+      res.setHeader('Retry-After', String(retry));
+      return res.status(429).json({
+        ok: false,
+        code: 'RATE_LIMITED',
+        retryAfterSeconds: retry,
+        error: 'Muitas requisições em sequência. Aguarde alguns segundos.',
+      });
+    }
+    entry.count += 1;
+    next();
+  };
+}
+
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'microphone=(), camera=()');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
+  if (req.path.startsWith('/api/')) {
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  }
   next();
 });
 
 app.use(express.json({ limit: '4mb' }));
+app.use('/api/auth', simpleRateLimit(25));
+app.use('/api/chat', simpleRateLimit(35));
+app.use('/api/tts', simpleRateLimit(35));
 
 // --- Protected Private Book Streaming Endpoint ---
 function handleLibraryBook(req, res) {
   const requestedFile = String(req.query.file || req.query.path || '');
   if (requestedFile && (requestedFile.includes('..') || requestedFile.includes('/') || requestedFile.includes('\\'))) {
     return res.status(400).json({ error: 'Parâmetro de arquivo inválido.' });
+  }
+  if (!isDevLocalAuthEnabled()) {
+    return res.status(401).json({ error: 'Autenticação oficial necessária para acessar o livro digital.' });
   }
   const token = readBearerToken(req);
   const sess = db.getSession(token);
@@ -122,8 +180,19 @@ function handleLibraryBook(req, res) {
 app.get('/api/library/book', handleLibraryBook);
 app.head('/api/library/book', handleLibraryBook);
 
-// --- Server-Side Persistent Database Endpoints (Auth + User Data) ---
+// --- Dev-Only Local Database Endpoints (Gated behind FERVEC_ENABLE_DEV_LOCAL_AUTH=true) ---
+function ensureDevLocalAuth(res) {
+  if (isDevLocalAuthEnabled()) return true;
+  res.status(403).json({
+    ok: false,
+    code: 'DEV_AUTH_DISABLED',
+    error: 'Autenticação local de desenvolvimento desativada.',
+  });
+  return false;
+}
+
 app.post('/api/auth/register', (req, res) => {
+  if (!ensureDevLocalAuth(res)) return;
   const { name = '', email = '', password = '', age = undefined, initialData = {} } = req.body || {};
   const result = db.registerUser({ name, email, password, age, initialData });
   if (!result.ok) {
@@ -138,6 +207,7 @@ app.post('/api/auth/register', (req, res) => {
 });
 
 app.post('/api/auth/login', (req, res) => {
+  if (!ensureDevLocalAuth(res)) return;
   const { email = '', password = '' } = req.body || {};
   const result = db.loginUser({ email, password });
   if (!result.ok) {
@@ -152,6 +222,7 @@ app.post('/api/auth/login', (req, res) => {
 });
 
 app.get('/api/auth/session', (req, res) => {
+  if (!ensureDevLocalAuth(res)) return;
   const token = readBearerToken(req);
   const result = db.getSession(token);
   if (!result.ok) {
@@ -161,12 +232,14 @@ app.get('/api/auth/session', (req, res) => {
 });
 
 app.post('/api/auth/logout', (req, res) => {
+  if (!ensureDevLocalAuth(res)) return;
   const token = readBearerToken(req);
   db.logoutSession(token);
   return res.json({ ok: true });
 });
 
 app.get('/api/user/data', (req, res) => {
+  if (!ensureDevLocalAuth(res)) return;
   const token = readBearerToken(req);
   const result = db.getSession(token);
   if (!result.ok) {
@@ -176,6 +249,7 @@ app.get('/api/user/data', (req, res) => {
 });
 
 app.put('/api/user/data', (req, res) => {
+  if (!ensureDevLocalAuth(res)) return;
   const token = readBearerToken(req);
   const payload = req.body?.data && typeof req.body.data === 'object' ? req.body.data : req.body;
   const result = db.updateUserData(token, payload);
@@ -272,6 +346,15 @@ app.post('/api/tts', async (req, res) => {
       return res.status(400).json({ error: 'Texto vazio para leitura em voz.' });
     }
 
+    const allowExternalTts =
+      String(process.env.FERVEC_ALLOW_EXTERNAL_TTS || '').trim().toLowerCase() === 'true';
+    if (!allowExternalTts) {
+      return res.status(503).json({
+        fallback: 'browser_speech',
+        error: 'Síntese neural externa desativada; utilize a voz do navegador.',
+      });
+    }
+
     const voiceProfile = resolveMaleNeuralVoice(String(req.body?.voiceName || ''));
     const rate = Number(req.body?.rate);
     const pitch = Number(req.body?.pitch);
@@ -290,7 +373,7 @@ app.post('/api/tts', async (req, res) => {
 
     const allowPaidExternalTts =
       String(process.env.FERVEC_ALLOW_PAID_AI || '').trim().toLowerCase() === 'true' &&
-      String(process.env.FERVEC_ALLOW_EXTERNAL_TTS || '').trim().toLowerCase() === 'true';
+      allowExternalTts;
     const apiKey = process.env.GEMINI_API_KEY;
     if (!allowPaidExternalTts || !apiKey) {
       return res.status(503).json({

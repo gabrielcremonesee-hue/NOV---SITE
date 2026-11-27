@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100">
+  <defs>
+    <linearGradient id="fusGold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffe794"/>
+      <stop offset="55%" stop-color="#edb335"/>
+      <stop offset="100%" stop-color="#a86a0b"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="60" cy="83" rx="44" ry="8.5" fill="#0d0401" fill-opacity="0.58"/>
+  <!-- Spirals -->
+  <g fill="none" stroke="url(#fusGold)" stroke-width="7.5" stroke-linecap="round">
+    <path d="M24 38 C30 28, 38 46, 44 36 C50 26, 58 44, 64 34 C70 24, 78 42, 84 32"/>
+    <path d="M32 60 C38 50, 46 68, 52 58 C58 48, 66 66, 72 56 C78 46, 86 64, 92 54"/>
+    <path d="M22 72 C30 64, 38 78, 46 70 C54 62, 62 76, 70 68"/>
+  </g>
+</svg>

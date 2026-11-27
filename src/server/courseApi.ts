@@ -11,6 +11,11 @@ import {
   type QuestionAttemptSnapshot,
 } from '../data/assessments.ts';
 import { generateCertificatePdf } from '../utils/certificatePdf.ts';
+import {
+  evaluateWorkSingleAnswer,
+  getProtectedCourseContent,
+  getSanitizedAssessmentQuestions,
+} from './courseContentService.ts';
 import { getServerSupabaseEnv, resolveAuthenticatedSupabaseUser } from '../utils/supabase/server.ts';
 import {
   OFFICIAL_ADMIN_AGE,
@@ -25,6 +30,7 @@ import { getAuthoritativeCoursePriceCents, isCoursePriceConfirmedForProduction }
 import { financialGuard } from './financialGuard.ts';
 import { singleSessionManager } from './singleSession.ts';
 import { SUPPLIER_IDENTITY, getLegalDocumentVersions, maskCpfForLogs } from '../config/legalConfig.ts';
+import { calculateAge } from '../utils/profile.ts';
 
 const DEFAULT_COURSE_SLUG = 'massas-italianas';
 const CERTIFICATES_STORAGE_BUCKET = 'certificates';
@@ -140,6 +146,8 @@ function isMissingVersioningColumnError(err: { code?: string; message?: string }
     msg.includes('question_ids') ||
     msg.includes('selected_option_ids') ||
     msg.includes('question_snapshots') ||
+    msg.includes('protocol_code') ||
+    msg.includes('refund_provider_') ||
     msg.includes('schema cache')
   );
 }
@@ -357,12 +365,17 @@ async function ensureUserProfileRow(
   const fullName =
     (typeof meta.full_name === 'string' && meta.full_name.trim()) ||
     (isOfficialPrimaryAdmin ? 'FerveC Gastronomia (Admin)' : email.split('@')[0] || 'Aluno FerveC');
+  const metaBirthDate =
+    typeof meta.birth_date === 'string' && meta.birth_date.trim() ? meta.birth_date.trim() : null;
+  const calcMetaAge = metaBirthDate ? calculateAge(metaBirthDate) : null;
   const ageNum = Number(meta.age);
-  const age = isOfficialPrimaryAdmin
-    ? OFFICIAL_ADMIN_AGE
-    : Number.isInteger(ageNum) && ageNum >= 18
-      ? ageNum
-      : 18;
+  const validMetaAge =
+    calcMetaAge !== null && calcMetaAge >= 18
+      ? calcMetaAge
+      : Number.isInteger(ageNum) && ageNum >= 18
+        ? ageNum
+        : null;
+  const age = isOfficialPrimaryAdmin ? OFFICIAL_ADMIN_AGE : validMetaAge;
 
   const payload = {
     id: user.id,
@@ -375,13 +388,11 @@ async function ensureUserProfileRow(
       : typeof meta.cpf_hash === 'string' && meta.cpf_hash
         ? meta.cpf_hash
         : null,
-    birth_date: isOfficialPrimaryAdmin
-      ? OFFICIAL_ADMIN_BIRTH_DATE
-      : (typeof meta.birth_date === 'string' && meta.birth_date) || '01/01/2000',
+    birth_date: isOfficialPrimaryAdmin ? OFFICIAL_ADMIN_BIRTH_DATE : metaBirthDate,
     age,
     email,
-    ddd: (typeof meta.ddd === 'string' && meta.ddd) || '11',
-    phone: (typeof meta.phone === 'string' && meta.phone) || '90000-0000',
+    ddd: (typeof meta.ddd === 'string' && meta.ddd.trim()) || '',
+    phone: (typeof meta.phone === 'string' && meta.phone.trim()) || '',
     whatsapp_opt_in:
       typeof meta.whatsapp_opt_in === 'boolean'
         ? meta.whatsapp_opt_in
@@ -468,6 +479,8 @@ async function checkOrProvisionCommercialEnrollment(
   return (inserted as EnrollmentRow) || null;
 }
 
+const DUMMY_SESSION_IDS = new Set(['server-session', 'browser-session', 'guest', 'undefined', 'null']);
+
 async function enforceClaimedSession(
   req: Request,
   res: Response,
@@ -476,19 +489,16 @@ async function enforceClaimedSession(
 ): Promise<boolean> {
   const rawSid = req.headers['x-fervec-session-id'];
   const sessionId = typeof rawSid === 'string' ? rawSid.trim() : '';
-  if (!sessionId) return true;
-
-  const memCheck = singleSessionManager.verifySession(userId, sessionId);
-  if (!memCheck.ok) {
-    res.status(409).json({
+  if (!sessionId || sessionId.length < 8 || DUMMY_SESSION_IDS.has(sessionId.toLowerCase())) {
+    res.status(401).json({
       ok: false,
-      code: 'SESSION_REPLACED_OTHER_DEVICE',
-      error: 'Sua sessão foi encerrada porque a conta entrou em outro dispositivo ou navegador.',
+      code: 'SESSION_REQUIRED',
+      error: 'Identificador de sessão ativa obrigatório. Faça login novamente para continuar.',
     });
     return false;
   }
 
-  // Quando ainda não há registro em memória (cold start), verifica tabela user_active_sessions se existir
+  // Verifica primeiro a tabela user_active_sessions no banco para resistir a cold-start / múltiplas instâncias
   try {
     const { data, error } = await supabase
       .from('user_active_sessions')
@@ -496,6 +506,7 @@ async function enforceClaimedSession(
       .eq('user_id', userId)
       .maybeSingle();
     if (!error && data && typeof data.session_id === 'string' && data.session_id !== sessionId) {
+      singleSessionManager.claimSession(userId, data.session_id);
       res.status(409).json({
         ok: false,
         code: 'SESSION_REPLACED_OTHER_DEVICE',
@@ -505,6 +516,17 @@ async function enforceClaimedSession(
     }
   } catch {
     // Tabela opcional em bancos antigos/mocks sem user_active_sessions
+  }
+
+  const memCheck = singleSessionManager.verifyOrBindSession(userId, sessionId);
+  if (!memCheck.ok) {
+    const isReq = memCheck.code === 'SESSION_REQUIRED';
+    res.status(isReq ? 401 : 409).json({
+      ok: false,
+      code: isReq ? 'SESSION_REQUIRED' : 'SESSION_REPLACED_OTHER_DEVICE',
+      error: memCheck.message,
+    });
+    return false;
   }
 
   return true;
@@ -1155,6 +1177,221 @@ export function registerCourseApiRoutes(
     res.json({ ok: true, moduleKey, doneSteps: cleanDoneSteps, reviewDone, lessonFinished });
   });
 
+  // Protected course content (Stages 1..5 of Carbonara, Modules 2..6 full recipes & tech sheets)
+  app.get('/api/course/content', async (req: Request, res: Response) => {
+    const auth = await resolveAuth(req, res);
+    if (!auth) {
+      res.status(401).json({
+        ok: false,
+        code: 'AUTH_REQUIRED',
+        error: 'Autenticação necessária para acessar o conteúdo completo do curso.',
+      });
+      return;
+    }
+
+    const { supabase, user } = auth;
+    if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
+
+    const courseSlug =
+      typeof req.query.courseSlug === 'string' && req.query.courseSlug.trim()
+        ? req.query.courseSlug.trim()
+        : DEFAULT_COURSE_SLUG;
+    const courseCtx = await ensureCourseContext(supabase, courseSlug);
+    if (!courseCtx) {
+      res.status(404).json({ ok: false, error: 'Curso não encontrado.' });
+      return;
+    }
+
+    const { profile, existedInDb } = await ensureUserProfileRow(supabase, user);
+    const devPerm = resolveDeveloperCertificateAdmin({
+      user,
+      profile,
+      profileExistedInDb: existedInDb,
+    });
+    const enrollment = await checkOrProvisionCommercialEnrollment(
+      supabase,
+      user.id,
+      courseCtx.course.id,
+      devPerm.isDeveloperAdmin
+    );
+    if (!isEnrollmentActive(enrollment, devPerm.isDeveloperAdmin)) {
+      res.status(403).json({
+        ok: false,
+        code: 'COURSE_NOT_PURCHASED',
+        error: 'Conteúdo completo exclusivo para alunos com matrícula paga ativa.',
+      });
+      return;
+    }
+
+    const requestedModule =
+      typeof req.query.moduleKey === 'string' && req.query.moduleKey.trim()
+        ? normalizeModuleKeyInput(req.query.moduleKey)
+        : undefined;
+    const content = getProtectedCourseContent(requestedModule);
+    if (!content) {
+      res.status(400).json({ ok: false, error: 'Módulo inválido.' });
+      return;
+    }
+
+    res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.json(content);
+  });
+
+  // Sanitized assessment bank (strips answer keys: no correct, correctOptionId, or why)
+  app.get('/api/assessments/questions', async (req: Request, res: Response) => {
+    const auth = await resolveAuth(req, res);
+    if (!auth) {
+      res.status(401).json({
+        ok: false,
+        code: 'AUTH_REQUIRED',
+        error: 'Entre na sua conta para carregar as questões.',
+      });
+      return;
+    }
+
+    const { supabase, user } = auth;
+    if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
+
+    const moduleKey = normalizeModuleKeyInput(req.query.moduleKey);
+    const rawType = String(req.query.attemptType || 'work').trim().toLowerCase();
+    const attemptType = rawType === 'exam' ? 'exam' : rawType === 'work' ? 'work' : null;
+    if (!isValidModuleKey(moduleKey) || !attemptType) {
+      res.status(400).json({ ok: false, error: 'Parâmetros de módulo ou tipo de avaliação inválidos.' });
+      return;
+    }
+
+    const courseSlug =
+      typeof req.query.courseSlug === 'string' && req.query.courseSlug.trim()
+        ? req.query.courseSlug.trim()
+        : DEFAULT_COURSE_SLUG;
+    const courseCtx = await ensureCourseContext(supabase, courseSlug);
+    if (!courseCtx) {
+      res.status(404).json({ ok: false, error: 'Curso não encontrado.' });
+      return;
+    }
+
+    const { profile, existedInDb } = await ensureUserProfileRow(supabase, user);
+    const devPerm = resolveDeveloperCertificateAdmin({
+      user,
+      profile,
+      profileExistedInDb: existedInDb,
+    });
+    const enrollment = await checkOrProvisionCommercialEnrollment(
+      supabase,
+      user.id,
+      courseCtx.course.id,
+      devPerm.isDeveloperAdmin
+    );
+    if (!isEnrollmentActive(enrollment, devPerm.isDeveloperAdmin)) {
+      res.status(403).json({
+        ok: false,
+        code: 'COURSE_NOT_PURCHASED',
+        error: 'Matrícula paga necessária para acessar as avaliações do curso.',
+      });
+      return;
+    }
+
+    if (attemptType === 'exam' && !devPerm.canBypassExamForCertificates) {
+      const moduleDef = courseCtx.modules.find((m) => m.module_key === moduleKey);
+      const totalSteps = moduleDef?.total_steps ?? getModuleLimits(moduleKey).steps;
+      const { data: modProg } = await supabase
+        .from('module_progress')
+        .select('id, done_steps, review_done, lesson_finished')
+        .eq('user_id', user.id)
+        .eq('course_id', courseCtx.course.id)
+        .eq('module_key', moduleKey)
+        .maybeSingle();
+
+      const stepsDoneCount = Array.isArray(modProg?.done_steps) ? modProg.done_steps.length : 0;
+      const reviewDone = Boolean(modProg?.review_done);
+      if (!modProg || (!modProg.lesson_finished && stepsDoneCount < totalSteps) || !reviewDone) {
+        res.status(403).json({
+          ok: false,
+          code: 'EXAM_LOCKED_PROGRESS_REQUIRED',
+          error: 'Prova bloqueada: conclua todas as etapas e a revisão do módulo primeiro.',
+        });
+        return;
+      }
+    }
+
+    const sanitized = getSanitizedAssessmentQuestions(moduleKey, attemptType);
+    res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.json({ ok: true, ...sanitized });
+  });
+
+  // Immediate pedagogical feedback for ONE practice ("work") question — never allowed for exam
+  app.post('/api/assessments/work-feedback', async (req: Request, res: Response) => {
+    const auth = await resolveAuth(req, res);
+    if (!auth) {
+      res.status(401).json({
+        ok: false,
+        code: 'AUTH_REQUIRED',
+        error: 'Entre na sua conta para conferir sua resposta.',
+      });
+      return;
+    }
+
+    const { supabase, user } = auth;
+    if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
+
+    const body = (req.body || {}) as {
+      courseSlug?: string;
+      moduleKey?: string;
+      questionIndex?: number;
+      selectedAnswer?: number;
+    };
+    const moduleKey = normalizeModuleKeyInput(body.moduleKey);
+    if (!isValidModuleKey(moduleKey)) {
+      res.status(400).json({ ok: false, error: 'Módulo inválido.' });
+      return;
+    }
+
+    const courseCtx = await ensureCourseContext(
+      supabase,
+      typeof body.courseSlug === 'string' && body.courseSlug ? body.courseSlug : DEFAULT_COURSE_SLUG
+    );
+    if (!courseCtx) {
+      res.status(404).json({ ok: false, error: 'Curso não encontrado.' });
+      return;
+    }
+
+    const { profile, existedInDb } = await ensureUserProfileRow(supabase, user);
+    const devPerm = resolveDeveloperCertificateAdmin({
+      user,
+      profile,
+      profileExistedInDb: existedInDb,
+    });
+    const enrollment = await checkOrProvisionCommercialEnrollment(
+      supabase,
+      user.id,
+      courseCtx.course.id,
+      devPerm.isDeveloperAdmin
+    );
+    if (!isEnrollmentActive(enrollment, devPerm.isDeveloperAdmin)) {
+      res.status(403).json({
+        ok: false,
+        code: 'COURSE_NOT_PURCHASED',
+        error: 'Matrícula paga necessária para conferir respostas do trabalho.',
+      });
+      return;
+    }
+
+    const result = evaluateWorkSingleAnswer(
+      moduleKey,
+      Number(body.questionIndex),
+      Number(body.selectedAnswer)
+    );
+    if (!result.ok) {
+      res.status(400).json({ ok: false, error: result.error });
+      return;
+    }
+
+    res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate');
+    res.json(result);
+  });
+
   // Server-authoritative assessment grading + automatic certificate issuance on exam pass
   app.post('/api/assessments/submit', async (req: Request, res: Response) => {
     const auth = await resolveAuth(req, res);
@@ -1166,6 +1403,7 @@ export function registerCourseApiRoutes(
     }
 
     const { supabase, user } = auth;
+    if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
     const body = (req.body || {}) as {
       courseSlug?: string;
       moduleKey?: string;
@@ -1411,6 +1649,7 @@ export function registerCourseApiRoutes(
     }
 
     const { supabase, user } = auth;
+    if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
     const { profile, existedInDb } = await ensureUserProfileRow(supabase, user);
     const devPerm = resolveDeveloperCertificateAdmin({
       user,
@@ -1449,6 +1688,7 @@ export function registerCourseApiRoutes(
     }
 
     const { supabase, user } = auth;
+    if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
     const requestedSlug =
       typeof req.query.courseSlug === 'string' && req.query.courseSlug.trim()
         ? req.query.courseSlug.trim()
@@ -1542,6 +1782,7 @@ export function registerCourseApiRoutes(
     }
 
     const { supabase, user } = auth;
+    if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
     const body = (req.body || {}) as { courseSlug?: string };
     const requestedSlug =
       typeof body.courseSlug === 'string' && body.courseSlug.trim()
@@ -1692,6 +1933,7 @@ export function registerCourseApiRoutes(
     }
 
     const { supabase, user } = auth;
+    if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
     const { data: certRow } = await supabase
       .from('certificates')
       .select(
@@ -2002,6 +2244,7 @@ export function registerCourseApiRoutes(
     }
 
     const { supabase, user } = auth;
+    if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
     const { data: orderRow } = await supabase
       .from('orders')
       .select('id, course_id, status, amount_cents, asaas_payment_id, paid_at')
@@ -2075,6 +2318,7 @@ export function registerCourseApiRoutes(
     }
 
     const { supabase, user } = auth;
+    if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
     const { profile, existedInDb } = await ensureUserProfileRow(supabase, user);
     const devPerm = resolveDeveloperCertificateAdmin({
       user,
@@ -2104,16 +2348,18 @@ export function registerCourseApiRoutes(
     }
     const { supabase, user } = auth;
     const body = (req.body || {}) as { sessionId?: string; deviceLabel?: string };
+    const headerSid =
+      typeof req.headers['x-fervec-session-id'] === 'string' ? req.headers['x-fervec-session-id'].trim() : '';
+    const rawSid = (typeof body.sessionId === 'string' && body.sessionId.trim()) || headerSid;
     const sid =
-      (typeof body.sessionId === 'string' && body.sessionId.trim()) ||
-      (typeof req.headers['x-fervec-session-id'] === 'string' ? req.headers['x-fervec-session-id'].trim() : '') ||
-      crypto.randomUUID();
+      rawSid && rawSid.length >= 8 && !DUMMY_SESSION_IDS.has(rawSid.toLowerCase())
+        ? rawSid
+        : crypto.randomUUID();
     const record = singleSessionManager.claimSession(user.id, sid, body.deviceLabel || '');
     try {
       await supabase.rpc('claim_active_session', {
-        p_user_id: user.id,
-        p_session_id: sid,
-        p_device_label: body.deviceLabel || null,
+        p_session_id: record.sessionId,
+        p_device_hint: body.deviceLabel || null,
       });
     } catch {
       // RPC opcional quando SQL migration ainda não foi aplicada
@@ -2133,7 +2379,6 @@ export function registerCourseApiRoutes(
       singleSessionManager.clearSession(auth.user.id, sid);
       try {
         await auth.supabase.rpc('clear_active_session', {
-          p_user_id: auth.user.id,
           p_session_id: sid,
         });
       } catch {
@@ -2150,6 +2395,7 @@ export function registerCourseApiRoutes(
       res.status(401).json({ ok: false, error: 'Entre na sua conta para validar um cupom.' });
       return;
     }
+    if (!(await enforceClaimedSession(req, res, auth.supabase, auth.user.id))) return;
     const body = (req.body || {}) as { code?: string; courseSlug?: string };
     const code = String(body.code || '').replace(/\D+/g, '').slice(0, 6);
     const courseSlug = String(body.courseSlug || DEFAULT_COURSE_SLUG).trim() || DEFAULT_COURSE_SLUG;
@@ -2233,37 +2479,69 @@ export function registerCourseApiRoutes(
       return;
     }
     const { supabase, user } = auth;
+    if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
+
     const body = (req.body || {}) as {
       courseSlug?: string;
+      orderId?: string;
+      acceptanceKind?: 'signup' | 'checkout';
       termsVersion?: string;
       privacyVersion?: string;
+      marketingWhatsapp?: boolean;
+      marketingEmail?: boolean;
       whatsappOptIn?: boolean;
       emailOptIn?: boolean;
     };
     const versions = getLegalDocumentVersions();
-    const clientIp = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
-    const ipHash = clientIp ? crypto.createHash('sha256').update(clientIp).digest('hex') : null;
     const ua = String(req.headers['user-agent'] || '').slice(0, 240);
+    const nowIso = new Date().toISOString();
+    const resolvedTermsVersion = body.termsVersion || versions.termsVersion;
+    const resolvedPrivacyVersion = body.privacyVersion || versions.privacyVersion;
+    const acceptanceKind: 'signup' | 'checkout' = body.acceptanceKind === 'checkout' ? 'checkout' : 'signup';
+    const marketingWhatsapp = Boolean(body.marketingWhatsapp ?? body.whatsappOptIn);
+    const marketingEmail = Boolean(body.marketingEmail ?? body.emailOptIn);
 
     try {
       const { error } = await supabase.from('legal_acceptances').insert({
         user_id: user.id,
+        order_id: body.orderId || null,
         course_slug: body.courseSlug || DEFAULT_COURSE_SLUG,
-        terms_version: body.termsVersion || versions.termsVersion,
-        privacy_version: body.privacyVersion || versions.privacyVersion,
-        whatsapp_opt_in: Boolean(body.whatsappOptIn),
-        email_opt_in: Boolean(body.emailOptIn),
-        ip_hash: ipHash,
+        acceptance_kind: acceptanceKind,
+        terms_version: resolvedTermsVersion,
+        privacy_version: resolvedPrivacyVersion,
+        marketing_whatsapp: marketingWhatsapp,
+        marketing_email: marketingEmail,
         user_agent: ua || null,
-        accepted_at: new Date().toISOString(),
+        accepted_at: nowIso,
       });
       if (error) {
-        res.status(200).json({ ok: true, recordedInMemory: true, versions });
+        res.status(500).json({
+          ok: false,
+          error: 'Não foi possível persistir o registro de aceite legal no banco de dados.',
+        });
         return;
       }
-      res.json({ ok: true, recordedInDb: true, versions });
+
+      try {
+        await supabase
+          .from('profiles')
+          .update({
+            terms_accepted_at: nowIso,
+            terms_version: resolvedTermsVersion,
+            privacy_version: resolvedPrivacyVersion,
+            updated_at: nowIso,
+          })
+          .eq('id', user.id);
+      } catch {
+        // Atualização complementar de profiles é opcional caso colunas ainda não existam
+      }
+
+      res.json({ ok: true, recordedInDb: true, acceptanceKind, versions });
     } catch {
-      res.json({ ok: true, recordedInMemory: true, versions });
+      res.status(500).json({
+        ok: false,
+        error: 'Erro interno ao persistir o registro de aceite legal.',
+      });
     }
   });
 
@@ -2274,12 +2552,14 @@ export function registerCourseApiRoutes(
       res.status(401).json({ ok: false, error: 'Entre na sua conta para solicitar arrependimento (Art. 49 CDC).' });
       return;
     }
+    const { supabase, user } = auth;
+    if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
+
     const orderId = String(req.params.orderId || '').trim();
     if (!orderId) {
       res.status(400).json({ ok: false, error: 'ID do pedido inválido.' });
       return;
     }
-    const { supabase, user } = auth;
     const body = (req.body || {}) as { reason?: string };
 
     const { data: orderRow } = await supabase
@@ -2293,6 +2573,29 @@ export function registerCourseApiRoutes(
       res.status(404).json({ ok: false, error: 'Pedido não encontrado para a conta autenticada.' });
       return;
     }
+
+    const { data: existingWithdrawal } = await supabase
+      .from('withdrawal_requests')
+      .select('id, status, protocol_code, requested_at')
+      .eq('order_id', orderRow.id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (
+      existingWithdrawal ||
+      orderRow.status === 'refund_requested' ||
+      orderRow.status === 'refunded'
+    ) {
+      res.status(409).json({
+        ok: false,
+        code: 'ALREADY_REQUESTED',
+        protocolCode: (existingWithdrawal as { protocol_code?: string } | null)?.protocol_code || null,
+        status: existingWithdrawal?.status || orderRow.status,
+        error: 'Solicitação de arrependimento já registrada para este pedido.',
+      });
+      return;
+    }
+
     if (orderRow.status !== 'paid') {
       res.status(400).json({
         ok: false,
@@ -2313,35 +2616,129 @@ export function registerCourseApiRoutes(
     }
 
     const nowIso = new Date().toISOString();
-    try {
-      await supabase.from('withdrawal_requests').insert({
-        user_id: user.id,
-        order_id: orderRow.id,
-        asaas_payment_id: orderRow.asaas_payment_id || null,
-        reason: typeof body.reason === 'string' ? body.reason.slice(0, 400) : 'Arrependimento Art. 49 CDC (7 dias)',
-        status: 'pending_refund',
-        requested_at: nowIso,
-      });
-      await supabase
-        .from('orders')
-        .update({ status: 'refund_requested', updated_at: nowIso })
-        .eq('id', orderRow.id)
-        .eq('user_id', user.id);
-      await supabase
-        .from('student_enrollments')
-        .update({ status: 'canceled', updated_at: nowIso })
-        .eq('user_id', user.id)
-        .eq('course_id', orderRow.course_id);
-    } catch {
-      // ignore if withdrawal_requests table not yet migrated in mock
+    const protocolCode = `ARR-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const cleanReason =
+      typeof body.reason === 'string' && body.reason.trim()
+        ? body.reason.trim().slice(0, 400)
+        : 'Arrependimento Art. 49 CDC (7 dias)';
+
+    let withdrawalStatus: 'requested' | 'approved_refund_pending' | 'refunded' = 'approved_refund_pending';
+    let nextOrderStatus: 'refund_requested' | 'refunded' = 'refund_requested';
+    let refundProviderId: string | null = null;
+    let refundProviderStatus: string | null = null;
+
+    const asaasEnv =
+      String(process.env.ASAAS_ENVIRONMENT || '').trim().toLowerCase() === 'production'
+        ? 'production'
+        : 'sandbox';
+    const asaasKey =
+      asaasEnv === 'production'
+        ? process.env.ASAAS_API_KEY?.trim()
+        : process.env.ASAAS_SANDBOX_API_KEY?.trim() || process.env.ASAAS_API_KEY?.trim();
+
+    if (asaasKey && orderRow.asaas_payment_id) {
+      const baseUrl =
+        asaasEnv === 'production'
+          ? (process.env.ASAAS_API_URL || 'https://api.asaas.com/v3').replace(/\/+$/, '')
+          : (process.env.ASAAS_SANDBOX_URL || 'https://api-sandbox.asaas.com/v3').replace(/\/+$/, '');
+      try {
+        const refundRes = await fetch(
+          `${baseUrl}/payments/${encodeURIComponent(String(orderRow.asaas_payment_id))}/refund`,
+          {
+            method: 'POST',
+            headers: {
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
+              access_token: asaasKey,
+            },
+            body: JSON.stringify({ description: `Arrependimento Art. 49 CDC — Protocolo ${protocolCode}` }),
+            signal: AbortSignal.timeout(6000),
+          }
+        );
+        const refundJson = (await refundRes.json().catch(() => ({}))) as {
+          id?: string;
+          status?: string;
+        };
+        if (refundRes.ok) {
+          withdrawalStatus = 'refunded';
+          nextOrderStatus = 'refunded';
+          refundProviderId = refundJson.id || String(orderRow.asaas_payment_id);
+          refundProviderStatus = refundJson.status || 'REFUNDED';
+        } else {
+          refundProviderStatus = `PENDING_MANUAL_${refundRes.status}`;
+        }
+      } catch {
+        refundProviderStatus = 'PENDING_MANUAL_TIMEOUT';
+      }
     }
+
+    const baseWithdrawalRow = {
+      user_id: user.id,
+      order_id: orderRow.id,
+      course_id: orderRow.course_id,
+      reason: cleanReason,
+      status: withdrawalStatus,
+      requested_at: nowIso,
+      processed_at: withdrawalStatus === 'refunded' ? nowIso : null,
+    };
+
+    let insertRes = await supabase.from('withdrawal_requests').insert({
+      ...baseWithdrawalRow,
+      protocol_code: protocolCode,
+      refund_provider_id: refundProviderId,
+      refund_provider_status: refundProviderStatus,
+    });
+
+    if (insertRes.error && isMissingVersioningColumnError(insertRes.error)) {
+      insertRes = await supabase.from('withdrawal_requests').insert(baseWithdrawalRow);
+    }
+
+    if (insertRes.error) {
+      const dup = insertRes.error.code === '23505' || /duplicate/i.test(insertRes.error.message || '');
+      if (dup) {
+        res.status(409).json({
+          ok: false,
+          code: 'ALREADY_REQUESTED',
+          error: 'Solicitação de arrependimento já registrada para este pedido.',
+        });
+        return;
+      }
+      res.status(500).json({
+        ok: false,
+        error: 'Não foi possível registrar a solicitação de arrependimento no banco de dados.',
+      });
+      return;
+    }
+
+    const { error: orderUpdateErr } = await supabase
+      .from('orders')
+      .update({ status: nextOrderStatus, updated_at: nowIso })
+      .eq('id', orderRow.id)
+      .eq('user_id', user.id);
+
+    if (orderUpdateErr) {
+      res.status(500).json({
+        ok: false,
+        error: 'Protocolo criado, mas falhou ao atualizar o status do pedido.',
+      });
+      return;
+    }
+
+    // Revoga matrícula comercial mantendo intacto o histórico auditável de assessment_attempts e certificates
+    await supabase
+      .from('student_enrollments')
+      .update({ status: 'canceled', updated_at: nowIso })
+      .eq('user_id', user.id)
+      .eq('course_id', orderRow.course_id);
 
     res.json({
       ok: true,
       orderId: orderRow.id,
-      status: 'refund_requested',
+      protocolCode,
+      status: nextOrderStatus,
+      withdrawalStatus,
       message:
-        'Solicitação de arrependimento (Art. 49 do CDC) registrada com protocolo. O acesso ao curso foi suspenso e o estorno será processado pelo meio de pagamento original; dúvidas: fervecrgastronomia@gmail.com.',
+        `Solicitação de arrependimento (Art. 49 do CDC) registrada sob protocolo ${protocolCode}. O acesso ao curso foi revogado e o estorno segue pelo meio de pagamento original; dúvidas: fervecrgastronomia@gmail.com.`,
     });
   });
 
@@ -2353,6 +2750,7 @@ export function registerCourseApiRoutes(
       return;
     }
     const { supabase, user } = auth;
+    if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
     const { profile, existedInDb } = await ensureUserProfileRow(supabase, user);
     const devPerm = resolveDeveloperCertificateAdmin({
       user,

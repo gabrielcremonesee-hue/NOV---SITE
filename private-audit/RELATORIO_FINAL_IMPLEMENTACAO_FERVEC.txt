@@ -1,0 +1,108 @@
+================================================================================
+FERVEC GASTRONOMIA — RELATÓRIO FINAL DE IMPLEMENTAÇÃO, SEGURANÇA E CONFORMIDADE
+Data de consolidação: 27/11/2026
+Repositório base: gabrielcremonesee-hue/NOV---SITE (/app/applet)
+Versão do Documento Único Legal: v1.1 — 26/11/2026
+Titular / Fornecedor: Gabriel Cremonese (Pessoa Física • CPF ***.722.209-** • fervecrgastronomia@gmail.com)
+================================================================================
+
+1. RESUMO EXECUTIVO DOS LOTES EXECUTADOS (A–G)
+--------------------------------------------------------------------------------
+Todas as pendências executáveis localmente foram implementadas e verificadas sem alterar a identidade visual, a diagramação, a paleta, a tipografia, a linha pedagógica, os certificados ou a curadoria de conteúdo do curso FerveC Gastronomia:
+
+- Lote A (Paywall, Proteção de Conteúdo e Sessão Única):
+  • Conteúdo integral do curso (estágios 2–6 do módulo Carbonara e módulos 2–6 completos, além do gabarito/justificativas das 84 questões) isolado no servidor em `src/server/courseContentService.ts` e `src/server/courseApi.ts`, liberado apenas após verificação de autenticação e matrícula ativa.
+  • Aplicação de sessão única ativa por usuário via cabeçalho `x-fervec-session-id` e registro em `user_active_sessions` (`src/server/singleSession.ts`), alinhando parâmetros RPC (`p_session_id`, `p_device_hint`) e bloqueando sessões concorrentes com HTTP `401`/`409`.
+  • Proteção de rotas e ativos privados no Express (`server.ts` / `server.js`), bloqueando acesso direto a diretórios internos/arquivos privados (HTTP `403`) e servindo o PDF da biblioteca (`private-books/fervec-massa-italiana.pdf`) exclusivamente após autenticação e validação de acesso via `/api/library/book`.
+
+- Lote B (Autenticação, Maioridade 18+, Legal e Arrependimento Art. 49 CDC):
+  • Restrição estrita para maiores de 18 anos completos em `src/utils/profile.ts` e fluxo de cadastro (`#/criar-perfil`), validando consistência entre declaração de maioridade e data de nascimento no cliente e no servidor.
+  • Autenticação local de desenvolvimento bloqueada por padrão em produção (`403 DEV_AUTH_DISABLED`), habilitável somente fora de produção via `FERVEC_ENABLE_DEV_LOCAL_AUTH=true`.
+  • Alinhamento do endpoint `/api/legal/accept` com `legal_acceptances` e implementação do protocolo de direito de arrependimento em 7 dias (`POST /api/orders/:orderId/withdraw`), com bloqueio de duplicidade, proteção contra sobreposição via webhook (`refund_requested`) e preservação de tentativas/certificados existentes, apoiado pela migração `supabase/migrations/20261128_withdrawal_protocol_and_idempotency.sql`.
+
+- Lote C (Idempotência Financeira, Cupons e E-mails):
+  • Idempotência de pagamento e retorno `409 ALREADY_ENROLLED` ao tentar recomprar módulo já ativo.
+  • Resgate atômico de cupom (`redeem_coupon_atomic`) na criação de cobrança (`supabase/functions/create-asaas-charge/validation.ts` e `index.ts`).
+  • Guarda contra alteração indevida de status em pedidos marcados como `refund_requested` em `supabase/functions/asaas-webhook/logic.ts`.
+  • Proteção de limite de envios transacionais (plano gratuito Resend) em `supabase/functions/send-payment-confirmation-email/logic.ts`.
+  • Manutenção rigorosa da trava comercial `FERVEC_PRICE_CONFIRMED=false` para impedir cobranças em produção antes da confirmação expressa de preços pelo titular.
+
+- Lote D (Chaves Pagas, TTS e Rate Limiting):
+  • Travas de proteção de custos mantidas ativas (`FERVEC_ALLOW_EXTERNAL_TTS=false`, `FERVEC_ALLOW_PAID_AI=false`), com kill-switch em `/api/tts` antes de acionar `synthesizeMaleNeuralTts` (retornando HTTP `503` com `fallback: 'browser_speech'`).
+  • Preservação integral das 4 vozes masculinas do Chef (`Antonio`, `Brian`, `Giuseppe`, `Andrew`) para síntese via navegador, mantendo microfone/STT/Live WebSocket desativados.
+  • Implementação de `SlidingFixedRateLimiter` em `src/server/rateLimit.ts`, retornando HTTP `429` e cabeçalho `Retry-After`.
+
+- Lote E (Mapas, Biblioteca, Busca e Cabeçalhos HTTP):
+  • Limitação/saneamento de parâmetros da integração de mapas em `lib/maps_client.js` e debounce de 450 ms nas buscas da Biblioteca Interativa (`app.js`).
+  • Endurecimento dos cabeçalhos HTTP em `server.ts` / `server.js`, incluindo `Content-Security-Policy` e `X-Robots-Tag: noindex, nofollow, noarchive` nas respostas da API e rotas protegidas.
+
+- Lote F (Otimização de Mídia e Documento Único Legal v1.1):
+  • Compressão de 29 imagens JPEG em `src/assets/images/` (redimensionamento máximo 1600 px, remoção de metadados, JPEG progressivo 4:2:0, qualidade 82) e otimização de 5 arquivos PNG de alta resolução:
+    - Redução total observada nas mídias otimizadas: 31.756.816 bytes -> 7.480.366 bytes (economia de 24.276.450 bytes / ~76,4%).
+  • Atualização completa do Documento Único Legal (`/public/assets/aistudio/fervec_x5f_gastronomia_x5f_documento_x5f_unico__1___1__f38fd1c7.html`) para a versão `v1.1 — 26/11/2026`, com:
+    - 0 ocorrências remanescentes de faixas menores (`12 anos`, `12–17`, `12 a 17`), datas antigas (`16/11/2026`, `v1.0`) ou marcadores `A PREENCHER`;
+    - Dados do fornecedor pessoa física (`Gabriel Cremonese`, CPF ***.722.209-**, `fervecrgastronomia@gmail.com`, `@fervecgastronomia`), mantendo sinalização clara apenas nos itens dependentes de confirmação formal do titular antes da abertura comercial pública;
+    - Regra estrita de maioridade 18+, memorial exato de 5 massas + 2 molhos, carga horária total de `4 horas e 8 minutos`, nota mínima `70%`, 84 questões no curso (6 trabalho + 8 prova por módulo), lista de operadores e canal de arrependimento Art. 49 CDC.
+
+- Lote G (Testes Automatizados, Build e Verificação em Navegador):
+  • Correções de integração e tipagem em `src/server/courseContentService.ts` e `src/fervecApp.ts`.
+  • Cobertura de regressão expandida em `src/server/courseApi.test.ts`, `src/server/serverHardening.test.ts`, `src/server/complianceGuards.test.ts`, `src/server/asaasAudit.test.ts`, `src/utils/profile.test.ts` e `supabase/functions/asaas-webhook/logic.test.ts`.
+
+================================================================================
+2. RESULTADOS VERIFICADOS DE TESTES, COMPILAÇÃO E BUILD
+--------------------------------------------------------------------------------
+1. Suíte Biblioteca (`node --test lib/*.test.js`):
+   - 64 / 64 testes aprovados (0 falhas).
+
+2. Suíte Portal, Servidor e Edge Functions (`node --import tsx --test` em `src` e `supabase`):
+   - 116 / 116 testes aprovados (0 falhas).
+
+3. Verificação de Tipos e Sintaxe (`lint_applet`: `tsc --noEmit` + `node --check` em `server.js`, `app.js`, `lib/*.js`):
+   - Aprovada sem erros (código de saída 0).
+
+4. Compilação e Bundle de Produção (`compile_applet` e `npm run build` / Vite):
+   - Aprovados sem erros.
+   - Tamanho do diretório `dist/`: 21.471.476 bytes.
+   - Arquivos `.map` em `dist/`: 0.
+   - Arquivos `.pdf` em `dist/`: 0 (`private-books/fervec-massa-italiana.pdf` mantido exclusivamente no servidor).
+   - Ausência confirmada de vazamento de gabaritos (`correctOptionId`, `correctIndex`, `why`) e receitas protegidas (estágios 2–6 / módulos 2–6) no bundle público de cliente.
+
+5. Verificação em Tempo de Execução (Servidor Express + Chromium Headless via `playwright-cli` em `http://127.0.0.1:3000`):
+   - `curl -sI http://127.0.0.1:3000/api/legal/documents`: HTTP `200 OK` com cabeçalhos `Content-Security-Policy` e `X-Robots-Tag: noindex, nofollow, noarchive`.
+   - Rotas inspecionadas: Home (`/`), `#/vendas`, `#/pagamentos` (sem autenticação redireciona para `#/vendas` e abre modal de login), `#/criar-perfil` (regra `18+` e aceite da versão `v1.1` visíveis), `#/biblioteca`, e `/assets/aistudio/fervec_x5f_gastronomia_x5f_documento_x5f_unico__1___1__f38fd1c7.html` (`v1.1`, `26/11/2026`, `18 anos`, `Gabriel Cremonese`, sem `A PREENCHER`).
+   - Imagens quebradas (`brokenImgs`): `[]` (0 imagens quebradas em todas as rotas verificadas).
+   - Layout Mobile (`390x844`): sem estouro horizontal (`overflowX: false`, largura `390 === 390`).
+   - Console do navegador: 0 erros de lógica da aplicação (apenas bloqueio esperado pela CSP à tentativa de WebSocket do HMR do Vite dev server, pois HMR está desabilitado).
+
+================================================================================
+3. ARTEFATOS DE ENTREGA GERADOS
+--------------------------------------------------------------------------------
+- Pacote limpo de release (sem `node_modules`, `.git`, `.env`, arquivos temporários ou `private-audit`):
+  `private-audit/fervec-gastronomia-release-20261127.zip`
+  - Arquivos empacotados: 423 arquivos (inclui código-fonte, `dist/`, `server.ts`, `server.js`, `app.js`, `lib/`, `public/`, `uploads/`, `data/fervec-db.json`, `private-books/`, `supabase/`, `.env.example`, manifestos e configurações).
+  - Tamanho do ZIP: 48.683.294 bytes (~46,4 MB).
+  - Teste de integridade ZIP (`zipfile.testzip()`): `None` (sem arquivos corrompidos).
+- Assinatura SHA-256 verificada (`private-audit/fervec-gastronomia-release-20261127.zip.sha256`):
+  `9259aa97c0bd36a6edf6fbbc3166ed260530159d66f48b161aab6ee7b062a586`
+
+================================================================================
+4. PENDÊNCIAS EXTERNAS E CONFIRMAÇÕES OBRIGATÓRIAS ANTES DA ABERTURA COMERCIAL
+--------------------------------------------------------------------------------
+Os itens abaixo dependem de ambiente externo ou decisão/confirmação formal do titular (`Gabriel Cremonese`) e não podem ser executados apenas localmente:
+
+1. Supabase Remoto (Banco de Dados):
+   - Aplicar todas as migrações SQL em `supabase/migrations/`, com destaque para `20261126_assessment_versioning.sql`, `20261127_security_commerce_legal.sql` e `20261128_withdrawal_protocol_and_idempotency.sql` (não houve mutação do projeto remoto durante os trabalhos locais).
+
+2. Supabase Edge Functions e Segredos:
+   - Fazer deploy das funções `create-asaas-charge`, `asaas-webhook` e `send-payment-confirmation-email`, configurando as variáveis de ambiente/segredos de produção no projeto Supabase (Asaas API Key/Webhook Token, Resend API Key, URLs de serviço).
+
+3. Confirmações Formais do Titular no Documento Único Legal (`v1.1` e `src/config/legalConfig.ts`):
+   - Confirmar o endereço físico completo do fornecedor (exigência do art. 2º do Decreto nº 7.962/2013 antes da venda pública).
+   - Confirmar o prazo fixo oficial de duração de acesso e política de expiração por módulo.
+
+4. Abertura Comercial e Precificação Final:
+   - Revisar e confirmar o preço final oficial de venda na página do módulo e habilitar `FERVEC_PRICE_CONFIRMED=true` no servidor de produção somente após essa validação.
+
+5. Infraestrutura de Produção e DNS:
+   - Configurar credenciais reais de produção (Asaas, Resend, Supabase), definir domínio oficial, certificado SSL/HTTPS e atualizar URLs canônicas em `sitemap.xml` / `robots.txt` / variáveis de ambiente de produção.
+================================================================================

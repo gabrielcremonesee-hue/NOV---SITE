@@ -7,6 +7,9 @@ export default defineConfig(() => {
   return {
     envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
     plugins: [react(), tailwindcss()],
+    build: {
+      sourcemap: false,
+    },
     resolve: {
       dedupe: ['react', 'react-dom'],
       alias: {

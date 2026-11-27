@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100">
+  <defs>
+    <linearGradient id="cheeseSide" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fff4c4"/>
+      <stop offset="100%" stop-color="#dfba58"/>
+    </linearGradient>
+    <linearGradient id="cheeseRind" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#c99335"/>
+      <stop offset="100%" stop-color="#8b5d14"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="60" cy="83" rx="44" ry="8.5" fill="#0d0401" fill-opacity="0.58"/>
+  <!-- Cheese wedge -->
+  <polygon points="22,42 74,22 92,42 36,56" fill="#fff7d6"/>
+  <polygon points="22,42 36,56 36,74 22,58" fill="url(#cheeseSide)"/>
+  <polygon points="36,56 92,42 92,60 36,74" fill="url(#cheeseRind)"/>
+  <!-- Pine nuts -->
+  <ellipse cx="76" cy="70" rx="8" ry="4.5" transform="rotate(-18 76 70)" fill="#f3dcb2"/>
+  <ellipse cx="90" cy="66" rx="7.5" ry="4.2" transform="rotate(14 90 66)" fill="#ead09e"/>
+  <ellipse cx="83" cy="75" rx="7.5" ry="4" transform="rotate(6 83 75)" fill="#fae6be"/>
+</svg>

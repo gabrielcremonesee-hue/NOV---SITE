@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 260" fill="none">
+  <rect width="360" height="260" fill="#EFE5D5"/>
+  <rect x="0" y="185" width="360" height="75" fill="#4B5642"/>
+  <ellipse cx="180" cy="155" rx="108" ry="48" fill="#FFFCF7" stroke="#D9CBB6" stroke-width="4"/>
+  <!-- Croissant & herbs -->
+  <path d="M112 156c18-30 56-42 96-30 22 7 38 22 42 38-28 12-108 12-138-8Z" fill="#D49538" stroke="#8C5819" stroke-width="2.5"/>
+  <path d="M148 128c-2 16 2 28 10 38M182 124c-2 18 2 30 8 40M214 132c0 14 4 24 10 30" stroke="#9D651E" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="275" cy="84" r="22" fill="#D99A35" opacity="0.7"/>
+  <circle cx="88" cy="78" r="18" fill="#697454" opacity="0.7"/>
+</svg>

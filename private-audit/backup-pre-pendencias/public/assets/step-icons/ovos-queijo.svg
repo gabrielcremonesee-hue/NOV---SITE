@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 110">
+  <defs>
+    <radialGradient id="eggBack" cx="38%" cy="30%" r="68%">
+      <stop offset="0%" stop-color="#f7c499"/>
+      <stop offset="46%" stop-color="#c96f37"/>
+      <stop offset="100%" stop-color="#7c3615"/>
+    </radialGradient>
+    <radialGradient id="eggFront" cx="36%" cy="28%" r="72%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="48%" stop-color="#f4d8c3"/>
+      <stop offset="78%" stop-color="#d4895c"/>
+      <stop offset="100%" stop-color="#8b401c"/>
+    </radialGradient>
+    <radialGradient id="eggCup" cx="45%" cy="68%" r="68%">
+      <stop offset="0%" stop-color="#e38d57"/>
+      <stop offset="65%" stop-color="#ab4f23"/>
+      <stop offset="100%" stop-color="#69290e"/>
+    </radialGradient>
+    <radialGradient id="yolkRich" cx="36%" cy="28%" r="65%">
+      <stop offset="0%" stop-color="#fff4aa"/>
+      <stop offset="35%" stop-color="#ffb818"/>
+      <stop offset="82%" stop-color="#e37600"/>
+      <stop offset="100%" stop-color="#b84800"/>
+    </radialGradient>
+    <radialGradient id="eggSh" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#090301" stop-opacity="0.72"/>
+      <stop offset="100%" stop-color="#090301" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <ellipse cx="62" cy="95" rx="49" ry="10" fill="url(#eggSh)"/>
+  <!-- Whole warm brown egg back-right -->
+  <ellipse cx="81" cy="40" rx="22" ry="27" transform="rotate(14 81 40)" fill="url(#eggBack)"/>
+  <ellipse cx="75" cy="29" rx="6" ry="10" transform="rotate(12 75 29)" fill="#ffffff" fill-opacity="0.3"/>
+  <!-- Left large front egg -->
+  <ellipse cx="42" cy="60" rx="24" ry="28" transform="rotate(-12 42 60)" fill="url(#eggFront)"/>
+  <ellipse cx="33" cy="48" rx="8" ry="13" transform="rotate(-15 33 48)" fill="#ffffff" fill-opacity="0.56"/>
+  <!-- Lower right cracked shell cup with luminous golden yolk -->
+  <path d="M58 61 L66 66 L75 59 L84 64 L93 58 L103 64 L106 57 C108 77, 97 90, 82 90 C66 90, 56 77, 58 61 Z" fill="url(#eggCup)"/>
+  <path d="M59 61 L66 66 L75 59 L84 64 L93 58 L103 64 L105 60 L93 55 L84 61 L75 56 L66 62 Z" fill="#fff7ee" opacity="0.94"/>
+  <!-- Rich golden-orange yolk -->
+  <ellipse cx="82" cy="63" rx="16" ry="12.5" fill="url(#yolkRich)"/>
+  <ellipse cx="76" cy="58" rx="5.2" ry="2.8" transform="rotate(-14 76 58)" fill="#ffffff" fill-opacity="0.76"/>
+</svg>

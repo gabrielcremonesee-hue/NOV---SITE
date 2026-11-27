@@ -394,6 +394,8 @@ export interface UnifiedTrabalhoRenderOptions {
   answeredCount?: number;
   completeAction?: string;
   canCompleteWork?: boolean;
+  hideImmediateFeedback?: boolean;
+  pendingFeedback?: boolean;
 }
 
 export function renderUnifiedTrabalhoSection(opts: UnifiedTrabalhoRenderOptions): string {
@@ -417,10 +419,13 @@ export function renderUnifiedTrabalhoSection(opts: UnifiedTrabalhoRenderOptions)
     answeredCount,
     completeAction,
     canCompleteWork = false,
+    hideImmediateFeedback = false,
+    pendingFeedback = false,
   } = opts;
 
   const pct = totalQuestions > 0 ? Math.round((currentIndex / totalQuestions) * 100) : 0;
   const hasAnswer = selectedAnswer !== null && selectedAnswer !== undefined;
+  const revealFeedback = hasAnswer && !hideImmediateFeedback && !pendingFeedback && correctIndex >= 0;
   const modeAttr = answerModeAttr ? `data-mode="${escHtml(answerModeAttr)}"` : '';
   const answeredTotal = typeof answeredCount === 'number' ? answeredCount : hasAnswer ? currentIndex + 1 : currentIndex;
 
@@ -436,9 +441,9 @@ export function renderUnifiedTrabalhoSection(opts: UnifiedTrabalhoRenderOptions)
     })}
 
     <div class="quiz-heading trabalho-heading">
-      <span class="eyebrow">TRABALHO · APRENDA BRINCANDO</span>
-      <h2>Vamos ver o que ficou?</h2>
-      <p>Uma pergunta de cada vez. E o Chef explica junto com você.</p>
+      <span class="eyebrow">${hideImmediateFeedback ? 'AVALIAÇÃO · RESPOSTAS REGISTRADAS NO ENVIO' : 'TRABALHO · APRENDA BRINCANDO'}</span>
+      <h2>${hideImmediateFeedback ? 'Escolha uma alternativa e avance.' : 'Vamos ver o que ficou?'}</h2>
+      <p>${hideImmediateFeedback ? 'Você poderá revisar e alterar suas respostas antes de enviar.' : 'Uma pergunta de cada vez. E o Chef explica junto com você.'}</p>
     </div>
 
     <div class="quiz-progress trabalho-progress">
@@ -455,7 +460,7 @@ export function renderUnifiedTrabalhoSection(opts: UnifiedTrabalhoRenderOptions)
         ${options
           .map((optText, i) => {
             const isPicked = selectedAnswer === i;
-            const statusClass = hasAnswer
+            const statusClass = revealFeedback
               ? i === correctIndex
                 ? 'answer-good'
                 : isPicked
@@ -465,21 +470,26 @@ export function renderUnifiedTrabalhoSection(opts: UnifiedTrabalhoRenderOptions)
             return `<button type="button" class="answer-option ${isPicked ? 'picked ' : ''}${statusClass}" data-action="${escHtml(answerAction)}" ${modeAttr} data-answer="${i}" ${hasAnswer && !answerModeAttr ? 'disabled' : ''}>
               <span class="option-letter">${String.fromCharCode(65 + i)}</span>
               <span>${escHtml(optText)}</span>
-              ${hasAnswer && i === correctIndex ? '<b>Correta</b>' : ''}
-              ${isPicked && i !== correctIndex ? '<b>Sua resposta</b>' : ''}
+              ${revealFeedback && i === correctIndex ? '<b>Correta</b>' : ''}
+              ${revealFeedback && isPicked && i !== correctIndex ? '<b>Sua resposta</b>' : ''}
             </button>`;
           })
           .join('')}
       </div>
 
       ${
-        hasAnswer
-          ? `<div class="feedback ${selectedAnswer === correctIndex ? 'feedback-good' : 'feedback-warm'}">
-              <strong>${selectedAnswer === correctIndex ? 'Isso mesmo!' : 'Vamos aprender com essa resposta.'}</strong>
-              <p>${escHtml(explanation)}</p>
-              <span>✳ Dica do Chef: ${escHtml(chefTip)}</span>
+        hasAnswer && !hideImmediateFeedback && pendingFeedback
+          ? `<div class="feedback feedback-warm">
+              <strong>Consultando orientação do Chef...</strong>
+              <p>Validando sua resposta com segurança no servidor.</p>
             </div>`
-          : ''
+          : revealFeedback
+            ? `<div class="feedback ${selectedAnswer === correctIndex ? 'feedback-good' : 'feedback-warm'}">
+                <strong>${selectedAnswer === correctIndex ? 'Isso mesmo!' : 'Vamos aprender com essa resposta.'}</strong>
+                <p>${escHtml(explanation)}</p>
+                <span>✳ Dica do Chef: ${escHtml(chefTip)}</span>
+              </div>`
+            : ''
       }
 
       ${

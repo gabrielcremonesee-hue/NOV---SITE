@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100">
+  <defs>
+    <linearGradient id="woodPinch" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e0b379"/>
+      <stop offset="100%" stop-color="#9e632b"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="60" cy="83" rx="38" ry="8" fill="#0d0401" fill-opacity="0.58"/>
+  <!-- Pinch bowl -->
+  <path d="M26 52 C26 73, 40 80, 60 80 C80 80, 94 73, 94 52 Z" fill="url(#woodPinch)"/>
+  <ellipse cx="60" cy="52" rx="34" ry="10" fill="#f3cfa0"/>
+  <ellipse cx="60" cy="52" rx="29" ry="7.5" fill="#7c471b"/>
+  <!-- Sea salt & red chili flakes -->
+  <path d="M35 53 C45 36, 75 36, 85 53 Z" fill="#fffaf2"/>
+  <circle cx="49" cy="47" r="2" fill="#d3251d"/>
+  <circle cx="57" cy="43" r="2.2" fill="#b31711"/>
+  <circle cx="65" cy="46" r="2" fill="#e0362a"/>
+  <circle cx="54" cy="50" r="1.8" fill="#c91f17"/>
+  <circle cx="69" cy="50" r="1.7" fill="#d3251d"/>
+</svg>

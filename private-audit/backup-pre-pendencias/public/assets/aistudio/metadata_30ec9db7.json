@@ -1,0 +1,8 @@
+{
+  "name": "Remix FerveC Gastronomia",
+  "description": "Aulas de gastronomia com o Chef CREMONESE — FerveC Gastronomia.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

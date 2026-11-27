@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 260" fill="none">
+  <rect width="360" height="260" fill="#EAE2D6"/>
+  <rect x="0" y="185" width="360" height="75" fill="#322923"/>
+  <rect x="75" y="102" width="210" height="92" rx="10" fill="#2A211C" stroke="#8E4335" stroke-width="3"/>
+  <!-- Sushi nigiri & maki -->
+  <rect x="102" y="128" width="46" height="32" rx="12" fill="#FFFDF8"/>
+  <path d="M100 132c14-12 36-12 50 0v10H100v-10Z" fill="#E06443"/>
+  <rect x="164" y="128" width="46" height="32" rx="12" fill="#FFFDF8"/>
+  <path d="M162 132c14-12 36-12 50 0v10h-50v-10Z" fill="#D9503A"/>
+  <circle cx="244" cy="144" r="18" fill="#231D1A" stroke="#FFFDF8" stroke-width="4"/>
+  <circle cx="244" cy="144" r="7" fill="#6F9A54"/>
+  <!-- Chopsticks -->
+  <line x1="88" y1="74" x2="275" y2="88" stroke="#C88B48" stroke-width="5" stroke-linecap="round"/>
+  <line x1="88" y1="88" x2="275" y2="96" stroke="#A66E33" stroke-width="5" stroke-linecap="round"/>
+</svg>

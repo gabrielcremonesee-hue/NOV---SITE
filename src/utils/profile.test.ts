@@ -133,3 +133,25 @@ test('validateProfileForm blocks registration unless acceptTerms is explicitly t
   const allowed = validateProfileForm(makeValidForm({ acceptTerms: true }), refDate);
   assert.equal(allowed.acceptTerms, undefined);
 });
+
+test('validateProfileForm and createStoredProfile reject inconsistent age vs birthDate and underage birthDate', () => {
+  const refDate = new Date(2026, 10, 26);
+  const mismatch = validateProfileForm(
+    makeValidForm({
+      birthDate: '15/05/1996',
+      age: '45',
+    }),
+    refDate
+  );
+  assert.match(mismatch.age || '', /não confere com a data de nascimento/i);
+
+  assert.throws(
+    () => createStoredProfile(makeValidForm({ birthDate: '01/01/2012', age: '14' })),
+    /18 anos/
+  );
+  assert.throws(
+    () => createStoredProfile(makeValidForm({ birthDate: '15/05/1996', age: '45' })),
+    /não confere com a data de nascimento/i
+  );
+});
+

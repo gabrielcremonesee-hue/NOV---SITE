@@ -1,5 +1,6 @@
 import { CourseState, ExamAttempt, QuestionAttempt, RecipeProgressEntry } from '../progress';
 import type { QuestionAttemptSnapshot } from '../../data/assessments';
+import type { ProtectedCourseContentPayload, PublicQuizQuestion } from '../../data/coursePublicData';
 import { getSupabaseClient } from './client';
 
 export interface ServerCertificateRecord {
@@ -103,25 +104,35 @@ async function getAccessToken(): Promise<string | null> {
 }
 
 const CLIENT_SESSION_KEY = 'fervec-client-session-id';
+let inMemoryFallbackSessionId: string | null = null;
+
+function generateSessionUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
 
 export function getOrCreateClientSessionId(): string {
-  if (typeof sessionStorage === 'undefined') return 'server-session';
+  if (typeof sessionStorage === 'undefined') {
+    if (!inMemoryFallbackSessionId) inMemoryFallbackSessionId = generateSessionUuid();
+    return inMemoryFallbackSessionId;
+  }
   try {
     let existing = sessionStorage.getItem(CLIENT_SESSION_KEY);
-    if (!existing) {
-      existing =
-        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-          ? crypto.randomUUID()
-          : `sess-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    if (!existing || existing.length < 8 || existing === 'server-session' || existing === 'browser-session') {
+      existing = generateSessionUuid();
       sessionStorage.setItem(CLIENT_SESSION_KEY, existing);
     }
     return existing;
   } catch {
-    return 'browser-session';
+    if (!inMemoryFallbackSessionId) inMemoryFallbackSessionId = generateSessionUuid();
+    return inMemoryFallbackSessionId;
   }
 }
 
 export function resetClientSessionId(): void {
+  inMemoryFallbackSessionId = null;
   if (typeof sessionStorage === 'undefined') return;
   try {
     sessionStorage.removeItem(CLIENT_SESSION_KEY);
@@ -177,6 +188,11 @@ export async function logoutServerSession(): Promise<void> {
 export async function recordLegalAcceptance(payload: {
   termsVersion: string;
   privacyVersion: string;
+  courseSlug?: string;
+  orderId?: string;
+  acceptanceKind?: 'signup' | 'checkout';
+  marketingWhatsapp?: boolean;
+  marketingEmail?: boolean;
   preContractAccepted?: boolean;
   source?: string;
 }): Promise<boolean> {
@@ -276,6 +292,142 @@ export async function fetchWorkspaceState(
     return (await res.json()) as WorkspaceHydrationResponse;
   } catch {
     return null;
+  }
+}
+
+export async function fetchProtectedCourseContent(moduleKey?: string): Promise<{
+  ok: boolean;
+  status: number;
+  code?: string;
+  error?: string;
+  data?: ProtectedCourseContentPayload;
+}> {
+  try {
+    const token = await getAccessToken();
+    if (!token) {
+      return { ok: false, status: 401, code: 'AUTH_REQUIRED', error: 'Autenticação necessária.' };
+    }
+    const qs = moduleKey ? `?moduleKey=${encodeURIComponent(moduleKey)}` : '';
+    const res = await authFetch(`/api/course/content${qs}`);
+    const data = (await res.json().catch(() => ({}))) as Partial<ProtectedCourseContentPayload> & {
+      code?: string;
+      error?: string;
+    };
+    if (!res.ok || !data?.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        code: data?.code,
+        error: data?.error || 'Não foi possível carregar o conteúdo do curso.',
+      };
+    }
+    return {
+      ok: true,
+      status: res.status,
+      data: data as ProtectedCourseContentPayload,
+    };
+  } catch {
+    return { ok: false, status: 0, error: 'Falha de conexão ao carregar o conteúdo do curso.' };
+  }
+}
+
+export async function fetchSanitizedAssessmentQuestions(
+  moduleKey: string,
+  attemptType: 'work' | 'exam'
+): Promise<{
+  ok: boolean;
+  status: number;
+  code?: string;
+  error?: string;
+  bankVersion?: string;
+  passingScorePercent?: number;
+  questions?: PublicQuizQuestion[];
+}> {
+  try {
+    const token = await getAccessToken();
+    if (!token) {
+      return { ok: false, status: 401, code: 'AUTH_REQUIRED', error: 'Autenticação necessária.' };
+    }
+    const qs = `?moduleKey=${encodeURIComponent(moduleKey)}&attemptType=${encodeURIComponent(attemptType)}`;
+    const res = await authFetch(`/api/assessments/questions${qs}`);
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      code?: string;
+      error?: string;
+      bankVersion?: string;
+      passingScorePercent?: number;
+      questions?: PublicQuizQuestion[];
+    };
+    if (!res.ok || !Array.isArray(data?.questions)) {
+      return {
+        ok: false,
+        status: res.status,
+        code: data?.code,
+        error: data?.error || 'Não foi possível carregar as questões.',
+      };
+    }
+    return {
+      ok: true,
+      status: res.status,
+      bankVersion: data.bankVersion,
+      passingScorePercent: data.passingScorePercent,
+      questions: data.questions,
+    };
+  } catch {
+    return { ok: false, status: 0, error: 'Falha de conexão ao carregar as questões.' };
+  }
+}
+
+export async function checkWorkAnswerOnServer(
+  moduleKey: string,
+  questionIndex: number,
+  selectedAnswer: number
+): Promise<{
+  ok: boolean;
+  status: number;
+  code?: string;
+  isCorrect?: boolean;
+  correctIndex?: number;
+  explanation?: string;
+  tip?: string;
+  error?: string;
+}> {
+  try {
+    const token = await getAccessToken();
+    if (!token) {
+      return { ok: false, status: 401, code: 'AUTH_REQUIRED', error: 'Autenticação necessária.' };
+    }
+    const res = await authFetch('/api/assessments/work-feedback', {
+      method: 'POST',
+      body: JSON.stringify({ moduleKey, questionIndex, selectedAnswer }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      code?: string;
+      isCorrect?: boolean;
+      correctIndex?: number;
+      explanation?: string;
+      tip?: string;
+      error?: string;
+    };
+    if (!res.ok || !data?.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        code: data?.code,
+        error: data?.error || 'Não foi possível validar a resposta.',
+      };
+    }
+    return {
+      ok: true,
+      status: res.status,
+      isCorrect: Boolean(data.isCorrect),
+      correctIndex: typeof data.correctIndex === 'number' ? data.correctIndex : -1,
+      explanation: String(data.explanation || ''),
+      tip: String(data.tip || ''),
+    };
+  } catch {
+    return { ok: false, status: 0, error: 'Falha de conexão ao validar a resposta.' };
   }
 }
 

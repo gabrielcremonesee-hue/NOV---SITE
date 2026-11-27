@@ -3954,6 +3954,18 @@ async function initRestaurantsExperience() {
   }
 }
 
+let restaurantSearchDebounceTimer = null;
+
+function scheduleRestaurantSearch({ skipLoadingRender = false, delayMs = 450 } = {}) {
+  if (restaurantSearchDebounceTimer) {
+    clearTimeout(restaurantSearchDebounceTimer);
+  }
+  restaurantSearchDebounceTimer = setTimeout(() => {
+    restaurantSearchDebounceTimer = null;
+    void runRestaurantSearch({ skipLoadingRender });
+  }, Math.max(400, delayMs));
+}
+
 async function runRestaurantSearch({ skipLoadingRender = false } = {}) {
   state.restaurantsLoading = true;
   state.restaurantsError = '';
@@ -4673,6 +4685,11 @@ function renderDelegatedAction(action, el) {
       state.pdf = null;
       pdfLoading = null;
       state.pageText = {};
+      try {
+        if (typeof caches !== 'undefined' && typeof caches.delete === 'function') {
+          caches.delete('fervec-pdf-cache').catch(() => {});
+        }
+      } catch {}
       clearSavedSession(localStorage);
       state.speechListening = false;
       state.handsFreeMode = false;
@@ -4816,14 +4833,14 @@ function renderDelegatedAction(action, el) {
           lgpdCard.querySelector('.lgpd-consent-actions').innerHTML =
             '<button type="button" class="btn btn-primary" data-action="grant-geo-consent">📍 Usar minha localização</button>';
         }
-        runRestaurantSearch({ skipLoadingRender: false });
+        scheduleRestaurantSearch({ skipLoadingRender: false });
       } else {
         renderView();
       }
       toast('Localização automática desligada.');
       break;
     case 'retry-restaurants':
-      runRestaurantSearch({ skipLoadingRender: false });
+      scheduleRestaurantSearch({ skipLoadingRender: false });
       break;
     case 'filter-cuisine': {
       const nextCuisine = el.dataset.cuisine || 'all';
@@ -4833,7 +4850,7 @@ function renderDelegatedAction(action, el) {
         btn.classList.toggle('is-active', active);
         btn.setAttribute('aria-pressed', active ? 'true' : 'false');
       });
-      runRestaurantSearch({ skipLoadingRender: false });
+      scheduleRestaurantSearch({ skipLoadingRender: false });
       break;
     }
     case 'sort-restaurants': {
@@ -5206,7 +5223,7 @@ document.addEventListener('submit', async (e) => {
   if (e.target.id === 'restaurant-search-form') {
     e.preventDefault();
     state.restaurantQuery = document.querySelector('#restaurant-search-input')?.value?.trim() || '';
-    runRestaurantSearch({ skipLoadingRender: false });
+    scheduleRestaurantSearch({ skipLoadingRender: false });
     return;
   }
   if (e.target.classList?.contains('timer-form')) {

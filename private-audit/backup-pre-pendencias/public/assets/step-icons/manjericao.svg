@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100">
+  <defs>
+    <linearGradient id="leafA" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#80cc52"/>
+      <stop offset="100%" stop-color="#2f701b"/>
+    </linearGradient>
+    <linearGradient id="leafB" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#96dc68"/>
+      <stop offset="100%" stop-color="#3c8224"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="60" cy="83" rx="38" ry="8" fill="#0d0401" fill-opacity="0.55"/>
+  <path d="M58 80 C58 64, 59 50, 60 36" fill="none" stroke="#3c7c22" stroke-width="3.2" stroke-linecap="round"/>
+  <path d="M59 60 C34 62, 20 44, 24 27 C42 25, 58 42, 59 60 Z" fill="url(#leafA)"/>
+  <path d="M59 58 C84 60, 98 42, 94 25 C76 23, 60 40, 59 58 Z" fill="url(#leafB)"/>
+  <path d="M60 42 C46 26, 48 14, 60 12 C72 14, 74 26, 60 42 Z" fill="url(#leafB)"/>
+  <path d="M29 33 C39 42, 49 50, 57 57 M89 31 C79 40, 69 48, 61 55 M60 16 L60 40" fill="none" stroke="#bde898" stroke-width="1.4" opacity="0.65" stroke-linecap="round"/>
+</svg>

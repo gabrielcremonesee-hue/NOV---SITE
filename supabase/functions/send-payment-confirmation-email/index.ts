@@ -46,6 +46,46 @@ function jsonResponse(body: unknown, status = 200, corsHeaders?: Record<string, 
   });
 }
 
+const resendQuotaMemory = {
+  dayKey: '',
+  dayCount: 0,
+  monthKey: '',
+  monthCount: 0,
+};
+
+function checkAndConsumeResendFreeTierQuota(): { allowed: boolean; dailyCount: number; monthlyCount: number } {
+  const now = new Date();
+  const dayKey = now.toISOString().slice(0, 10);
+  const monthKey = now.toISOString().slice(0, 7);
+  const dailyCap = Math.max(1, Number(Deno.env.get('RESEND_DAILY_CAP') || 90));
+  const monthlyCap = Math.max(1, Number(Deno.env.get('RESEND_MONTHLY_CAP') || 2800));
+
+  if (resendQuotaMemory.dayKey !== dayKey) {
+    resendQuotaMemory.dayKey = dayKey;
+    resendQuotaMemory.dayCount = 0;
+  }
+  if (resendQuotaMemory.monthKey !== monthKey) {
+    resendQuotaMemory.monthKey = monthKey;
+    resendQuotaMemory.monthCount = 0;
+  }
+
+  if (resendQuotaMemory.dayCount >= dailyCap || resendQuotaMemory.monthCount >= monthlyCap) {
+    return {
+      allowed: false,
+      dailyCount: resendQuotaMemory.dayCount,
+      monthlyCount: resendQuotaMemory.monthCount,
+    };
+  }
+
+  resendQuotaMemory.dayCount += 1;
+  resendQuotaMemory.monthCount += 1;
+  return {
+    allowed: true,
+    dailyCount: resendQuotaMemory.dayCount,
+    monthlyCount: resendQuotaMemory.monthCount,
+  };
+}
+
 Deno.serve(async (req: Request) => {
   const corsHeaders = resolveCorsHeaders(req);
   if (req.method === 'OPTIONS') {
@@ -217,6 +257,20 @@ Deno.serve(async (req: Request) => {
     accessUrl: input.accessUrl || `${appBaseUrl}/#/cursos`,
   };
 
+  const quota = checkAndConsumeResendFreeTierQuota();
+  if (!quota.allowed) {
+    return jsonResponse(
+      {
+        ok: true,
+        deferred: true,
+        reason: 'RESEND_FREE_TIER_CAP_REACHED',
+        orderId: input.orderId,
+      },
+      202,
+      corsHeaders
+    );
+  }
+
   const sendResult = await sendEmailViaResend({
     apiKey: emailConfig.apiKey,
     fromEmail: emailConfig.fromEmail,
@@ -226,7 +280,8 @@ Deno.serve(async (req: Request) => {
   if (!sendResult.ok) {
     return jsonResponse(
       { ok: false, error: sendResult.error, provider: 'resend', orderId: input.orderId },
-      sendResult.statusCode
+      sendResult.statusCode,
+      corsHeaders
     );
   }
 
@@ -238,6 +293,7 @@ Deno.serve(async (req: Request) => {
       orderId: input.orderId,
       recipientEmail,
     },
-    200
+    200,
+    corsHeaders
   );
 });

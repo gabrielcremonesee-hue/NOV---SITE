@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 540" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="540" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2A1710"/>
+      <stop offset="52%" stop-color="#3E2216"/>
+      <stop offset="100%" stop-color="#1E100A"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="70%" cy="48%" r="48%">
+      <stop offset="0%" stop-color="#D99A35" stop-opacity="0.32"/>
+      <stop offset="100%" stop-color="#D99A35" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1280" height="540" fill="url(#bg)"/>
+  <rect width="1280" height="540" fill="url(#glow)"/>
+  <!-- Warm kitchen shelves & hanging copper pans -->
+  <rect x="640" y="90" width="520" height="8" rx="4" fill="#593524"/>
+  <circle cx="715" cy="155" r="34" fill="#A65E32" stroke="#D99A35" stroke-width="3"/>
+  <rect x="711" y="98" width="8" height="24" rx="4" fill="#3C2318"/>
+  <circle cx="805" cy="148" r="28" fill="#8C4924" stroke="#C88742" stroke-width="3"/>
+  <rect x="801" y="98" width="8" height="22" rx="4" fill="#3C2318"/>
+  <!-- Wooden counter -->
+  <rect x="0" y="425" width="1280" height="115" fill="#4B2B1B"/>
+  <rect x="0" y="425" width="1280" height="6" fill="#7A4C32"/>
+  <!-- Pasta plate on counter -->
+  <ellipse cx="835" cy="445" rx="135" ry="34" fill="#F7EFE2"/>
+  <ellipse cx="835" cy="441" rx="108" ry="24" fill="#E8DCC8"/>
+  <path d="M760 434c22-22 60-26 95-14 25 8 44 20 55 12-12 18-48 26-85 24-35-2-55-12-65-22Z" fill="#E6B84C"/>
+  <path d="M775 432c20-14 52-18 82-10M782 441c24-10 56-10 86-2" stroke="#C88A24" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="818" cy="422" r="8" fill="#B83227"/>
+  <circle cx="848" cy="427" r="7" fill="#B83227"/>
+  <path d="M835 415c8-10 20-8 22 0-8 6-16 6-22 0Z" fill="#5D8446"/>
+  <!-- Olive oil bottle & herb jar -->
+  <rect x="985" y="340" width="38" height="92" rx="10" fill="#697454" opacity="0.9"/>
+  <rect x="998" y="314" width="12" height="28" rx="4" fill="#697454"/>
+  <rect x="995" y="366" width="22" height="36" rx="2" fill="#F4EBDD"/>
+  <!-- Tomatoes on board -->
+  <circle cx="670" cy="450" r="20" fill="#BA2D25"/>
+  <circle cx="705" cy="456" r="16" fill="#CE3B2E"/>
+  <path d="M670 430c-3-6-8-7-8-7s5-1 8 3c3-4 8-3 8-3s-5 1-8 7Z" fill="#5D8446"/>
+</svg>

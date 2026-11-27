@@ -1,0 +1,40 @@
+{
+  "name": "fervec-gastronomia",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "start": "tsx server.ts",
+    "build": "vite build",
+    "lint": "tsc --noEmit && node --check server.js && node --check app.js && node --check lib/db.js && node --check lib/timer.js && node --check lib/goals.js && node --check lib/ingredients.js && node --check lib/reader.js && node --check lib/recipes.js && node --check lib/chat.js && node --check lib/live_audio.js && node --check lib/live_client.js && node --check lib/auth.js && node --check lib/speech.js && node --check lib/notes.js && node --check lib/progress.js && node --check lib/restaurants.js && node --check lib/maps_client.js"
+  },
+  "dependencies": {
+    "@google/genai": "^3.6.1",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.119.2",
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "autoprefixer": "^10.7.0",
+    "dotenv": "^18.0.10",
+    "esbuild": "^0.28.2",
+    "express": "^5.3.0",
+    "lucide-react": "^1.78.0",
+    "maplibre-gl": "^6.19.0",
+    "motion": "^14.14.0",
+    "msedge-tts": "^2.1.1",
+    "pdf-lib": "^1.17.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwindcss": "^4.3.5",
+    "three": "^0.187.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "ws": "^8.23.0"
+  }
+}

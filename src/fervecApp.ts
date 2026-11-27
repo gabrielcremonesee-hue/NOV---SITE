@@ -1,15 +1,24 @@
+import type { LessonStage, TechnicalSheet } from './data/courseData';
+import type { ExtraRecipe } from './data/recipesData';
+import type { QuestionAttemptSnapshot } from './data/assessments';
 import {
+  ALL_MODULE_KEYS,
+  ASSESSMENT_BANK_VERSION,
+  CARBONARA_PREVIEW_STAGE,
+  CARBONARA_PUBLIC_STAGE_TAGS,
+  computeCourseWorkloadLabel,
   course,
-  introText,
+  formatBrDate,
   ingredients,
-  stages,
-  questions,
-  exam,
+  introText,
+  PASSING_SCORE_PERCENT,
+  prep,
+  PUBLIC_MODULES,
   reviewItems,
-  carbonaraTechSheet,
-  TechnicalSheet,
-} from './data/courseData';
-import { extraRecipes, ExtraRecipe } from './data/recipesData';
+  type ProtectedCourseContentPayload,
+  type PublicModuleSummary,
+  type PublicQuizQuestion,
+} from './data/coursePublicData';
 import {
   getIngredientsForModuleStage,
   INGREDIENTS_CATALOG,
@@ -25,15 +34,6 @@ import {
   CourseState,
   RecipeProgressEntry,
 } from './utils/progress';
-import {
-  ASSESSMENT_BANK_VERSION,
-  computeCourseWorkloadLabel,
-  formatBrDate,
-  gradeAssessment,
-  PASSING_SCORE_PERCENT,
-  recipeQuestionSet,
-  type QuestionAttemptSnapshot,
-} from './data/assessments';
 import {
   playChef,
   pauseChef,
@@ -76,8 +76,11 @@ import {
   verifySupabaseSignupCode,
 } from './utils/supabase/profileSync';
 import {
+  checkWorkAnswerOnServer,
   downloadCertificatePdfBlob,
   fetchAdminTelemetry,
+  fetchProtectedCourseContent,
+  fetchSanitizedAssessmentQuestions,
   fetchWorkspaceState,
   hydrateCourseStateFromWorkspace,
   issueOrFetchCertificate,
@@ -347,7 +350,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   let recipeStage = 0;
   let recipeTab = 'lesson';
   let lessonTab = 'learn';
-  let lessonStage = Math.min(Math.max(state.stage || 0, 0), stages.length - 1);
+  let lessonStage = Math.min(Math.max(state.stage || 0, 0), PUBLIC_MODULES[0].totalLessonSteps - 1);
   let selectedIngredientId = 'ovos';
   let prepMode = !state.mise;
   let qIndex = Number.isInteger(state.questionCurrent) ? state.questionCurrent : 0;
@@ -414,6 +417,211 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   let paymentsPreContractAccepted = false;
   let adminTelemetry: ServerAdminTelemetry | null = null;
   let adminTelemetryLoaded = false;
+
+  type ProtectedExtraRecipe = ProtectedCourseContentPayload['extraRecipes'][number];
+  let protectedContent: ProtectedCourseContentPayload | null = null;
+  let protectedContentLoading = false;
+  let protectedContentError: string | null = null;
+  const sanitizedBankCache = new Map<string, PublicQuizQuestion[]>();
+  const sanitizedBankLoading = new Set<string>();
+  const sanitizedBankError = new Map<string, string>();
+  const workFeedbackCache = new Map<
+    string,
+    { isCorrect: boolean; correctIndex: number; explanation: string; tip: string }
+  >();
+  let pendingPaymentRedirect = false;
+
+  function clearProtectedRuntimeCaches() {
+    protectedContent = null;
+    protectedContentLoading = false;
+    protectedContentError = null;
+    sanitizedBankCache.clear();
+    sanitizedBankLoading.clear();
+    sanitizedBankError.clear();
+    workFeedbackCache.clear();
+  }
+
+  function isAuthenticatedUser(): boolean {
+    if (PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED) {
+      return Boolean(userProfile);
+    }
+    return userProfile?.authSource === 'supabase';
+  }
+
+  function getPublicModule(moduleId: string): PublicModuleSummary | undefined {
+    return PUBLIC_MODULES.find((m) => m.id === moduleId);
+  }
+
+  function getCarbonaraTotalSteps(): number {
+    return PUBLIC_MODULES[0]?.totalLessonSteps || 6;
+  }
+
+  function getCarbonaraStageCount(attemptType: 'work' | 'exam'): number {
+    return attemptType === 'work'
+      ? PUBLIC_MODULES[0]?.totalWorkQuestions || 6
+      : PUBLIC_MODULES[0]?.totalExamQuestions || 8;
+  }
+
+  function getProtectedExtraRecipe(moduleId: string): ProtectedExtraRecipe | undefined {
+    return protectedContent?.extraRecipes.find((r) => r.id === moduleId);
+  }
+
+  function getCarbonaraStage(idx: number): LessonStage {
+    const protectedStage = protectedContent?.carbonara?.stages?.[idx];
+    if (protectedStage) return protectedStage;
+    if (idx === 0) return CARBONARA_PREVIEW_STAGE;
+    const pubTag = CARBONARA_PUBLIC_STAGE_TAGS[idx] || `Etapa ${idx + 1}`;
+    return {
+      title: pubTag,
+      tag: pubTag,
+      photo: CARBONARA_PREVIEW_STAGE.photo,
+      intro: 'Conteúdo exclusivo para alunos matriculados no curso Massas Italianas.',
+      body: '',
+      tip: 'Entre na sua conta com matrícula ativa para liberar todas as etapas.',
+      warning: '',
+      quote: '',
+      micro: [],
+      timer: false,
+      alt: pubTag,
+      caption: pubTag,
+    };
+  }
+
+  function getCarbonaraStepsView(): LessonStage[] {
+    const total = getCarbonaraTotalSteps();
+    const list: LessonStage[] = [];
+    for (let i = 0; i < total; i++) {
+      list.push(getCarbonaraStage(i));
+    }
+    return list;
+  }
+
+  function handleProtectedApiAuthFailure(status: number, errorMsg?: string): boolean {
+    if (status === 401 || status === 409) {
+      clearProtectedRuntimeCaches();
+      if (status === 409) {
+        toast.error(
+          'Sessão encerrada em outro dispositivo',
+          'Sua conta entrou em outro navegador. Entre novamente.'
+        );
+      }
+      if (userProfile?.authSource === 'supabase') {
+        userProfile = { ...userProfile, authSource: 'local' };
+        saveProfile(userProfile);
+      }
+      workspaceData = null;
+      openLoginModal(errorMsg || 'Faça login novamente para acessar o curso.');
+      return true;
+    }
+    return false;
+  }
+
+  async function ensureProtectedCourseContentLoaded(): Promise<boolean> {
+    if (protectedContent) return true;
+    if (PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED || userProfile?.authSource !== 'supabase') {
+      return false;
+    }
+    if (protectedContentLoading) return false;
+    protectedContentLoading = true;
+    protectedContentError = null;
+    const res = await fetchProtectedCourseContent();
+    protectedContentLoading = false;
+    if (res.ok && res.data) {
+      protectedContent = res.data;
+      protectedContentError = null;
+      render();
+      return true;
+    }
+    protectedContentError = res.error || null;
+    if (res.status === 401 || res.status === 409) {
+      handleProtectedApiAuthFailure(res.status, res.error);
+    } else {
+      render();
+    }
+    return false;
+  }
+
+  function getCachedSanitizedBank(
+    moduleKey: string,
+    attemptType: 'work' | 'exam'
+  ): PublicQuizQuestion[] | null {
+    return sanitizedBankCache.get(`${moduleKey}:${attemptType}`) || null;
+  }
+
+  async function ensureSanitizedBankLoaded(
+    moduleKey: string,
+    attemptType: 'work' | 'exam'
+  ): Promise<PublicQuizQuestion[] | null> {
+    const key = `${moduleKey}:${attemptType}`;
+    const cached = sanitizedBankCache.get(key);
+    if (cached) return cached;
+    if (PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED || userProfile?.authSource !== 'supabase') {
+      return null;
+    }
+    if (sanitizedBankLoading.has(key)) return null;
+    sanitizedBankLoading.add(key);
+    sanitizedBankError.delete(key);
+    const res = await fetchSanitizedAssessmentQuestions(moduleKey, attemptType);
+    sanitizedBankLoading.delete(key);
+    if (res.ok && res.questions) {
+      sanitizedBankCache.set(key, res.questions);
+      sanitizedBankError.delete(key);
+      render();
+      return res.questions;
+    }
+    sanitizedBankError.set(
+      key,
+      res.error || 'Conteúdo avaliativo disponível após confirmação da matrícula.'
+    );
+    if (res.status === 401 || res.status === 409) {
+      handleProtectedApiAuthFailure(res.status, res.error);
+    } else {
+      render();
+    }
+    return null;
+  }
+
+  function renderProtectedAccessGate(opts: {
+    eyebrow?: string;
+    title: string;
+    message?: string;
+    isLoading?: boolean;
+  }): string {
+    const {
+      eyebrow = 'CONTEÚDO EXCLUSIVO DO CURSO',
+      title,
+      message,
+      isLoading = false,
+    } = opts;
+    const isSupaAuth =
+      !PHASE_1_OFFLINE_ONLY && SUPABASE_CONNECTED && userProfile?.authSource === 'supabase';
+    if (isLoading) {
+      return `<section class="certificate-page" style="margin-top:16px">
+        <span class="eyebrow">${esc(eyebrow)}</span>
+        <h2>Carregando conteúdo protegido...</h2>
+        <p>Validando sua sessão e preparando o material didático do Chef Cremonese.</p>
+      </section>`;
+    }
+    return `<section class="certificate-page" style="margin-top:16px">
+      <span class="eyebrow">${esc(eyebrow)}</span>
+      <h2>${esc(title)}</h2>
+      <p>${esc(
+        message ||
+          (isSupaAuth
+            ? 'Este conteúdo completo, fichas técnicas e avaliações estão liberados para alunos com matrícula paga ativa no curso Massas Italianas.'
+            : 'A etapa inicial de Spaghetti alla Carbonara está aberta em degustação gratuita. Para liberar as demais etapas, módulos, trabalhos e provas oficiais, entre na sua conta e finalize sua matrícula.')
+      )}</p>
+      <div class="lesson-actions" style="justify-content:flex-start;flex-wrap:wrap;margin-top:16px;">
+        ${
+          !isSupaAuth
+            ? `${btn('Entrar na minha conta', 'open-login-modal', 'btn btn-red')}
+               ${btn('Criar Cadastro', 'create-profile', 'btn btn-outline-dark')}`
+            : `${btn('Adquirir Curso em Pagamentos', 'payments', 'btn btn-red')}`
+        }
+        ${btn('Voltar aos módulos', 'courses', 'btn btn-outline-dark')}
+      </div>
+    </section>`;
+  }
 
   function createInitialProfileDraft(profile: StoredUserProfile | null): ProfileFormValues {
     return {
@@ -554,7 +762,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   }
 
   function pct(): number {
-    return Math.round((state.done.length / stages.length) * 100);
+    return Math.round((state.done.length / getCarbonaraTotalSteps()) * 100);
   }
 
   function btn(text: string, action: string, cls = 'btn btn-red', extra = ''): string {
@@ -601,20 +809,8 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     return `<svg class="cuisine-flag-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#178b43" stroke="#c9b496" stroke-width="1"/><polygon points="12,4.5 20,12 12,19.5 4,12" fill="#f3c92d"/><circle cx="12" cy="12" r="3.4" fill="#1d3d85"/></svg>`;
   }
 
-  function recipeShortDescription(r: ExtraRecipe): string {
-    const map: Record<string, string> = {
-      alfredo:
-        'Padronizado com 400 g de fettuccine fresco, 100 g de manteiga e 240 g de Parmigiano-Reggiano (24 meses), sem creme de leite, com fabricação artesanal da massa.',
-      arrabbiata:
-        'Massa tubular penne rigate seca (320 g didáticos) com infusão controlada de alho e peperoncino/pimenta calabresa e redução integral de tomate pelado.',
-      pesto:
-        'Molho cru da Ligúria em 10 etapas (60 g manjericão, 30 g pinoli, 50 g Parmigiano, 25 g Pecorino Sardo, 70 ml azeite) sobre fusilli didático, com conservação segura.',
-      'ragù':
-        'Baseado na Accademia Italiana della Cucina (2023): fichas separadas (massa 4 porções; ragù 6 porções), carne moída grossa, pancetta fresca, soffritto e cozimento lento.',
-      sauces:
-        'Pomodoro (redução de 20–30 min para 320–400 g de massa seca, sem açúcar obrigatório) ao lado de Burro e Salvia (100 g manteiga para ravioli e tortelli).',
-    };
-    return map[r.id] || r.subtitle || '';
+  function recipeShortDescription(r: PublicModuleSummary): string {
+    return r.desc || r.subtitle || '';
   }
 
   function buildVersionedAttemptPayload(
@@ -622,18 +818,18 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     attemptType: 'work' | 'exam',
     answers: number[]
   ) {
-    const graded = gradeAssessment(moduleKey, attemptType, answers);
+    const bank = getCachedSanitizedBank(moduleKey, attemptType) || [];
+    const normalizedAnswers = answers.map((v) => (Number.isInteger(v) && v >= 0 ? v : 0));
     return {
-      graded,
-      bankVersion: graded.bankVersion || ASSESSMENT_BANK_VERSION,
-      questionIds: graded.questionIds,
-      selectedOptionIds: graded.selectedOptionIds,
-      questionSnapshots: graded.questionSnapshots,
+      answers: normalizedAnswers,
+      bankVersion: ASSESSMENT_BANK_VERSION,
+      questionIds: bank.map((q) => q.id),
+      selectedOptionIds: normalizedAnswers.map((ans, idx) => bank[idx]?.optionIds?.[ans] || ''),
     };
   }
 
   function renderAttemptAnswerReview(
-    bank: typeof questions,
+    bank: PublicQuizQuestion[] | undefined,
     answers: (number | null)[] | undefined,
     snapshots?: QuestionAttemptSnapshot[],
     showWhyOnWork = false
@@ -653,18 +849,22 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         )
         .join('');
     }
+    if (!Array.isArray(bank) || bank.length === 0) {
+      return '<p class="review-empty-note">Resumo detalhado sincronizado após envio ao servidor.</p>';
+    }
     return bank
-      .map(
-        (q, i) => `<article class="review-answer">
-          <span class="review-mark">${(answers || [])[i] === q.correct ? '✓' : '↺'}</span>
+      .map((q, i) => {
+        const picked = (answers || [])[i];
+        const pickedText =
+          typeof picked === 'number' && q.a[picked] !== undefined ? q.a[picked] : 'Não respondida';
+        return `<article class="review-answer">
+          <span class="review-mark">•</span>
           <div>
             <strong>${esc(q.q)}</strong>
-            <p>Sua resposta: ${esc(q.a[(answers || [])[i] ?? 0])}</p>
-            <small>Correta: ${esc(q.a[q.correct])}${showWhyOnWork ? ` · ${esc(q.why)}` : ''}</small>
-            ${!showWhyOnWork ? `<p class="exam-explain">${esc(q.why)}</p>` : ''}
+            <p>Sua resposta: ${esc(pickedText)}</p>
           </div>
-        </article>`
-      )
+        </article>`;
+      })
       .join('');
   }
 
@@ -760,6 +960,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       sauces: 'Molhos Essenciais Italianos: Pomodoro e Burro e Salvia',
     };
 
+    const carbMod = PUBLIC_MODULES[0];
     const blueprint: CourseBlueprint = {
       slug: 'massas-italianas',
       title: 'Massas Italianas',
@@ -767,34 +968,19 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       available: true,
       requiresEnrollment: false,
       isEnrolled: true,
-      modules: [
-        {
-          id: 'carbonara',
-          index: 1,
-          title: curriculumTitles.carbonara,
-          recipeTitle: 'Spaghetti alla Carbonara',
-          desc: 'Controle de sal, guanciale sem pele, ovos pasteurizados como padrão didático, emulsão fora do fogo direto e segurança alimentar.',
-          photo: MEDIA.pastaCarbonaraHero,
-          duration: course.duration,
-          level: course.level,
-          totalLessonSteps: stages.length,
-          totalWorkQuestions: questions.length,
-          passingScorePercent: PASSING_SCORE_PERCENT,
-        },
-        ...extraRecipes.map((r, idx) => ({
-          id: r.id,
-          index: idx + 2,
-          title: curriculumTitles[r.id] || r.title,
-          recipeTitle: r.title,
-          desc: recipeShortDescription(r),
-          photo: recipeVisual(r.id),
-          duration: r.duration,
-          level: r.level,
-          totalLessonSteps: r.steps.length,
-          totalWorkQuestions: 6,
-          passingScorePercent: PASSING_SCORE_PERCENT,
-        })),
-      ],
+      modules: PUBLIC_MODULES.map((m) => ({
+        id: m.id,
+        index: m.index,
+        title: curriculumTitles[m.id] || m.title,
+        recipeTitle: m.recipeTitle,
+        desc: recipeShortDescription(m),
+        photo: recipeVisual(m.id),
+        duration: m.duration,
+        level: m.level,
+        totalLessonSteps: m.totalLessonSteps,
+        totalWorkQuestions: m.totalWorkQuestions,
+        passingScorePercent: PASSING_SCORE_PERCENT,
+      })),
     };
 
     const carbAnswered = state.questionsAnswers.filter(
@@ -804,8 +990,12 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     const progressByModuleId: Record<string, ModuleRuntimeProgress> = {
       carbonara: {
         doneLessonSteps: state.done,
-        lessonCompleted: Boolean(state.lessonFinished || state.done.length >= stages.length),
-        workAnsweredCount: state.questionsFinished ? questions.length : carbAnswered,
+        lessonCompleted: Boolean(
+          state.lessonFinished || state.done.length >= carbMod.totalLessonSteps
+        ),
+        workAnsweredCount: state.questionsFinished
+          ? carbMod.totalWorkQuestions
+          : carbAnswered,
         workCompleted: Boolean(state.questionsFinished),
         workScore: state.questionAttempts[state.questionAttempts.length - 1]?.score,
         reviewCompleted: Boolean(state.reviewDone),
@@ -814,14 +1004,16 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       },
     };
 
-    for (const r of extraRecipes) {
-      const p = state.recipeProgress?.[r.id];
+    for (const m of PUBLIC_MODULES.slice(1)) {
+      const p = state.recipeProgress?.[m.id];
       const workAns = (p?.workAnswers || []).filter((v) => v !== null && v !== undefined).length;
       const examLatest = p?.examAttempts?.[p.examAttempts.length - 1];
-      progressByModuleId[r.id] = {
+      progressByModuleId[m.id] = {
         doneLessonSteps: p?.done || [],
-        lessonCompleted: Boolean(p?.lessonCompleted || (p?.done?.length || 0) >= r.steps.length),
-        workAnsweredCount: p?.workFinished ? 6 : workAns,
+        lessonCompleted: Boolean(
+          p?.lessonCompleted || (p?.done?.length || 0) >= m.totalLessonSteps
+        ),
+        workAnsweredCount: p?.workFinished ? m.totalWorkQuestions : workAns,
         workCompleted: Boolean(p?.workCompleted || p?.workFinished),
         workScore: p?.workAttempts?.[p.workAttempts.length - 1]?.score,
         reviewCompleted: Boolean(p?.reviewDone),
@@ -1970,9 +2162,15 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   function lesson(): string {
     if (prepMode && !state.mise) return misePage();
     state.lastModuleId = 'carbonara';
-    const s = stages[lessonStage];
+    const carbSteps = getCarbonaraStepsView();
+    const safeStageIdx = Math.min(Math.max(lessonStage, 0), carbSteps.length - 1);
+    const s = carbSteps[safeStageIdx];
+    const hasProtectedStage = safeStageIdx === 0 || Boolean(protectedContent?.carbonara?.stages?.[safeStageIdx]);
+    if (!hasProtectedStage) {
+      void ensureProtectedCourseContentLoaded();
+    }
     const nextLabel =
-      lessonStage === stages.length - 1 ? 'CONCLUIR AULA' : 'CONCLUIR ETAPA E SEGUIR';
+      safeStageIdx === carbSteps.length - 1 ? 'CONCLUIR AULA' : 'CONCLUIR ETAPA E SEGUIR';
     const voiceText = s.audioScript || `${s.title}. ${s.intro} ${s.tip}`;
 
     const timerWidget = s.timer
@@ -1994,18 +2192,26 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         </section>`
       : '';
 
-    const stagePhoto = getStageVisual('carbonara', lessonStage);
-    const lessonIsDone = Boolean(state.lessonFinished || state.done.length >= stages.length);
+    const stagePhoto = getStageVisual('carbonara', safeStageIdx);
+    const lessonIsDone = Boolean(state.lessonFinished || state.done.length >= carbSteps.length);
     const lessonBannerHtml = renderModuleStageNotificationBanner({
       iconType: 'lesson',
       title: 'Aula prática • Spaghetti alla Carbonara',
-      description: `Etapa ${lessonStage + 1} de ${stages.length}: ${s.title}`,
+      description: `Etapa ${safeStageIdx + 1} de ${carbSteps.length}: ${s.title}`,
       isDone: lessonIsDone,
-      isReady: state.done.length >= stages.length,
+      isReady: state.done.length >= carbSteps.length,
       doneLabel: 'Concluído',
       progressLabel: 'Em andamento',
     });
-    const tabBody = `<div class="cockpit-two-col">
+    const protectedSheet = protectedContent?.carbonara?.techSheet;
+    const tabBody = !hasProtectedStage
+      ? renderProtectedAccessGate({
+          eyebrow: `ETAPA ${safeStageIdx + 1} · SPAGHETTI ALLA CARBONARA`,
+          title: s.title,
+          message: protectedContentError || undefined,
+          isLoading: protectedContentLoading,
+        })
+      : `<div class="cockpit-two-col">
       <div class="cockpit-left-col">
         ${renderStageMediaPlayer({
           moduleId: 'carbonara',
@@ -2047,7 +2253,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
               .map(
                 (m, i) => `<li>
                   <label class="micro-item">
-                    <input type="checkbox" data-micro="${i}" ${isMicroDone(lessonStage, i) ? 'checked' : ''}>
+                    <input type="checkbox" data-micro="${i}" ${isMicroDone(safeStageIdx, i) ? 'checked' : ''}>
                     <span class="micro-num-circle">${i + 1}</span>
                     <span>${esc(m)}</span>
                   </label>
@@ -2058,7 +2264,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           <p class="cockpit-prep-body-note">${esc(s.body)}</p>
         </div>
 
-        ${renderInteractiveIngredientsPanel('carbonara', lessonStage, stagePhoto)}
+        ${renderInteractiveIngredientsPanel('carbonara', safeStageIdx, stagePhoto)}
       </div>
     </div>
     ${timerWidget}
@@ -2070,13 +2276,20 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       nextCtaLabel: 'Ir para Trabalho →',
       nextCtaAction: 'questions',
     })}
-    <details class="cockpit-auxiliary-drawer">
-      <summary>Ficha técnica completa (${esc(carbonaraTechSheet.yield)}), segurança alimentar e alergênicos</summary>
-      ${renderTechnicalSheetDetails(carbonaraTechSheet, {
-        stepWarning: s.warning,
-        editorialAlert: carbonaraTechSheet.didacticAdaptations,
-      })}
-    </details>`;
+    ${
+      protectedSheet
+        ? `<details class="cockpit-auxiliary-drawer">
+            <summary>Ficha técnica completa (${esc(protectedSheet.yield)}), segurança alimentar e alergênicos</summary>
+            ${renderTechnicalSheetDetails(protectedSheet, {
+              stepWarning: s.warning,
+              editorialAlert: protectedSheet.didacticAdaptations,
+            })}
+          </details>`
+        : `<div class="recipe-disclaimer" style="margin-top:12px;">
+            <strong>Ficha técnica completa protegida</strong>
+            <p style="margin:4px 0 0;">Entre com uma conta matriculada para visualizar a ficha técnica completa, segurança alimentar e alergênicos.</p>
+          </div>`
+    }`;
 
     return renderUnifiedLessonCockpit({
       moduleId: 'carbonara',
@@ -2086,7 +2299,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       duration: course.duration,
       level: course.level,
       activeTab: 'lesson',
-      steps: stages.map((st, sIdx) => ({
+      steps: carbSteps.map((st, sIdx) => ({
         title: st.title,
         tag: st.tag,
         body: st.body,
@@ -2101,7 +2314,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         audioScript: st.audioScript || `${st.title}. ${st.intro} ${st.tip}`,
         hasTimer: st.timer,
       })),
-      currentIndex: lessonStage,
+      currentIndex: safeStageIdx,
       doneIndices: state.done,
       tabBodyHtml: tabBody,
       lessonBannerHtml,
@@ -2114,6 +2327,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   }
 
   function renderCarbonaraTabCockpit(activeTab: string, innerHtml: string): string {
+    const carbSteps = getCarbonaraStepsView();
     return renderUnifiedLessonCockpit({
       moduleId: 'carbonara',
       moduleNumber: 1,
@@ -2122,7 +2336,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       duration: course.duration,
       level: course.level,
       activeTab,
-      steps: stages.map((st, sIdx) => ({
+      steps: carbSteps.map((st, sIdx) => ({
         title: st.title,
         tag: st.tag,
         body: st.body,
@@ -2198,6 +2412,8 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       score: 0,
       answers: state.questionsAnswers,
     };
+    const workCount = getCarbonaraStageCount('work');
+    const bank = getCachedSanitizedBank('carbonara', 'work') || undefined;
     const isDone = Boolean(state.questionsFinished);
     return renderCarbonaraTabCockpit(
       'questions',
@@ -2212,13 +2428,13 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       })}
       <section class="result-card">
         <span class="eyebrow">PERGUNTAS CONCLUÍDAS</span>
-        <div class="result-medal">${a.score || 0}/${a.questionSnapshots?.length || questions.length}</div>
+        <div class="result-medal">${a.score || 0}/${a.questionSnapshots?.length || workCount}</div>
         <h2>Você está indo muito bem!</h2>
         <p>As respostas ajudam a revisar os conceitos. A avaliação final é uma etapa separada.${
           a.bankVersion ? ` · Banco ${esc(a.bankVersion)}` : ''
         }</p>
         <div class="answer-review-list">
-          ${renderAttemptAnswerReview(questions, a.answers, a.questionSnapshots, true)}
+          ${renderAttemptAnswerReview(bank, a.answers, a.questionSnapshots, true)}
         </div>
         ${renderStandardCompletionAction({
           isDone,
@@ -2236,22 +2452,41 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   }
 
   function questionView(): string {
+    const workCount = getCarbonaraStageCount('work');
     const finished = state.questionsFinished && state.questionAttempts.length > 0;
     const answeredCount = state.questionsAnswers.filter((v) => v !== null && v !== undefined).length;
-    if (finished || answeredCount >= questions.length) return questionResults();
-    const q = questions[qIndex];
-    const answer = state.questionsAnswers[qIndex];
+    if (finished || answeredCount >= workCount) return questionResults();
+    const bank = getCachedSanitizedBank('carbonara', 'work');
+    if (!bank) {
+      void ensureSanitizedBankLoaded('carbonara', 'work');
+      return renderCarbonaraTabCockpit(
+        'questions',
+        renderProtectedAccessGate({
+          eyebrow: 'TRABALHO PRÁTICO · SPAGHETTI ALLA CARBONARA',
+          title: 'Trabalho prático protegido',
+          message: sanitizedBankError.get('carbonara:work') || undefined,
+          isLoading: sanitizedBankLoading.has('carbonara:work'),
+        })
+      );
+    }
+    const safeIdx = Math.min(Math.max(qIndex, 0), bank.length - 1);
+    const q = bank[safeIdx];
+    const answer = state.questionsAnswers[safeIdx];
+    const fbKey =
+      answer !== undefined && answer !== null ? `carbonara:${safeIdx}:${answer}` : '';
+    const fb = fbKey ? workFeedbackCache.get(fbKey) : undefined;
     return renderCarbonaraTabCockpit(
       'questions',
       renderUnifiedTrabalhoSection({
-        currentIndex: qIndex,
-        totalQuestions: questions.length,
+        currentIndex: safeIdx,
+        totalQuestions: bank.length,
         questionText: q.q,
         options: q.a,
         selectedAnswer: answer,
-        correctIndex: q.correct,
-        explanation: q.why,
-        chefTip: q.tip,
+        correctIndex: fb ? fb.correctIndex : -1,
+        explanation: fb ? fb.explanation : '',
+        chefTip: fb?.tip || q.tip || '',
+        pendingFeedback: answer !== undefined && answer !== null && !fb,
         answerAction: 'question-answer',
         nextAction: 'question-next',
         backAction: 'question-back',
@@ -2260,7 +2495,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         workCompleted: Boolean(state.questionsFinished),
         answeredCount,
         completeAction: 'questions-mark-complete',
-        canCompleteWork: canCompleteModuleWork(answeredCount, questions.length),
+        canCompleteWork: canCompleteModuleWork(answeredCount, bank.length),
       })
     );
   }
@@ -2376,8 +2611,22 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   }
 
   function examQuestion(): string {
-    const q = exam[state.examCurrent];
-    const value = state.examAnswers[state.examCurrent];
+    const bank = getCachedSanitizedBank('carbonara', 'exam');
+    if (!bank) {
+      void ensureSanitizedBankLoaded('carbonara', 'exam');
+      return renderCarbonaraTabCockpit(
+        'exam',
+        renderProtectedAccessGate({
+          eyebrow: 'AVALIAÇÃO FINAL · SPAGHETTI ALLA CARBONARA',
+          title: 'Avaliação final protegida',
+          message: sanitizedBankError.get('carbonara:exam') || undefined,
+          isLoading: sanitizedBankLoading.has('carbonara:exam'),
+        })
+      );
+    }
+    const safeIdx = Math.min(Math.max(state.examCurrent, 0), bank.length - 1);
+    const q = bank[safeIdx];
+    const value = state.examAnswers[safeIdx];
     return renderCarbonaraTabCockpit(
       'exam',
       `<section class="quiz-wrap">
@@ -2386,11 +2635,11 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           <h2>Confie no que você aprendeu.</h2>
         </div>
         <div class="quiz-progress">
-          <div class="progress-track"><span style="width:${Math.round((state.examCurrent / exam.length) * 100)}%"></span></div>
-          <span>Pergunta ${state.examCurrent + 1} de ${exam.length}</span>
+          <div class="progress-track"><span style="width:${Math.round((safeIdx / bank.length) * 100)}%"></span></div>
+          <span>Pergunta ${safeIdx + 1} de ${bank.length}</span>
         </div>
         <article class="quiz-card">
-          <p class="question-number">PERGUNTA ${state.examCurrent + 1} · AVALIAÇÃO</p>
+          <p class="question-number">PERGUNTA ${safeIdx + 1} · AVALIAÇÃO</p>
           <h3>${esc(q.q)}</h3>
           <div class="answer-list">
             ${q.a
@@ -2404,9 +2653,9 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
               .join('')}
           </div>
           <div class="exam-nav-buttons">
-            <button class="btn btn-outline-dark" data-action="exam-back" ${state.examCurrent === 0 ? 'disabled' : ''}>← Voltar</button>
+            <button class="btn btn-outline-dark" data-action="exam-back" ${safeIdx === 0 ? 'disabled' : ''}>← Voltar</button>
             <button class="btn btn-red" data-action="exam-next" ${value == null ? 'disabled' : ''}>${
-              state.examCurrent === exam.length - 1 ? 'Revisar respostas' : 'Próxima →'
+              safeIdx === bank.length - 1 ? 'Revisar respostas' : 'Próxima →'
             }</button>
           </div>
         </article>
@@ -2415,6 +2664,19 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   }
 
   function examReview(): string {
+    const bank = getCachedSanitizedBank('carbonara', 'exam');
+    if (!bank) {
+      void ensureSanitizedBankLoaded('carbonara', 'exam');
+      return renderCarbonaraTabCockpit(
+        'exam',
+        renderProtectedAccessGate({
+          eyebrow: 'REVISÃO DA PROVA · SPAGHETTI ALLA CARBONARA',
+          title: 'Avaliação final protegida',
+          message: sanitizedBankError.get('carbonara:exam') || undefined,
+          isLoading: sanitizedBankLoading.has('carbonara:exam'),
+        })
+      );
+    }
     return renderCarbonaraTabCockpit(
       'exam',
       `<section class="quiz-wrap">
@@ -2424,7 +2686,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           <p>Toque em uma pergunta para alterá-la. Depois, confirme o envio.</p>
         </div>
         <div class="exam-review-list">
-          ${exam
+          ${bank
             .map(
               (q, i) =>
                 `<button class="exam-review-row" data-action="exam-edit" data-question="${i}">
@@ -2440,7 +2702,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             .join('')}
         </div>
         <div class="exam-nav-buttons">
-          <button class="btn btn-outline-dark" data-action="exam-edit" data-question="${exam.length - 1}">← Voltar às perguntas</button>
+          <button class="btn btn-outline-dark" data-action="exam-edit" data-question="${bank.length - 1}">← Voltar às perguntas</button>
           <button class="btn btn-red" data-action="submit-exam">Enviar avaliação</button>
         </div>
       </section>`
@@ -2453,6 +2715,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       passed: false,
       answers: [],
     };
+    const bank = getCachedSanitizedBank('carbonara', 'exam') || undefined;
     return renderCarbonaraTabCockpit(
       'exam',
       `<section class="result-card">
@@ -2465,7 +2728,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             : 'A nota mínima é 70%. Reveja as etapas e tente outra vez; novas tentativas estão liberadas.'
         }${result.bankVersion ? ` · Banco ${esc(result.bankVersion)}` : ''}</p>
         <div class="answer-review-list">
-          ${renderAttemptAnswerReview(exam, result.answers, result.questionSnapshots, false)}
+          ${renderAttemptAnswerReview(bank, result.answers, result.questionSnapshots, false)}
         </div>
         ${btn(
           result.passed ? 'Ver certificado' : 'Revisar conteúdo',
@@ -2866,8 +3129,9 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             const evalMod = evaluated.modules.find((x) => x.id === m.id);
             const isExpanded = expandedProgressId === m.id;
             const isCarb = m.id === 'carbonara';
-            const rec = !isCarb ? extraRecipes.find((r) => r.id === m.id) : null;
-            const recProg = rec ? recipeProgressFor(rec) : null;
+            const rec = !isCarb ? getPublicModule(m.id) : null;
+            const recProg = rec ? recipeProgressFor(rec.id) : null;
+            const carbWorkTotal = getCarbonaraStageCount('work');
 
             const lessonDone = Boolean(evalMod?.lessonCompleted);
             const workDone = Boolean(evalMod?.workCompleted);
@@ -2886,7 +3150,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
                     <p>${esc(m.desc)}</p>
                     <div class="progress-module-pillars">
                       <span class="pillar-chip ${lessonDone ? 'is-done' : ''}">Aula: ${lessonDone ? 'Concluída' : `${m.doneSteps}/${m.totalSteps}`}</span>
-                      <span class="pillar-chip ${workDone ? 'is-done' : ''}">Trabalho: ${workDone ? 'Concluído' : `${evalMod?.workAnsweredCount || 0}/${questions.length}`}</span>
+                      <span class="pillar-chip ${workDone ? 'is-done' : ''}">Trabalho: ${workDone ? 'Concluído' : `${evalMod?.workAnsweredCount || 0}/${carbWorkTotal}`}</span>
                       <span class="pillar-chip ${revDone ? 'is-done' : ''}">Revisão: ${revDone ? 'Concluída' : 'Pendente'}</span>
                       <span class="pillar-chip ${carbPassed ? 'is-done' : !examUnlocked ? 'is-locked' : ''}">Prova: ${carbPassed ? 'Aprovada' : examUnlocked ? 'Liberada' : '🔒 Bloqueada'}</span>
                     </div>
@@ -2895,8 +3159,8 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
                         <span>?</span>
                         <div><strong>Trabalho (Perguntas)</strong><small>${
                           workDone
-                            ? `Concluído (${state.questionAttempts[state.questionAttempts.length - 1]?.score || questions.length}/${questions.length})`
-                            : `${evalMod?.workAnsweredCount || 0}/${questions.length} respondidas`
+                            ? `Concluído (${state.questionAttempts[state.questionAttempts.length - 1]?.score || carbWorkTotal}/${carbWorkTotal})`
+                            : `${evalMod?.workAnsweredCount || 0}/${carbWorkTotal} respondidas`
                         }</small></div>
                       </button>
                       <button type="button" class="progress-sub-chip" data-action="review">
@@ -2933,7 +3197,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
                     <p>${esc(m.desc)}</p>
                     <div class="progress-module-pillars">
                       <span class="pillar-chip ${lessonDone ? 'is-done' : ''}">Aula: ${lessonDone ? 'Concluída' : `${m.doneSteps}/${m.totalSteps}`}</span>
-                      <span class="pillar-chip ${workDone ? 'is-done' : ''}">Trabalho: ${workDone ? 'Concluído' : `${evalMod?.workAnsweredCount || 0}/6`}</span>
+                      <span class="pillar-chip ${workDone ? 'is-done' : ''}">Trabalho: ${workDone ? 'Concluído' : `${evalMod?.workAnsweredCount || 0}/${rec.totalWorkQuestions}`}</span>
                       <span class="pillar-chip ${revDone ? 'is-done' : ''}">Revisão: ${revDone ? 'Concluída' : 'Pendente'}</span>
                       <span class="pillar-chip ${m.examPassed ? 'is-done' : !examUnlocked ? 'is-locked' : ''}">Prova: ${m.examPassed ? 'Aprovada' : examUnlocked ? 'Liberada' : '🔒 Bloqueada'}</span>
                     </div>
@@ -2951,8 +3215,8 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
                         <span>?</span>
                         <div><strong>Trabalho Prático</strong><small>${
                           workDone
-                            ? `Concluído (${recProg.workAttempts[recProg.workAttempts.length - 1]?.score || 6}/6)`
-                            : `${evalMod?.workAnsweredCount || 0}/6 respondidas`
+                            ? `Concluído (${recProg.workAttempts[recProg.workAttempts.length - 1]?.score || rec.totalWorkQuestions}/${rec.totalWorkQuestions})`
+                            : `${evalMod?.workAnsweredCount || 0}/${rec.totalWorkQuestions} respondidas`
                         }</small></div>
                       </button>
                       <button type="button" class="progress-sub-chip" data-action="open-recipe-tab" data-recipe="${esc(rec.id)}" data-tab="review">
@@ -3030,11 +3294,12 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
 
   function collectLocalAssessments(): AdminAssessmentAttemptView[] {
     const rows: AdminAssessmentAttemptView[] = [];
+    const carbWorkTotal = getCarbonaraStageCount('work');
     for (const w of state.questionAttempts) {
       rows.push({
         moduleTitle: 'Spaghetti alla Carbonara',
         kind: 'Trabalho',
-        scoreLabel: `${w.score}/${questions.length}`,
+        scoreLabel: `${w.score}/${carbWorkTotal}`,
         passedLabel: 'Concluído',
         dateIso: w.date || '',
       });
@@ -3048,14 +3313,14 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         dateIso: e.date || '',
       });
     }
-    for (const r of extraRecipes) {
+    for (const r of PUBLIC_MODULES.slice(1)) {
       const p = state.recipeProgress?.[r.id];
       if (!p) continue;
       for (const w of p.workAttempts || []) {
         rows.push({
           moduleTitle: r.title,
           kind: 'Trabalho',
-          scoreLabel: `${w.score}/6`,
+          scoreLabel: `${w.score}/${r.totalWorkQuestions}`,
           passedLabel: 'Concluído',
           dateIso: w.date || '',
         });
@@ -3435,9 +3700,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     </main>`;
   }
 
-  // recipeQuestionSet is imported from ./data/assessments to share exact questions with server-side grading
-
-  function recipeProgressFor(r: ExtraRecipe): RecipeProgressEntry {
+  function recipeProgressFor(moduleId: string): RecipeProgressEntry {
     state.recipeProgress = state.recipeProgress || {};
     const base: RecipeProgressEntry = {
       stage: 0,
@@ -3452,13 +3715,16 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       examAttempts: [],
       reviewDone: false,
     };
-    state.recipeProgress[r.id] = Object.assign(base, state.recipeProgress[r.id] || {});
-    return state.recipeProgress[r.id];
+    state.recipeProgress[moduleId] = Object.assign(base, state.recipeProgress[moduleId] || {});
+    return state.recipeProgress[moduleId];
   }
 
-  function recipeQuiz(r: ExtraRecipe, prog: RecipeProgressEntry, type: 'work' | 'exam'): string {
+  function recipeQuiz(
+    r: ProtectedExtraRecipe,
+    prog: RecipeProgressEntry,
+    type: 'work' | 'exam'
+  ): string {
     const examMode = type === 'exam';
-    const bank = recipeQuestionSet(r, examMode ? 8 : 6);
     const answers = examMode ? prog.examAnswers : prog.workAnswers;
     const current = examMode ? prog.examCurrent : prog.workCurrent;
     const status = examMode ? prog.examStatus : 'active';
@@ -3486,6 +3752,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     }
 
     if (examMode && status === 'result') {
+      const bank = getCachedSanitizedBank(r.id, 'exam') || undefined;
       const result = attempts[attempts.length - 1] || {
         score: 0,
         passed: false,
@@ -3512,6 +3779,8 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     }
 
     if (!examMode && prog.workFinished) {
+      const bank = getCachedSanitizedBank(r.id, 'work') || undefined;
+      const totalWork = getPublicModule(r.id)?.totalWorkQuestions || 6;
       const result = attempts[attempts.length - 1] || { score: 0, answers: [] };
       const isWorkDone = Boolean(prog.workCompleted || prog.workFinished);
       return `${renderModuleStageNotificationBanner({
@@ -3525,7 +3794,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       })}
       <section class="result-card">
         <span class="eyebrow">TRABALHO CONCLUÍDO</span>
-        <div class="result-medal">${result.score}/${result.questionSnapshots?.length || bank.length}</div>
+        <div class="result-medal">${result.score}/${result.questionSnapshots?.length || bank?.length || totalWork}</div>
         <h2>Vamos aprender com cada resposta.</h2>
         <p>O trabalho é formativo e consolida os fundamentos do módulo.${
           result.bankVersion ? ` · Banco ${esc(result.bankVersion)}` : ''
@@ -3544,6 +3813,17 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         })}
         <button class="btn btn-outline-dark" data-action="recipe-work-retry" style="margin-top:12px;">Refazer o trabalho</button>
       </section>`;
+    }
+
+    const bank = getCachedSanitizedBank(r.id, type);
+    if (!bank) {
+      void ensureSanitizedBankLoaded(r.id, type);
+      return renderProtectedAccessGate({
+        eyebrow: examMode ? `PROVA · ${r.title.toUpperCase()}` : `TRABALHO PRÁTICO · ${r.title.toUpperCase()}`,
+        title: examMode ? `Prova do módulo ${r.title}` : `Trabalho prático de ${r.title}`,
+        message: sanitizedBankError.get(`${r.id}:${type}`) || undefined,
+        isLoading: sanitizedBankLoading.has(`${r.id}:${type}`),
+      });
     }
 
     if (examMode && status === 'review') {
@@ -3572,18 +3852,24 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       </section>`;
     }
 
-    const q = bank[current];
-    const value = answers[current];
+    const safeIdx = Math.min(Math.max(current, 0), bank.length - 1);
+    const q = bank[safeIdx];
+    const value = answers[safeIdx];
     const answeredCount = answers.filter((v) => v !== null && v !== undefined).length;
+    const fbKey =
+      !examMode && value !== undefined && value !== null ? `${r.id}:${safeIdx}:${value}` : '';
+    const fb = fbKey ? workFeedbackCache.get(fbKey) : undefined;
     return renderUnifiedTrabalhoSection({
-      currentIndex: current,
+      currentIndex: safeIdx,
       totalQuestions: bank.length,
       questionText: q.q,
       options: q.a,
       selectedAnswer: value,
-      correctIndex: q.correct,
-      explanation: q.why,
-      chefTip: q.tip,
+      hideImmediateFeedback: examMode,
+      correctIndex: examMode ? -1 : fb ? fb.correctIndex : -1,
+      explanation: examMode ? '' : fb ? fb.explanation : '',
+      chefTip: (examMode ? q.tip : fb?.tip || q.tip) || '',
+      pendingFeedback: !examMode && value !== undefined && value !== null && !fb,
       answerAction: 'recipe-answer',
       answerModeAttr: type,
       nextAction: 'recipe-question-next',
@@ -3598,15 +3884,38 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   }
 
   function recipePage(): string {
-    const rIdx = extraRecipes.findIndex((x) => x.id === selectedRecipeId);
-    const r = extraRecipes[rIdx];
-    if (!r) return coursePage();
+    const pubMod = getPublicModule(selectedRecipeId);
+    if (!pubMod || pubMod.id === 'carbonara') return coursePage();
+    const r = getProtectedExtraRecipe(pubMod.id);
+    if (!r) {
+      void ensureProtectedCourseContentLoaded();
+      return `<main class="page-wrap">
+        <div class="course-banner">
+          <button class="back-crumb" data-action="courses">← Meus cursos</button>
+          <div class="course-banner-main">
+            <img src="${esc(recipeVisual(pubMod.id))}" alt="${esc(pubMod.title)}">
+            <div>
+              <span class="eyebrow">MÓDULO ${pubMod.index} • ${esc(course.chef)}</span>
+              <h1>${esc(pubMod.recipeTitle)}</h1>
+              <p>${esc(pubMod.subtitle)}</p>
+            </div>
+          </div>
+        </div>
+        ${renderProtectedAccessGate({
+          eyebrow: `MÓDULO ${pubMod.index} · CONTEÚDO PROTEGIDO`,
+          title: pubMod.title,
+          message: protectedContentError || undefined,
+          isLoading: protectedContentLoading,
+        })}
+        ${footerNote()}
+      </main>`;
+    }
 
     state.lastModuleId = r.id;
-    const prog = recipeProgressFor(r);
+    const prog = recipeProgressFor(r.id);
     const index = Math.max(0, Math.min(recipeStage, r.steps.length - 1));
     const step = r.steps[index];
-    const moduleNumber = rIdx + 2;
+    const moduleNumber = pubMod.index;
 
     const moduleTechGalleryMap: Record<string, string[]> = {
       alfredo: [
@@ -3944,9 +4253,9 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   }
 
   function recipeReviewPage(): string {
-    const r = extraRecipes.find((x) => x.id === selectedRecipeId);
-    if (!r) return coursePage();
-    selectedRecipeId = r.id;
+    const pubMod = getPublicModule(selectedRecipeId);
+    if (!pubMod || pubMod.id === 'carbonara') return coursePage();
+    selectedRecipeId = pubMod.id;
     recipeTab = 'review';
     return recipePage();
   }
@@ -4666,9 +4975,12 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       'Preciso revisar uma técnica.',
     ];
     const isCarb = moduleId === 'carbonara';
-    const rec = !isCarb ? extraRecipes.find((x) => x.id === moduleId) : null;
+    const rec = !isCarb ? getProtectedExtraRecipe(moduleId) : null;
+    const pubMod = getPublicModule(moduleId);
     const stepNum = isCarb ? lessonStage + 1 : recipeStage + 1;
-    const stepTitle = isCarb ? stages[lessonStage].title : rec?.steps[recipeStage]?.[0] || 'Etapa atual';
+    const stepTitle = isCarb
+      ? getCarbonaraStage(lessonStage).title
+      : rec?.steps[recipeStage]?.[0] || pubMod?.title || 'Etapa atual';
 
     openModal(`<div class="modal-backdrop">
       <section class="modal" role="dialog" aria-modal="true">
@@ -4695,27 +5007,32 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     let texts: string[] = [];
 
     if (moduleId === 'carbonara') {
-      const s = stages[lessonStage];
+      const s = getCarbonaraStage(lessonStage);
       tag = s.tag;
       texts = [
-        `Vamos por partes. ${s.intro} ${s.body}`,
+        `Vamos por partes. ${s.intro} ${s.body || s.tip}`,
         `Tudo bem, cada cozinha tem seu ritmo. ${s.tip}`,
         `Observe o sinal importante desta etapa: ${s.tip}`,
         `Em poucas palavras: ${s.intro} ${s.tip}`,
-        `Um erro comum nesta etapa é ignorar o calor e o ponto. ${s.warning}`,
-        `Vamos revisar o fundamento: ${s.body}`,
+        `Um erro comum nesta etapa é ignorar o calor e o ponto. ${s.warning || s.tip}`,
+        `Vamos revisar o fundamento: ${s.body || s.tip}`,
       ];
     } else {
-      const r = extraRecipes.find((x) => x.id === moduleId);
-      const st = r?.steps[recipeStage] || ['Etapa', r?.chefTip || '', ''];
+      const r = getProtectedExtraRecipe(moduleId);
+      const pubMod = getPublicModule(moduleId);
+      const st = r?.steps[recipeStage] || [
+        pubMod?.title || 'Etapa',
+        r?.chefTip || 'Entre na sua conta matriculada para desbloquear as orientações desta etapa.',
+        r?.chefTip || 'Siga o passo a passo da aula no painel.',
+      ];
       tag = st[0];
       texts = [
         `Vamos por partes: ${st[1]}`,
         `Mantenha a calma e ajuste aos poucos: ${st[2]}`,
         `Sinal principal desta etapa: ${st[2]}`,
         `Resumo prático: ${st[1]}`,
-        `Fique atenta aos erros comuns: ${(r?.errors || [])[0] || r?.chefTip || ''}`,
-        `Dica técnica do Chef para ${r?.title || ''}: ${r?.chefTip || ''}`,
+        `Fique atenta aos erros comuns: ${(r?.errors || [])[0] || r?.chefTip || st[2]}`,
+        `Dica técnica do Chef para ${r?.title || pubMod?.title || ''}: ${r?.chefTip || st[2]}`,
       ];
     }
 
@@ -4730,7 +5047,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
 
   function showEye(moduleId = 'carbonara') {
     if (moduleId === 'carbonara') {
-      const s = stages[lessonStage];
+      const s = getCarbonaraStage(lessonStage);
       const stageImg = getStageVisual('carbonara', lessonStage);
       openModal(`<div class="modal-backdrop">
         <section class="modal eye-modal" role="dialog" aria-modal="true">
@@ -4743,13 +5060,13 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             <strong>O que observar</strong>
             <p>${esc(s.tip)}</p>
           </div>
-          <div class="safety-note"><strong>Fique atenta:</strong> ${esc(s.warning)}</div>
+          ${s.warning ? `<div class="safety-note"><strong>Fique atenta:</strong> ${esc(s.warning)}</div>` : ''}
         </section>
       </div>`);
       return;
     }
 
-    const r = extraRecipes.find((x) => x.id === moduleId);
+    const r = getProtectedExtraRecipe(moduleId);
     if (!r) return;
     const st = r.steps[recipeStage] || r.steps[0];
     openModal(`<div class="modal-backdrop">
@@ -4806,6 +5123,11 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     cuisinesMenuOpen = false;
     accountMenuOpen = false;
     portalMenuOpen = false;
+    if (next === 'payments' && !isAuthenticatedUser()) {
+      pendingPaymentRedirect = true;
+      openLoginModal('Entre na sua conta ou crie seu cadastro antes de selecionar a forma de pagamento.');
+      return;
+    }
     if (next === 'account' && !state.demo) {
       route = 'account';
       syncHashForRoute(route);
@@ -4852,7 +5174,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     state.demo = true;
     state.lastModuleId = 'carbonara';
     route = 'lesson';
-    lessonStage = Math.min(state.stage || 0, stages.length - 1);
+    lessonStage = Math.min(state.stage || 0, getCarbonaraTotalSteps() - 1);
     prepMode = false;
     const ing = getIngredientsForModuleStage('carbonara', lessonStage);
     selectedIngredientId = ing[0]?.id || 'spaghetti';
@@ -4927,7 +5249,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     } else {
       state = scopedState;
     }
-    lessonStage = Math.min(Math.max(state.stage || 0, 0), stages.length - 1);
+    lessonStage = Math.min(Math.max(state.stage || 0, 0), getCarbonaraTotalSteps() - 1);
     prepMode = !state.mise;
     qIndex = Number.isInteger(state.questionCurrent) ? state.questionCurrent : 0;
     examStatus = state.examStatus || 'intro';
@@ -4943,10 +5265,12 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
 
     syncingPendingExam = true;
     try {
+      const carbExamCount = getCarbonaraStageCount('exam');
+      const carbStepsCount = getCarbonaraTotalSteps();
       const localCarbPassed = state.examAttempts.find(
-        (x) => x.passed && Array.isArray(x.answers) && x.answers.length === exam.length
+        (x) => x.passed && Array.isArray(x.answers) && x.answers.length === carbExamCount
       );
-      const carbStepsDone = state.lessonFinished || state.done.length >= stages.length;
+      const carbStepsDone = state.lessonFinished || state.done.length >= carbStepsCount;
       if (localCarbPassed && carbStepsDone && state.reviewDone) {
         const syncOk = await syncModuleProgressToServer({
           moduleKey: 'carbonara',
@@ -4973,13 +5297,13 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         }
       }
 
-      for (const r of extraRecipes) {
+      for (const r of PUBLIC_MODULES.slice(1)) {
         const p = state.recipeProgress?.[r.id];
         if (!p) continue;
         const localRecPassed = p.examAttempts.find(
-          (x) => x.passed && Array.isArray(x.answers) && x.answers.length === 8
+          (x) => x.passed && Array.isArray(x.answers) && x.answers.length === r.totalExamQuestions
         );
-        if (localRecPassed && p.done.length >= r.steps.length && p.reviewDone) {
+        if (localRecPassed && p.done.length >= r.totalLessonSteps && p.reviewDone) {
           const syncOk = await syncModuleProgressToServer({
             moduleKey: r.id,
             currentStage: p.stage,
@@ -5028,9 +5352,10 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       profileDraft = createInitialProfileDraft(userProfile);
     }
     state = hydrateCourseStateFromWorkspace(state, ws);
-    lessonStage = Math.min(Math.max(state.stage || 0, 0), stages.length - 1);
+    lessonStage = Math.min(Math.max(state.stage || 0, 0), getCarbonaraTotalSteps() - 1);
     persist();
     render();
+    void ensureProtectedCourseContentLoaded();
 
     const syncedPending = await syncPendingPassedActivitiesIfNeeded(ws);
     if (syncedPending) {
@@ -5061,16 +5386,20 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     });
   }
 
-  function syncRecipeProgressAsync(r: ExtraRecipe, prog: RecipeProgressEntry) {
+  function syncRecipeProgressAsync(
+    moduleId: string,
+    totalSteps: number,
+    prog: RecipeProgressEntry
+  ) {
     if (userProfile?.authSource !== 'supabase') return;
     void syncModuleProgressToServer({
-      moduleKey: r.id,
+      moduleKey: moduleId,
       currentStage: prog.stage,
       doneSteps: prog.done,
       reviewDone: Boolean(prog.reviewDone),
-      lessonFinished: prog.done.length >= r.steps.length,
+      lessonFinished: prog.done.length >= totalSteps,
       workFinished: Boolean(prog.workFinished),
-      lastModuleKey: state.lastModuleId || r.id,
+      lastModuleKey: state.lastModuleId || moduleId,
     });
   }
 
@@ -5191,6 +5520,11 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     courseTitle: string;
     value: number;
   }) {
+    if (!isAuthenticatedUser()) {
+      pendingPaymentRedirect = true;
+      openLoginModal('Entre na sua conta ou crie seu cadastro antes de prosseguir para o pagamento.');
+      return;
+    }
     if (PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED) {
       paymentSummary = {
         ...createDefaultCoursePaymentSummary(params.courseSlug || 'massas-italianas'),
@@ -5289,7 +5623,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
 
   function stopPaymentPollTimer(): void {
     if (paymentPollTimer !== null) {
-      window.clearInterval(paymentPollTimer);
+      window.clearTimeout(paymentPollTimer);
       paymentPollTimer = null;
     }
   }
@@ -5349,13 +5683,43 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
 
   function startPaymentPollTimer(orderId: string): void {
     stopPaymentPollTimer();
-    paymentPollTimer = window.setInterval(() => {
-      if (route !== 'payments' || activeOrderId !== orderId || paymentsUiStatus !== 'awaiting_confirmation') {
+    const maxAttempts = 8;
+    let attempt = 0;
+
+    const scheduleNext = () => {
+      attempt += 1;
+      if (attempt > maxAttempts) {
         stopPaymentPollTimer();
+        if (route === 'payments' && paymentsUiStatus === 'awaiting_confirmation') {
+          paymentsStatusMessage =
+            'Cobrança aguardando compensação. Após pagar, utilize o botão "Atualizar status".';
+          render();
+        }
         return;
       }
-      void refreshActiveOrderStatus(true);
-    }, 6000);
+      const delayMs = attempt <= 4 ? 15000 : 30000;
+      paymentPollTimer = window.setTimeout(() => {
+        if (
+          route !== 'payments' ||
+          activeOrderId !== orderId ||
+          paymentsUiStatus !== 'awaiting_confirmation'
+        ) {
+          stopPaymentPollTimer();
+          return;
+        }
+        void refreshActiveOrderStatus(true).then(() => {
+          if (
+            route === 'payments' &&
+            activeOrderId === orderId &&
+            paymentsUiStatus === 'awaiting_confirmation'
+          ) {
+            scheduleNext();
+          }
+        });
+      }, delayMs);
+    };
+
+    scheduleNext();
   }
 
   async function hydratePaymentsSummary(force = false): Promise<void> {
@@ -5745,6 +6109,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           createdAt: acc.createdAt,
           authSource: 'local',
         };
+        clearProtectedRuntimeCaches();
         saveProfile(restoredProfile);
         userProfile = restoredProfile;
         profileDraft = createInitialProfileDraft(restoredProfile);
@@ -5756,7 +6121,12 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           'Conta local carregada neste navegador.'
         );
         void hydratePaymentsSummary(true);
-        render();
+        if (pendingPaymentRedirect) {
+          pendingPaymentRedirect = false;
+          go('payments');
+        } else {
+          render();
+        }
       });
       return;
     }
@@ -5818,6 +6188,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     }
 
     function applyAuthenticatedLogin(profile: StoredUserProfile) {
+      clearProtectedRuntimeCaches();
       userProfile = profile;
       workspaceData = null;
       issuedCertificate = null;
@@ -5832,9 +6203,15 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         `Bem-vindo(a) de volta, ${profile.fullName.split(' ')[0]}!`,
         'Sua conta Supabase foi sincronizada neste navegador.'
       );
-      render();
+      if (pendingPaymentRedirect) {
+        pendingPaymentRedirect = false;
+        go('payments');
+      } else {
+        render();
+      }
       void hydratePaymentsSummary(true);
       void hydrateAuthenticatedWorkspace().then(() => {
+        void ensureProtectedCourseContentLoaded();
         if (pendingCertificateIssueAfterLogin) {
           pendingCertificateIssueAfterLogin = false;
           void handleGenerateCertificatePdf();
@@ -6148,7 +6525,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     if (!alreadyDone) state.done.push(lessonStage);
     state.stage = lessonStage;
     persist();
-    if (lessonStage === stages.length - 1) {
+    if (lessonStage === getCarbonaraTotalSteps() - 1) {
       state.lessonFinished = true;
       persist();
       syncCarbonaraProgressAsync();
@@ -6172,45 +6549,69 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     state.demo = true;
     persist();
     render();
+    void checkWorkAnswerOnServer('carbonara', qIndex, choice).then((fb) => {
+      if (fb.ok) {
+        workFeedbackCache.set(`carbonara:${qIndex}:${choice}`, {
+          isCorrect: Boolean(fb.isCorrect),
+          correctIndex: fb.correctIndex ?? -1,
+          explanation: fb.explanation || '',
+          tip: fb.tip || '',
+        });
+        render();
+      } else if (fb.status === 401 || fb.status === 409) {
+        handleProtectedApiAuthFailure(fb.status, fb.error);
+      }
+    });
   }
 
-  function nextLearning() {
-    if (qIndex < questions.length - 1) {
+  async function nextLearning() {
+    const workCount = getCachedSanitizedBank('carbonara', 'work')?.length || getCarbonaraStageCount('work');
+    if (qIndex < workCount - 1) {
       qIndex++;
       persist();
       render();
       return;
     }
-    const cleanAnswers = state.questionsAnswers.slice();
+    if (userProfile?.authSource !== 'supabase') {
+      openLoginModal('Entre na sua conta para registrar e validar seu trabalho prático.');
+      return;
+    }
+    const cleanAnswers = state.questionsAnswers.map((v) => (typeof v === 'number' ? v : 0));
     const versioned = buildVersionedAttemptPayload('carbonara', 'work', cleanAnswers);
-    state.questionAttempts.push({
-      score: versioned.graded.score,
-      answers: versioned.graded.answers,
-      date: new Date().toISOString(),
+    const res = await submitAssessmentToServer({
+      moduleKey: 'carbonara',
+      attemptType: 'work',
+      answers: versioned.answers,
       bankVersion: versioned.bankVersion,
       questionIds: versioned.questionIds,
       selectedOptionIds: versioned.selectedOptionIds,
-      questionSnapshots: versioned.questionSnapshots,
+    });
+    if (!res.ok) {
+      if (!handleProtectedApiAuthFailure(res.status, res.error)) {
+        toast.error('Não foi possível registrar o trabalho', res.error || 'Tente novamente.');
+      }
+      render();
+      return;
+    }
+    state.questionAttempts.push({
+      score: res.score ?? 0,
+      answers: versioned.answers,
+      date: res.attempt?.attempted_at || new Date().toISOString(),
+      bankVersion: res.bankVersion || versioned.bankVersion,
+      questionIds: res.questionIds || versioned.questionIds,
+      selectedOptionIds: res.selectedOptionIds || versioned.selectedOptionIds,
+      questionSnapshots: res.questionSnapshots,
     });
     state.questionsFinished = true;
     state.demo = true;
     persist();
-    if (userProfile?.authSource === 'supabase') {
-      void submitAssessmentToServer({
-        moduleKey: 'carbonara',
-        attemptType: 'work',
-        answers: versioned.graded.answers,
-        bankVersion: versioned.bankVersion,
-        questionIds: versioned.questionIds,
-        selectedOptionIds: versioned.selectedOptionIds,
-      });
-    }
     render();
   }
 
   function beginExam() {
     state.demo = true;
-    state.examAnswers = Array(exam.length).fill(null);
+    void ensureSanitizedBankLoaded('carbonara', 'exam');
+    state.examAnswers = Array(getCarbonaraStageCount('exam')).fill(null);
     state.examCurrent = 0;
     state.examReview = false;
     examStatus = 'question';
@@ -6243,85 +6644,70 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
 
   async function submitExam() {
     if (examSubmitting) return;
+    if (userProfile?.authSource !== 'supabase') {
+      openLoginModal('Entre na sua conta com matrícula ativa para enviar a avaliação oficial.');
+      return;
+    }
     const answers = state.examAnswers.map((v) => (typeof v === 'number' ? v : 0));
 
-    if (userProfile?.authSource === 'supabase') {
-      examSubmitting = true;
-      await syncModuleProgressToServer({
-        moduleKey: 'carbonara',
-        currentStage: lessonStage,
-        doneSteps: state.done,
-        miseChecks: state.miseChecks,
-        reviewDone: Boolean(state.reviewDone),
-        lessonFinished: Boolean(state.lessonFinished),
-        workFinished: Boolean(state.questionsFinished),
-        lastModuleKey: 'carbonara',
-      });
+    examSubmitting = true;
+    await syncModuleProgressToServer({
+      moduleKey: 'carbonara',
+      currentStage: lessonStage,
+      doneSteps: state.done,
+      miseChecks: state.miseChecks,
+      reviewDone: Boolean(state.reviewDone),
+      lessonFinished: Boolean(state.lessonFinished),
+      workFinished: Boolean(state.questionsFinished),
+      lastModuleKey: 'carbonara',
+    });
 
-      const localVersioned = buildVersionedAttemptPayload('carbonara', 'exam', answers);
-      const res = await submitAssessmentToServer({
-        moduleKey: 'carbonara',
-        attemptType: 'exam',
-        answers,
-        bankVersion: localVersioned.bankVersion,
-        questionIds: localVersioned.questionIds,
-        selectedOptionIds: localVersioned.selectedOptionIds,
-      });
-      examSubmitting = false;
+    const localVersioned = buildVersionedAttemptPayload('carbonara', 'exam', answers);
+    const res = await submitAssessmentToServer({
+      moduleKey: 'carbonara',
+      attemptType: 'exam',
+      answers,
+      bankVersion: localVersioned.bankVersion,
+      questionIds: localVersioned.questionIds,
+      selectedOptionIds: localVersioned.selectedOptionIds,
+    });
+    examSubmitting = false;
 
-      if (!res.ok) {
+    if (!res.ok) {
+      if (!handleProtectedApiAuthFailure(res.status, res.error)) {
         toast.error(
           'Não foi possível enviar a avaliação',
           res.error || 'Verifique sua conexão ou sua sessão e tente novamente.'
         );
-        render();
-        return;
       }
+      render();
+      return;
+    }
 
-      const score = res.score ?? localVersioned.graded.score;
-      const passed = Boolean(res.passed);
-      state.examAttempts.push({
-        score,
-        passed,
-        answers,
-        date: res.attempt?.attempted_at || new Date().toISOString(),
-        bankVersion: res.bankVersion || localVersioned.bankVersion,
-        questionIds: res.questionIds || localVersioned.questionIds,
-        selectedOptionIds: res.selectedOptionIds || localVersioned.selectedOptionIds,
-        questionSnapshots: res.questionSnapshots || localVersioned.questionSnapshots,
-      });
-      if (res.certificate) {
-        upsertWorkspaceCertificate(res.certificate, res.certificates);
-      }
-      if (passed) {
-        toast.success(
-          'Prova aprovada e certificado liberado!',
-          `Você alcançou ${score}%. Seu certificado oficial já está disponível na aba Certificados.`
-        );
-      } else {
-        toast.warning(
-          `Resultado: ${score}% — tente novamente`,
-          `É necessário atingir pelo menos ${PASSING_SCORE_PERCENT}% para liberar o certificado.`
-        );
-      }
+    const score = res.score ?? 0;
+    const passed = Boolean(res.passed);
+    state.examAttempts.push({
+      score,
+      passed,
+      answers,
+      date: res.attempt?.attempted_at || new Date().toISOString(),
+      bankVersion: res.bankVersion || localVersioned.bankVersion,
+      questionIds: res.questionIds || localVersioned.questionIds,
+      selectedOptionIds: res.selectedOptionIds || localVersioned.selectedOptionIds,
+      questionSnapshots: res.questionSnapshots,
+    });
+    if (res.certificate) {
+      upsertWorkspaceCertificate(res.certificate, res.certificates);
+    }
+    if (passed) {
+      toast.success(
+        'Prova aprovada e certificado liberado!',
+        `Você alcançou ${score}%. Seu certificado oficial já está disponível na aba Certificados.`
+      );
     } else {
-      const versioned = buildVersionedAttemptPayload('carbonara', 'exam', answers);
-      const score = versioned.graded.score;
-      state.examAttempts.push({
-        score,
-        passed: versioned.graded.passed,
-        answers: versioned.graded.answers,
-        date: new Date().toISOString(),
-        bankVersion: versioned.bankVersion,
-        questionIds: versioned.questionIds,
-        selectedOptionIds: versioned.selectedOptionIds,
-        questionSnapshots: versioned.questionSnapshots,
-      });
-      toast.info(
-        versioned.graded.passed
-          ? `Prévia aprovada (${score}%)`
-          : `Prévia: ${score}% (mínimo ${PASSING_SCORE_PERCENT}%)`,
-        'Entre na sua conta para registrar a prova oficialmente e emitir o certificado em PDF.'
+      toast.warning(
+        `Resultado: ${score}% — tente novamente`,
+        `É necessário atingir pelo menos ${PASSING_SCORE_PERCENT}% para liberar o certificado.`
       );
     }
 
@@ -6543,7 +6929,12 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             hadExistingProfile ? 'Perfil atualizado com sucesso!' : 'Cadastro realizado com sucesso!',
             `Bem-vindo(a), ${firstName}! Seu cadastro único foi salvo localmente para a Fase 1. A Biblioteca Interativa será liberada após aquisição do curso em Pagamentos.`
           );
-          render();
+          if (pendingPaymentRedirect) {
+            pendingPaymentRedirect = false;
+            go('payments');
+          } else {
+            render();
+          }
           window.scrollTo({ top: 0, behavior: 'smooth' });
           return;
         }
@@ -6566,6 +6957,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           return;
         }
 
+        clearProtectedRuntimeCaches();
         userProfile = syncResult.profile;
         syncProgressScope(syncResult.profile);
         state.demo = true;
@@ -6576,8 +6968,12 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         const firstName = syncResult.profile.fullName.split(' ')[0] || 'Chef';
         if (syncResult.syncedToSupabase) {
           void recordLegalAcceptance({
+            courseSlug: 'massas-italianas',
+            acceptanceKind: 'signup',
             termsVersion: SUPPLIER_IDENTITY.termsVersion,
             privacyVersion: SUPPLIER_IDENTITY.privacyVersion,
+            marketingWhatsapp: Boolean(profileDraft.promoWhatsapp),
+            marketingEmail: Boolean(profileDraft.promoEmail),
             preContractAccepted: false,
             source: hadExistingProfile ? 'profile_update' : 'signup',
           });
@@ -6590,6 +6986,12 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             }`
           );
           void hydrateAuthenticatedWorkspace();
+          if (pendingPaymentRedirect && syncResult.profile.authSource === 'supabase') {
+            pendingPaymentRedirect = false;
+            go('payments');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            return;
+          }
         } else {
           toast.success(
             hadExistingProfile ? 'Perfil atualizado!' : 'Perfil criado com sucesso!',
@@ -6702,11 +7104,44 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
 
   function render() {
     stopTimerOnRouteChange();
+    if (route === 'payments' && !isAuthenticatedUser()) {
+      pendingPaymentRedirect = true;
+      route = 'sales';
+      syncHashForRoute(route);
+      window.setTimeout(() => {
+        openLoginModal('Entre na sua conta ou crie seu cadastro antes de selecionar a forma de pagamento.');
+      }, 0);
+    }
     if (route !== 'payments') {
       stopPaymentPollTimer();
     }
     if ((route === 'payments' || route === 'sales' || route === 'home') && !paymentSummaryLoaded) {
       void hydratePaymentsSummary();
+    }
+    const privateRoutes = new Set([
+      'account',
+      'admin',
+      'payments',
+      'progress',
+      'certificate',
+      'carbonara-cert',
+      'create-profile',
+      'lesson',
+      'recipe',
+      'recipeReview',
+      'questions',
+      'review',
+      'exam',
+    ]);
+    const robotsContent = privateRoutes.has(route) ? 'noindex,nofollow' : 'index,follow';
+    let robotsMeta = document.querySelector<HTMLMetaElement>('meta[name="robots"]');
+    if (!robotsMeta) {
+      robotsMeta = document.createElement('meta');
+      robotsMeta.name = 'robots';
+      document.head.appendChild(robotsMeta);
+    }
+    if (robotsMeta.content !== robotsContent) {
+      robotsMeta.content = robotsContent;
     }
     document.body.classList.toggle('has-demo-nav', !!state.demo);
     document.body.classList.toggle('is-wine-route', route === 'wine' || route === 'category-vinicola');
@@ -6851,13 +7286,14 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
 
     let currentContext = 'Página inicial da FerveC Gastronomia';
     if (route === 'lesson') {
-      const s = stages[lessonStage];
-      currentContext = `Aula Spaghetti alla Carbonara — Etapa ${lessonStage + 1}/${stages.length}: ${s.title}`;
+      const s = getCarbonaraStage(lessonStage);
+      currentContext = `Aula Spaghetti alla Carbonara — Etapa ${lessonStage + 1}/${getCarbonaraTotalSteps()}: ${s.title}`;
     } else if (route === 'recipe' || route === 'recipeReview') {
-      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
+      const pubMod = getPublicModule(selectedRecipeId);
+      const r = getProtectedExtraRecipe(selectedRecipeId);
       const step = r?.steps[recipeStage];
-      currentContext = r
-        ? `Módulo ${r.title}${step ? ` — Etapa ${recipeStage + 1}: ${step[0]}` : ''}`
+      currentContext = pubMod
+        ? `Módulo ${r?.title || pubMod.title}${step ? ` — Etapa ${recipeStage + 1}: ${step[0]}` : ''}`
         : 'Módulo de Massas Italianas';
     } else if (route === 'wine' || route === 'category-vinicola') {
       const w = wineProfiles.find((x) => x.id === selectedWineId);
@@ -7250,14 +7686,16 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       selectedRecipeId = b.dataset.recipe || 'alfredo';
       state.lastModuleId = selectedRecipeId;
       state.demo = true;
-      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
+      const pubMod = getPublicModule(selectedRecipeId);
+      const r = getProtectedExtraRecipe(selectedRecipeId);
+      const totalSteps = r?.steps.length || pubMod?.totalLessonSteps || 6;
       const tab = b.dataset.tab || 'lesson';
-      if (r) {
-        const p = recipeProgressFor(r);
-        if (tab === 'exam' && (p.done.length < r.steps.length || !p.reviewDone)) {
+      if (pubMod && pubMod.id !== 'carbonara') {
+        const p = recipeProgressFor(pubMod.id);
+        if (tab === 'exam' && (p.done.length < totalSteps || !p.reviewDone)) {
           showModal(
             'Prova bloqueada até concluir o módulo',
-            `Conclua as ${r.steps.length} etapas e marque a revisão de ${r.title} antes de iniciar a prova.`
+            `Conclua as ${totalSteps} etapas e marque a revisão de ${r?.title || pubMod.title} antes de iniciar a prova.`
           );
           return;
         }
@@ -7267,10 +7705,12 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       persist();
       go('recipe');
     } else if (a === 'recipe-tab') {
-      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
-      if (r) {
-        const p = recipeProgressFor(r);
-        if (b.dataset.tab === 'exam' && (p.done.length < r.steps.length || !p.reviewDone)) {
+      const pubMod = getPublicModule(selectedRecipeId);
+      const r = getProtectedExtraRecipe(selectedRecipeId);
+      const totalSteps = r?.steps.length || pubMod?.totalLessonSteps || 6;
+      if (pubMod && pubMod.id !== 'carbonara') {
+        const p = recipeProgressFor(pubMod.id);
+        if (b.dataset.tab === 'exam' && (p.done.length < totalSteps || !p.reviewDone)) {
           showModal(
             'Conclua e revise o módulo primeiro.',
             'A prova fica disponível depois de percorrer todas as etapas e abrir a revisão.'
@@ -7284,90 +7724,126 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     } else if (a === 'recipe-review-detail') {
       showModal(b.dataset.title || 'Revisão', b.dataset.copy || '');
     } else if (a === 'recipe-review-complete') {
-      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
-      if (r) {
-        const p = recipeProgressFor(r);
+      const pubMod = getPublicModule(selectedRecipeId);
+      const r = getProtectedExtraRecipe(selectedRecipeId);
+      if (pubMod && pubMod.id !== 'carbonara') {
+        const p = recipeProgressFor(pubMod.id);
         p.reviewDone = true;
         persist();
-        syncRecipeProgressAsync(r, p);
+        syncRecipeProgressAsync(pubMod.id, r?.steps.length || pubMod.totalLessonSteps, p);
         showToast('Revisão concluída! Prova do módulo liberada.');
         render();
       }
     } else if (a === 'recipe-exam-start') {
-      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
-      if (r) {
-        const p = recipeProgressFor(r);
+      const pubMod = getPublicModule(selectedRecipeId);
+      if (pubMod && pubMod.id !== 'carbonara') {
+        const p = recipeProgressFor(pubMod.id);
         p.examAnswers = [];
         p.examCurrent = 0;
         p.examStatus = 'active';
+        void ensureSanitizedBankLoaded(pubMod.id, 'exam');
         persist();
         render();
       }
     } else if (a === 'recipe-answer') {
-      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
-      if (r) {
-        const p = recipeProgressFor(r);
+      const pubMod = getPublicModule(selectedRecipeId);
+      if (pubMod && pubMod.id !== 'carbonara') {
+        const p = recipeProgressFor(pubMod.id);
+        const choice = +(b.dataset.answer || 0);
         if (b.dataset.mode === 'exam') {
-          p.examAnswers[p.examCurrent] = +(b.dataset.answer || 0);
+          p.examAnswers[p.examCurrent] = choice;
+          persist();
+          render();
         } else {
-          p.workAnswers[p.workCurrent] = +(b.dataset.answer || 0);
+          const workIdx = p.workCurrent;
+          p.workAnswers[workIdx] = choice;
+          persist();
+          render();
+          void checkWorkAnswerOnServer(pubMod.id, workIdx, choice).then((fb) => {
+            if (fb.ok) {
+              workFeedbackCache.set(`${pubMod.id}:${workIdx}:${choice}`, {
+                isCorrect: Boolean(fb.isCorrect),
+                correctIndex: fb.correctIndex ?? -1,
+                explanation: fb.explanation || '',
+                tip: fb.tip || '',
+              });
+              render();
+            } else if (fb.status === 401 || fb.status === 409) {
+              handleProtectedApiAuthFailure(fb.status, fb.error);
+            }
+          });
         }
-        persist();
-        render();
       }
     } else if (a === 'recipe-question-next') {
-      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
-      if (r) {
-        const p = recipeProgressFor(r);
+      const pubMod = getPublicModule(selectedRecipeId);
+      if (pubMod && pubMod.id !== 'carbonara') {
+        const p = recipeProgressFor(pubMod.id);
         const examMode = b.dataset.mode === 'exam';
-        const bank = recipeQuestionSet(r, examMode ? 8 : 6);
+        const attemptType = examMode ? 'exam' : 'work';
+        const bank = getCachedSanitizedBank(pubMod.id, attemptType);
+        const total =
+          bank?.length || (examMode ? pubMod.totalExamQuestions : pubMod.totalWorkQuestions);
         const idx = examMode ? p.examCurrent : p.workCurrent;
         const answers = examMode ? p.examAnswers : p.workAnswers;
         if (answers[idx] == null) return;
-        if (idx < bank.length - 1) {
+        if (idx < total - 1) {
           if (examMode) p.examCurrent++;
           else p.workCurrent++;
+          persist();
+          render();
         } else if (examMode) {
           p.examStatus = 'review';
+          persist();
+          render();
         } else {
-          const cleanWorkAnswers = (answers as number[]).slice();
-          const versioned = buildVersionedAttemptPayload(r.id, 'work', cleanWorkAnswers);
-          p.workAttempts.push({
-            score: versioned.graded.score,
-            answers: versioned.graded.answers,
-            date: new Date().toISOString(),
+          if (userProfile?.authSource !== 'supabase') {
+            openLoginModal('Entre na sua conta para registrar e validar seu trabalho prático.');
+            return;
+          }
+          const cleanWorkAnswers = (answers as number[]).map((v) => (typeof v === 'number' ? v : 0));
+          const versioned = buildVersionedAttemptPayload(pubMod.id, 'work', cleanWorkAnswers);
+          void submitAssessmentToServer({
+            moduleKey: pubMod.id,
+            attemptType: 'work',
+            answers: versioned.answers,
             bankVersion: versioned.bankVersion,
             questionIds: versioned.questionIds,
             selectedOptionIds: versioned.selectedOptionIds,
-            questionSnapshots: versioned.questionSnapshots,
-          });
-          p.workFinished = true;
-          if (userProfile?.authSource === 'supabase') {
-            void submitAssessmentToServer({
-              moduleKey: r.id,
-              attemptType: 'work',
-              answers: versioned.graded.answers,
-              bankVersion: versioned.bankVersion,
-              questionIds: versioned.questionIds,
-              selectedOptionIds: versioned.selectedOptionIds,
+          }).then((res) => {
+            if (!res.ok) {
+              if (!handleProtectedApiAuthFailure(res.status, res.error)) {
+                toast.error('Não foi possível registrar o trabalho', res.error || 'Tente novamente.');
+              }
+              render();
+              return;
+            }
+            p.workAttempts.push({
+              score: res.score ?? 0,
+              answers: versioned.answers,
+              date: res.attempt?.attempted_at || new Date().toISOString(),
+              bankVersion: res.bankVersion || versioned.bankVersion,
+              questionIds: res.questionIds || versioned.questionIds,
+              selectedOptionIds: res.selectedOptionIds || versioned.selectedOptionIds,
+              questionSnapshots: res.questionSnapshots,
             });
-          }
+            p.workFinished = true;
+            persist();
+            render();
+          });
         }
-        persist();
-        render();
       }
     } else if (a === 'recipe-question-back') {
-      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
-      if (r) {
-        const p = recipeProgressFor(r);
+      const pubMod = getPublicModule(selectedRecipeId);
+      if (pubMod && pubMod.id !== 'carbonara') {
+        const p = recipeProgressFor(pubMod.id);
         if (b.dataset.mode === 'exam') p.examCurrent = Math.max(0, p.examCurrent - 1);
         else p.workCurrent = Math.max(0, p.workCurrent - 1);
         render();
       }
     } else if (a === 'recipe-work-retry') {
-      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
-      if (r) {
-        const p = recipeProgressFor(r);
+      const pubMod = getPublicModule(selectedRecipeId);
+      if (pubMod && pubMod.id !== 'carbonara') {
+        const p = recipeProgressFor(pubMod.id);
         p.workAnswers = [];
         p.workCurrent = 0;
         p.workFinished = false;
@@ -7375,17 +7851,17 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         render();
       }
     } else if (a === 'recipe-exam-edit') {
-      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
-      if (r) {
-        const p = recipeProgressFor(r);
+      const pubMod = getPublicModule(selectedRecipeId);
+      if (pubMod && pubMod.id !== 'carbonara') {
+        const p = recipeProgressFor(pubMod.id);
         p.examCurrent = +(b.dataset.question || 0);
         p.examStatus = 'active';
         render();
       }
     } else if (a === 'recipe-exam-back') {
-      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
-      if (r) {
-        const p = recipeProgressFor(r);
+      const pubMod = getPublicModule(selectedRecipeId);
+      if (pubMod && pubMod.id !== 'carbonara') {
+        const p = recipeProgressFor(pubMod.id);
         p.examStatus = 'active';
         render();
       }
@@ -7404,100 +7880,90 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       </div>`);
     } else if (a === 'recipe-exam-confirm') {
       closeModal();
-      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
-      if (r) {
-        const p = recipeProgressFor(r);
+      const pubMod = getPublicModule(selectedRecipeId);
+      const r = getProtectedExtraRecipe(selectedRecipeId);
+      if (pubMod && pubMod.id !== 'carbonara') {
+        if (userProfile?.authSource !== 'supabase') {
+          openLoginModal('Entre na sua conta com matrícula ativa para enviar a prova oficial.');
+          return;
+        }
+        const p = recipeProgressFor(pubMod.id);
+        const totalSteps = r?.steps.length || pubMod.totalLessonSteps;
         const submittedAnswers = p.examAnswers.map((v) => (typeof v === 'number' ? v : 0));
 
-        if (userProfile?.authSource === 'supabase') {
-          void (async () => {
-            await syncModuleProgressToServer({
-              moduleKey: r.id,
-              currentStage: p.stage,
-              doneSteps: p.done,
-              reviewDone: Boolean(p.reviewDone),
-              lessonFinished: p.done.length >= r.steps.length,
-              workFinished: Boolean(p.workFinished),
-              lastModuleKey: r.id,
-            });
-            const localVersioned = buildVersionedAttemptPayload(r.id, 'exam', submittedAnswers);
-            const res = await submitAssessmentToServer({
-              moduleKey: r.id,
-              attemptType: 'exam',
-              answers: submittedAnswers,
-              bankVersion: localVersioned.bankVersion,
-              questionIds: localVersioned.questionIds,
-              selectedOptionIds: localVersioned.selectedOptionIds,
-            });
-            if (!res.ok) {
+        void (async () => {
+          await syncModuleProgressToServer({
+            moduleKey: pubMod.id,
+            currentStage: p.stage,
+            doneSteps: p.done,
+            reviewDone: Boolean(p.reviewDone),
+            lessonFinished: p.done.length >= totalSteps,
+            workFinished: Boolean(p.workFinished),
+            lastModuleKey: pubMod.id,
+          });
+          const localVersioned = buildVersionedAttemptPayload(pubMod.id, 'exam', submittedAnswers);
+          const res = await submitAssessmentToServer({
+            moduleKey: pubMod.id,
+            attemptType: 'exam',
+            answers: submittedAnswers,
+            bankVersion: localVersioned.bankVersion,
+            questionIds: localVersioned.questionIds,
+            selectedOptionIds: localVersioned.selectedOptionIds,
+          });
+          if (!res.ok) {
+            if (!handleProtectedApiAuthFailure(res.status, res.error)) {
               toast.error('Não foi possível registrar a prova', res.error || 'Tente novamente.');
-              render();
-              return;
-            }
-            const score = res.score ?? localVersioned.graded.score;
-            const passed = Boolean(res.passed);
-            p.examAttempts.push({
-              score,
-              passed,
-              answers: submittedAnswers,
-              date: res.attempt?.attempted_at || new Date().toISOString(),
-              bankVersion: res.bankVersion || localVersioned.bankVersion,
-              questionIds: res.questionIds || localVersioned.questionIds,
-              selectedOptionIds: res.selectedOptionIds || localVersioned.selectedOptionIds,
-              questionSnapshots: res.questionSnapshots || localVersioned.questionSnapshots,
-            });
-            if (res.certificate) {
-              upsertWorkspaceCertificate(res.certificate, res.certificates);
-            }
-            p.examStatus = 'result';
-            p.examAnswers = [];
-            p.examCurrent = 0;
-            persist();
-            if (passed) {
-              toast.success(
-                'Prova aprovada e certificado liberado!',
-                `Você atingiu ${score}% em ${r.title}.`
-              );
-            } else {
-              toast.warning(
-                `Nota ${score}% — tente novamente`,
-                `Mínimo de ${PASSING_SCORE_PERCENT}% para liberar o certificado.`
-              );
             }
             render();
-          })();
-        } else {
-          const versioned = buildVersionedAttemptPayload(r.id, 'exam', submittedAnswers);
+            return;
+          }
+          const score = res.score ?? 0;
+          const passed = Boolean(res.passed);
           p.examAttempts.push({
-            score: versioned.graded.score,
-            passed: versioned.graded.passed,
-            answers: versioned.graded.answers,
-            date: new Date().toISOString(),
-            bankVersion: versioned.bankVersion,
-            questionIds: versioned.questionIds,
-            selectedOptionIds: versioned.selectedOptionIds,
-            questionSnapshots: versioned.questionSnapshots,
+            score,
+            passed,
+            answers: submittedAnswers,
+            date: res.attempt?.attempted_at || new Date().toISOString(),
+            bankVersion: res.bankVersion || localVersioned.bankVersion,
+            questionIds: res.questionIds || localVersioned.questionIds,
+            selectedOptionIds: res.selectedOptionIds || localVersioned.selectedOptionIds,
+            questionSnapshots: res.questionSnapshots,
           });
+          if (res.certificate) {
+            upsertWorkspaceCertificate(res.certificate, res.certificates);
+          }
           p.examStatus = 'result';
           p.examAnswers = [];
           p.examCurrent = 0;
           persist();
+          if (passed) {
+            toast.success(
+              'Prova aprovada e certificado liberado!',
+              `Você atingiu ${score}% em ${r?.title || pubMod.title}.`
+            );
+          } else {
+            toast.warning(
+              `Nota ${score}% — tente novamente`,
+              `Mínimo de ${PASSING_SCORE_PERCENT}% para liberar o certificado.`
+            );
+          }
           render();
-        }
+        })();
       }
     } else if (a === 'recipe-step') {
       stopChef();
       resetAudioClock();
       audioStatus = 'idle';
       recipeStage = +(b.dataset.step || 0);
-      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
-      if (r) {
-        const p = recipeProgressFor(r);
+      const pubMod = getPublicModule(selectedRecipeId);
+      const r = getProtectedExtraRecipe(selectedRecipeId);
+      if (pubMod && pubMod.id !== 'carbonara') {
+        const p = recipeProgressFor(pubMod.id);
         p.stage = recipeStage;
-        const ing = getIngredientsForModuleStage(r.id, recipeStage);
+        const ing = getIngredientsForModuleStage(pubMod.id, recipeStage);
         selectedIngredientId = ing[0]?.id || 'spaghetti';
         persist();
-        syncRecipeProgressAsync(r, p);
+        syncRecipeProgressAsync(pubMod.id, r?.steps.length || pubMod.totalLessonSteps, p);
       }
       render();
     } else if (a === 'recipe-prev') {
@@ -7516,9 +7982,11 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       stopChef();
       resetAudioClock();
       audioStatus = 'idle';
-      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
-      if (r) {
-        const p = recipeProgressFor(r);
+      const pubMod = getPublicModule(selectedRecipeId);
+      const r = getProtectedExtraRecipe(selectedRecipeId);
+      if (pubMod && pubMod.id !== 'carbonara') {
+        const p = recipeProgressFor(pubMod.id);
+        const totalSteps = r?.steps.length || pubMod.totalLessonSteps;
         if (recipeStage > 0 && !p.done.includes(recipeStage - 1) && !p.done.includes(recipeStage)) {
           showModal(
             'Vamos uma etapa de cada vez.',
@@ -7528,17 +7996,17 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         }
         const wasDone = p.done.includes(recipeStage);
         if (!wasDone) p.done.push(recipeStage);
-        if (recipeStage < r.steps.length - 1) {
+        if (recipeStage < totalSteps - 1) {
           recipeStage++;
-          const ing = getIngredientsForModuleStage(r.id, recipeStage);
+          const ing = getIngredientsForModuleStage(pubMod.id, recipeStage);
           selectedIngredientId = ing[0]?.id || 'spaghetti';
           showToast(wasDone ? `Etapa ${recipeStage + 1} aberta.` : `Etapa ${recipeStage} concluída!`);
         } else {
-          showToast(`Parabéns! Todas as ${r.steps.length} etapas de ${r.title} foram concluídas.`);
+          showToast(`Parabéns! Todas as ${totalSteps} etapas de ${r?.title || pubMod.title} foram concluídas.`);
         }
         p.stage = recipeStage;
         persist();
-        syncRecipeProgressAsync(r, p);
+        syncRecipeProgressAsync(pubMod.id, totalSteps, p);
         render();
       }
     } else if (a === 'recipe-review') go('recipeReview');
@@ -7564,6 +8032,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       profileDraft = createInitialProfileDraft(userProfile);
       go('create-profile');
     } else if (a === 'clear-profile') {
+      clearProtectedRuntimeCaches();
       void logoutServerSession();
       void signOutSupabaseAccount();
       clearProfile();
@@ -7676,7 +8145,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         showModal(b.dataset.title || 'Revisão', b.dataset.copy || '');
       }
     } else if (a === 'lesson-play') {
-      const x = stages[lessonStage];
+      const x = getCarbonaraStage(lessonStage);
       playText(x.audioScript || `${x.title}. ${x.intro} ${x.tip}`);
     } else if (a === 'sos') showSos(b.dataset.module || 'carbonara');
     else if (a === 'sos-choice') showSosAnswer(+(b.dataset.choice || 0), b.dataset.module || 'carbonara');
@@ -7766,7 +8235,8 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       render();
     } else if (a === 'lesson-mark-complete') {
       state.lessonFinished = true;
-      for (let idx = 0; idx < stages.length; idx++) {
+      const totalCarbSteps = getCarbonaraTotalSteps();
+      for (let idx = 0; idx < totalCarbSteps; idx++) {
         if (!state.done.includes(idx)) state.done.push(idx);
       }
       persist();
@@ -7774,42 +8244,33 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       toast.success('Aula concluída!', 'Seu progresso no módulo Spaghetti alla Carbonara foi atualizado.');
       render();
     } else if (a === 'recipe-lesson-mark-complete') {
-      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
-      if (r) {
-        const p = recipeProgressFor(r);
+      const pubMod = getPublicModule(selectedRecipeId);
+      const r = getProtectedExtraRecipe(selectedRecipeId);
+      if (pubMod && pubMod.id !== 'carbonara') {
+        const p = recipeProgressFor(pubMod.id);
+        const totalSteps = r?.steps.length || pubMod.totalLessonSteps;
         p.lessonCompleted = true;
-        for (let idx = 0; idx < r.steps.length; idx++) {
+        for (let idx = 0; idx < totalSteps; idx++) {
           if (!p.done.includes(idx)) p.done.push(idx);
         }
         persist();
-        syncRecipeProgressAsync(r, p);
-        toast.success(`Aula de ${r.title} concluída!`, 'Você já pode avançar para Trabalho ou Revisão.');
+        syncRecipeProgressAsync(pubMod.id, totalSteps, p);
+        toast.success(`Aula de ${r?.title || pubMod.title} concluída!`, 'Você já pode avançar para Trabalho ou Revisão.');
         render();
       }
     } else if (a === 'questions-mark-complete') {
+      const totalWork = getCachedSanitizedBank('carbonara', 'work')?.length || getCarbonaraStageCount('work');
       const answeredCount = state.questionsAnswers.filter((v) => v !== null && v !== undefined).length;
-      if (!canCompleteModuleWork(answeredCount, questions.length)) {
+      if (!canCompleteModuleWork(answeredCount, totalWork)) {
         showModal(
           'Responda todas as perguntas obrigatórias',
-          `Responda todas as ${questions.length} perguntas do Trabalho (${answeredCount}/${questions.length} respondidas) antes de concluir.`
+          `Responda todas as ${totalWork} perguntas do Trabalho (${answeredCount}/${totalWork} respondidas) antes de concluir.`
         );
         return;
       }
       if (!state.questionsFinished) {
-        const versioned = buildVersionedAttemptPayload(
-          'carbonara',
-          'work',
-          state.questionsAnswers.slice()
-        );
-        state.questionAttempts.push({
-          score: versioned.graded.score,
-          answers: versioned.graded.answers,
-          date: new Date().toISOString(),
-          bankVersion: versioned.bankVersion,
-          questionIds: versioned.questionIds,
-          selectedOptionIds: versioned.selectedOptionIds,
-          questionSnapshots: versioned.questionSnapshots,
-        });
+        void nextLearning();
+        return;
       }
       state.questionsFinished = true;
       state.demo = true;
@@ -7817,40 +8278,68 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       toast.success('Trabalho concluído!', 'Seu progresso em Meu Progresso foi atualizado.');
       render();
     } else if (a === 'recipe-work-mark-complete') {
-      const r = extraRecipes.find((x) => x.id === selectedRecipeId);
-      if (r) {
-        const p = recipeProgressFor(r);
-        const bank = recipeQuestionSet(r, 6);
+      const pubMod = getPublicModule(selectedRecipeId);
+      const r = getProtectedExtraRecipe(selectedRecipeId);
+      if (pubMod && pubMod.id !== 'carbonara') {
+        const p = recipeProgressFor(pubMod.id);
+        const totalWork =
+          getCachedSanitizedBank(pubMod.id, 'work')?.length || pubMod.totalWorkQuestions;
         const answeredCount = p.workAnswers.filter((v) => v !== null && v !== undefined).length;
-        if (!canCompleteModuleWork(answeredCount, bank.length)) {
+        if (!canCompleteModuleWork(answeredCount, totalWork)) {
           showModal(
             'Responda todas as perguntas obrigatórias',
-            `Responda todas as ${bank.length} perguntas do Trabalho de ${r.title} antes de concluir.`
+            `Responda todas as ${totalWork} perguntas do Trabalho de ${r?.title || pubMod.title} antes de concluir.`
           );
           return;
         }
         if (!p.workFinished) {
+          if (userProfile?.authSource !== 'supabase') {
+            openLoginModal('Entre na sua conta para registrar e validar seu trabalho prático.');
+            return;
+          }
           const cleanAnswers = p.workAnswers.map((v) => (typeof v === 'number' ? v : 0));
-          const versioned = buildVersionedAttemptPayload(r.id, 'work', cleanAnswers);
-          p.workAttempts.push({
-            score: versioned.graded.score,
-            answers: versioned.graded.answers,
-            date: new Date().toISOString(),
+          const versioned = buildVersionedAttemptPayload(pubMod.id, 'work', cleanAnswers);
+          void submitAssessmentToServer({
+            moduleKey: pubMod.id,
+            attemptType: 'work',
+            answers: versioned.answers,
             bankVersion: versioned.bankVersion,
             questionIds: versioned.questionIds,
             selectedOptionIds: versioned.selectedOptionIds,
-            questionSnapshots: versioned.questionSnapshots,
+          }).then((res) => {
+            if (!res.ok) {
+              if (!handleProtectedApiAuthFailure(res.status, res.error)) {
+                toast.error('Não foi possível registrar o trabalho', res.error || 'Tente novamente.');
+              }
+              render();
+              return;
+            }
+            p.workAttempts.push({
+              score: res.score ?? 0,
+              answers: versioned.answers,
+              date: res.attempt?.attempted_at || new Date().toISOString(),
+              bankVersion: res.bankVersion || versioned.bankVersion,
+              questionIds: res.questionIds || versioned.questionIds,
+              selectedOptionIds: res.selectedOptionIds || versioned.selectedOptionIds,
+              questionSnapshots: res.questionSnapshots,
+            });
+            p.workFinished = true;
+            p.workCompleted = true;
+            persist();
+            syncRecipeProgressAsync(pubMod.id, r?.steps.length || pubMod.totalLessonSteps, p);
+            toast.success(`Trabalho de ${r?.title || pubMod.title} concluído!`, 'Seu progresso foi atualizado.');
+            render();
           });
+          return;
         }
-        p.workFinished = true;
         p.workCompleted = true;
         persist();
-        syncRecipeProgressAsync(r, p);
-        toast.success(`Trabalho de ${r.title} concluído!`, 'Seu progresso foi atualizado.');
+        syncRecipeProgressAsync(pubMod.id, r?.steps.length || pubMod.totalLessonSteps, p);
+        toast.success(`Trabalho de ${r?.title || pubMod.title} concluído!`, 'Seu progresso foi atualizado.');
         render();
       }
     } else if (a === 'question-answer') answerLearning(+(b.dataset.answer || 0));
-    else if (a === 'question-next') nextLearning();
+    else if (a === 'question-next') void nextLearning();
     else if (a === 'question-back') {
       if (qIndex > 0) {
         qIndex--;
@@ -7881,7 +8370,8 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       render();
     } else if (a === 'exam-next') {
       if (state.examAnswers[state.examCurrent] == null) return;
-      if (state.examCurrent < exam.length - 1) {
+      const totalExam = getCachedSanitizedBank('carbonara', 'exam')?.length || getCarbonaraStageCount('exam');
+      if (state.examCurrent < totalExam - 1) {
         state.examCurrent++;
         persist();
         render();

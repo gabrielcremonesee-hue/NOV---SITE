@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100">
+  <defs>
+    <linearGradient id="pesBowl" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#c3b8ad"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="60" cy="84" rx="46" ry="9" fill="#0d0401" fill-opacity="0.62"/>
+  <ellipse cx="60" cy="60" rx="46" ry="12" fill="#dcd4cb"/>
+  <path d="M27 60 C28 40, 44 33, 60 33 C76 33, 92 40, 93 60 Z" fill="#6ab042"/>
+  <path d="M35 56 C44 47, 60 44, 78 51" fill="none" stroke="#9ad46e" stroke-width="4" stroke-linecap="round"/>
+  <path d="M58 32 C55 24, 62 20, 68 25 C65 29, 62 32, 58 32 Z" fill="#468b29"/>
+  <path d="M14 60 C16 74, 34 83, 60 83 C86 83, 104 74, 106 60 C92 67, 76 69.5, 60 69.5 C44 69.5, 28 67, 14 60 Z" fill="url(#pesBowl)"/>
+</svg>

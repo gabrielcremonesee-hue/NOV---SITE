@@ -415,15 +415,16 @@ Deno.serve(async (req: Request) => {
   if (serviceSupabase) {
     const { data: ageRow } = await serviceSupabase
       .from('profiles')
-      .select('age')
+      .select('age, birth_date')
       .eq('id', user.id)
       .maybeSingle();
-    if (ageRow && typeof ageRow.age === 'number' && ageRow.age < 18) {
+    const ageVal = typeof ageRow?.age === 'number' && Number.isInteger(ageRow.age) ? ageRow.age : null;
+    if (!ageRow || ageVal === null || ageVal < 18) {
       return jsonResponse(
         {
           ok: false,
           code: 'AGE_18_REQUIRED',
-          error: 'Contratação e pagamento disponíveis exclusivamente para maiores de 18 anos.',
+          error: 'Contratação e pagamento disponíveis exclusivamente para maiores de 18 anos com cadastro completo.',
         },
         403,
         corsHeaders
@@ -441,33 +442,92 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  let authoritativeValueCents = authoritativeCourse.priceCents;
-  if (payload.couponCode && serviceSupabase) {
-    const { data: couponRow } = await serviceSupabase
-      .from('coupons')
-      .select('id, discount_percent, course_scope, max_uses, uses_count, expires_at, active')
-      .eq('code', payload.couponCode)
-      .maybeSingle();
+  // Bloqueia nova cobrança se o aluno já tiver matrícula ativa ou pedido pago neste curso
+  if (serviceSupabase && authoritativeCourse.courseId) {
+    const [{ data: existingEnr }, { data: existingPaid }] = await Promise.all([
+      serviceSupabase
+        .from('student_enrollments')
+        .select('id, status')
+        .eq('user_id', user.id)
+        .eq('course_id', authoritativeCourse.courseId)
+        .maybeSingle(),
+      serviceSupabase
+        .from('orders')
+        .select('id, status')
+        .eq('user_id', user.id)
+        .eq('course_id', authoritativeCourse.courseId)
+        .eq('status', 'paid')
+        .limit(1)
+        .maybeSingle(),
+    ]);
 
-    if (
-      !couponRow ||
-      !couponRow.active ||
-      (couponRow.expires_at && Date.parse(String(couponRow.expires_at)) < Date.now()) ||
-      Number(couponRow.uses_count || 0) >= Number(couponRow.max_uses || 1) ||
-      (couponRow.course_scope !== 'all' && couponRow.course_scope !== payload.courseSlug)
-    ) {
+    const enrSt = String(existingEnr?.status || '').toLowerCase();
+    if (existingPaid || enrSt === 'active' || enrSt === 'completed' || enrSt === 'in_progress') {
       return jsonResponse(
-        { ok: false, error: 'Cupom promocional inválido, expirado ou esgotado.' },
-        400,
+        {
+          ok: false,
+          code: 'ALREADY_ENROLLED',
+          error: 'Você já possui matrícula ativa ou pagamento confirmado neste curso.',
+        },
+        409,
         corsHeaders
       );
     }
-    const pct = Math.min(100, Math.max(0, Number(couponRow.discount_percent || 0)));
-    const discountCents = Math.round((authoritativeValueCents * pct) / 100);
-    authoritativeValueCents = Math.max(0, authoritativeValueCents - discountCents);
+
+    // Reutiliza cobrança pendente idempotente quando idempotencyKey coincide
+    if (payload.idempotencyKey) {
+      const { data: idemOrder } = await serviceSupabase
+        .from('orders')
+        .select('id, status, amount_cents, asaas_payment_id, asaas_customer_id')
+        .eq('user_id', user.id)
+        .eq('course_id', authoritativeCourse.courseId)
+        .eq('idempotency_key', payload.idempotencyKey)
+        .eq('status', 'pending')
+        .maybeSingle();
+
+      if (idemOrder?.id && idemOrder.asaas_payment_id) {
+        const { data: idemPayment } = await serviceSupabase
+          .from('payments')
+          .select('asaas_payment_id, status, billing_type, value_cents, due_date, invoice_url, bank_slip_url')
+          .eq('order_id', idemOrder.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (idemPayment) {
+          return jsonResponse(
+            {
+              ok: true,
+              idempotentReuse: true,
+              environment,
+              orderId: idemOrder.id,
+              course: authoritativeCourse,
+              capabilities,
+              payment: {
+                id: idemPayment.asaas_payment_id,
+                orderId: idemOrder.id,
+                customerId: idemOrder.asaas_customer_id,
+                status: idemPayment.status,
+                billingType: idemPayment.billing_type,
+                value:
+                  typeof idemPayment.value_cents === 'number'
+                    ? idemPayment.value_cents / 100
+                    : authoritativeCourse.priceCents / 100,
+                dueDate: idemPayment.due_date,
+                invoiceUrl: idemPayment.invoice_url,
+                bankSlipUrl: idemPayment.bank_slip_url,
+                pix: null,
+              },
+            },
+            200,
+            corsHeaders
+          );
+        }
+      }
+    }
   }
 
-  const authoritativeValue = Math.round(authoritativeValueCents) / 100;
+  let authoritativeValueCents = authoritativeCourse.priceCents;
   const baseUrl = resolveAsaasBaseUrl(
     environment,
     environment === 'production' ? Deno.env.get('ASAAS_API_URL') : Deno.env.get('ASAAS_SANDBOX_URL')
@@ -486,7 +546,8 @@ Deno.serve(async (req: Request) => {
           error:
             'Informe seu CPF válido para registrar o comprador no Asaas Sandbox e gerar a cobrança.',
         },
-        400
+        400,
+        corsHeaders
       );
     }
 
@@ -506,18 +567,23 @@ Deno.serve(async (req: Request) => {
         .eq('id', user.id);
     }
 
-    // Cria pedido local pendente antes da cobrança para vincular externalReference UUID ao webhook
+    // Cria pedido local pendente antes de resgatar cupom / criar cobrança no Asaas
     let createdOrderId: string | null = null;
     if (serviceSupabase && authoritativeCourse.courseId) {
+      const insertPayload: Record<string, unknown> = {
+        user_id: user.id,
+        course_id: authoritativeCourse.courseId,
+        status: 'pending',
+        subtotal_cents: authoritativeCourse.priceCents,
+        discount_cents: 0,
+        amount_cents: authoritativeValueCents,
+        asaas_customer_id: customerId,
+        environment,
+        ...(payload.idempotencyKey ? { idempotency_key: payload.idempotencyKey } : {}),
+      };
       const { data: orderData } = await serviceSupabase
         .from('orders')
-        .insert({
-          user_id: user.id,
-          course_id: authoritativeCourse.courseId,
-          status: 'pending',
-          amount_cents: authoritativeValueCents,
-          asaas_customer_id: customerId,
-        })
+        .insert(insertPayload)
         .select('id')
         .single();
 
@@ -528,6 +594,101 @@ Deno.serve(async (req: Request) => {
           .update({ external_reference: createdOrderId })
           .eq('id', createdOrderId);
       }
+    }
+
+    // Resgate atômico do cupom via RPC (incrementa uses_count com lock e previne corrida)
+    if (payload.couponCode && serviceSupabase) {
+      const { data: redeemRows, error: redeemErr } = await serviceSupabase.rpc('redeem_coupon_atomic', {
+        p_code: payload.couponCode,
+        p_user_id: user.id,
+        p_course_slug: authoritativeCourse.slug,
+        p_order_id: createdOrderId,
+        p_original_cents: authoritativeCourse.priceCents,
+      });
+
+      const redeemRow = Array.isArray(redeemRows) ? redeemRows[0] : redeemRows;
+      if (redeemErr || !redeemRow?.ok) {
+        if (createdOrderId) {
+          await serviceSupabase
+            .from('orders')
+            .update({ status: 'canceled', updated_at: new Date().toISOString() })
+            .eq('id', createdOrderId);
+        }
+        return jsonResponse(
+          {
+            ok: false,
+            code: redeemRow?.error_code || 'COUPON_UNAVAILABLE',
+            error: 'Cupom promocional inválido, já utilizado ou esgotado.',
+          },
+          400,
+          corsHeaders
+        );
+      }
+
+      const discountCents = Math.max(0, Number(redeemRow.discount_cents || 0));
+      authoritativeValueCents = Math.max(0, Number(redeemRow.final_cents ?? authoritativeCourse.priceCents - discountCents));
+
+      if (createdOrderId) {
+        await serviceSupabase
+          .from('orders')
+          .update({
+            subtotal_cents: authoritativeCourse.priceCents,
+            discount_cents: discountCents,
+            amount_cents: authoritativeValueCents,
+            coupon_code: payload.couponCode,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', createdOrderId);
+      }
+
+      // Guard para cupom 100% gratuito: ativa matrícula sem enviar cobrança R$ 0 ao Asaas
+      if (authoritativeValueCents === 0) {
+        const nowIso = new Date().toISOString();
+        if (createdOrderId) {
+          await serviceSupabase
+            .from('orders')
+            .update({ status: 'paid', paid_at: nowIso, updated_at: nowIso })
+            .eq('id', createdOrderId);
+        }
+        if (authoritativeCourse.courseId) {
+          await serviceSupabase.from('student_enrollments').upsert(
+            {
+              user_id: user.id,
+              course_id: authoritativeCourse.courseId,
+              status: 'in_progress',
+              last_module_key: 'carbonara',
+              updated_at: nowIso,
+            },
+            { onConflict: 'user_id,course_id' }
+          );
+        }
+        return jsonResponse(
+          {
+            ok: true,
+            freeEnrollmentByCoupon: true,
+            environment,
+            orderId: createdOrderId,
+            course: authoritativeCourse,
+            capabilities,
+            payment: null,
+          },
+          201,
+          corsHeaders
+        );
+      }
+    }
+
+    const authoritativeValue = Math.round(authoritativeValueCents) / 100;
+    if (authoritativeValue < 5) {
+      return jsonResponse(
+        {
+          ok: false,
+          code: 'MINIMUM_CHARGE_AMOUNT',
+          error: 'O valor mínimo permitido para cobrança no Asaas é R$ 5,00 (ou 100% gratuito com cupom integral).',
+        },
+        400,
+        corsHeaders
+      );
     }
 
     const externalReference =
@@ -564,7 +725,7 @@ Deno.serve(async (req: Request) => {
     if (!paymentRes.ok || !paymentData.id) {
       const detail =
         paymentData?.errors?.[0]?.description || 'Não foi possível criar a cobrança no Asaas Sandbox.';
-      return jsonResponse({ ok: false, error: detail }, 502);
+      return jsonResponse({ ok: false, error: detail }, 502, corsHeaders);
     }
 
     const paymentStatus = String(paymentData.status ?? 'PENDING');
@@ -639,10 +800,11 @@ Deno.serve(async (req: Request) => {
           pix,
         },
       },
-      201
+      201,
+      corsHeaders
     );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erro interno ao comunicar com o Asaas Sandbox.';
-    return jsonResponse({ ok: false, error: message }, 502);
+    return jsonResponse({ ok: false, error: message }, 502, corsHeaders);
   }
 });

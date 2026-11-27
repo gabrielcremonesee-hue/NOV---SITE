@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100">
+  <ellipse cx="60" cy="83" rx="44" ry="8.5" fill="#0d0401" fill-opacity="0.58"/>
+  <!-- Onion -->
+  <path d="M40 24 C39 18, 43 18, 44 24 C54 31, 61 44, 60 58 C59 69, 50 73, 42 73 C33 73, 24 69, 23 58 C22 44, 31 31, 40 24 Z" fill="#f3d4aa"/>
+  <path d="M42 25 C37 41, 37 59, 42 73" fill="none" stroke="#d5a670" stroke-width="1.4"/>
+  <!-- Carrot -->
+  <path d="M52 67 L88 45 C93 42, 98 48, 93 52 L57 74 C52 77, 48 70, 52 67 Z" fill="#f26e1d"/>
+  <!-- Celery -->
+  <path d="M54 55 L92 31 C96 29, 99 34, 95 37 L58 61 Z" fill="#63aa3d"/>
+  <path d="M62 74 L96 60 C100 58, 102 64, 98 66 L64 80 Z" fill="#77bd4e"/>
+</svg>

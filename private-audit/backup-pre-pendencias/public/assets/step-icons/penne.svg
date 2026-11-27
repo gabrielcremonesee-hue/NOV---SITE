@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100">
+  <defs>
+    <linearGradient id="penneGold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffe78f"/>
+      <stop offset="55%" stop-color="#f0b637"/>
+      <stop offset="100%" stop-color="#b57410"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="60" cy="83" rx="44" ry="8.5" fill="#0d0401" fill-opacity="0.58"/>
+  <!-- Tube 1 -->
+  <g transform="translate(22,38) rotate(-18)">
+    <path d="M4 0 L48 6 L42 20 L-2 14 Z" fill="url(#penneGold)"/>
+    <ellipse cx="45" cy="13" rx="3" ry="7" fill="#8f5608"/>
+  </g>
+  <!-- Tube 2 -->
+  <g transform="translate(46,24) rotate(20)">
+    <path d="M4 0 L52 6 L46 21 L-2 15 Z" fill="url(#penneGold)"/>
+    <ellipse cx="49" cy="13.5" rx="3" ry="7.5" fill="#8f5608"/>
+  </g>
+  <!-- Tube 3 -->
+  <g transform="translate(30,55) rotate(8)">
+    <path d="M4 0 L56 6 L50 21 L-2 15 Z" fill="url(#penneGold)"/>
+    <ellipse cx="53" cy="13.5" rx="3" ry="7.5" fill="#8f5608"/>
+  </g>
+</svg>

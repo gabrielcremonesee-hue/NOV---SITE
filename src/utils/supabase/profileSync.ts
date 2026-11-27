@@ -69,7 +69,7 @@ export function mapSupabaseUserToProfile(
     safeFallback?.fullName ||
     email.split('@')[0];
   const ageVal = Number(dbRow?.age ?? meta.age);
-  const age = Number.isInteger(ageVal) && ageVal >= 18 ? ageVal : safeFallback?.age && safeFallback.age >= 18 ? safeFallback.age : 18;
+  const age = Number.isInteger(ageVal) && ageVal >= 18 ? ageVal : safeFallback?.age && safeFallback.age >= 18 ? safeFallback.age : 0;
 
   const whatsappOptIn =
     typeof dbRow?.whatsapp_opt_in === 'boolean'
@@ -109,7 +109,7 @@ export function mapSupabaseUserToProfile(
       (dbRow?.birth_date && dbRow.birth_date.trim()) ||
       (typeof meta.birth_date === 'string' && meta.birth_date) ||
       safeFallback?.birthDate ||
-      '01/01/2000',
+      '',
     age,
     email,
     ddd:
@@ -229,15 +229,27 @@ export async function registerOrUpdateSupabaseProfile(
   }
 
   const computedAge = calculateAge(values.birthDate);
-  if (computedAge !== null && computedAge < 18) {
+  if (computedAge === null || computedAge < 18 || computedAge > 115) {
     return {
       ok: false,
       syncedToSupabase: false,
       fieldError: {
         field: 'birthDate',
-        message: 'É necessário ter pelo menos 18 anos para criar conta.',
+        message: 'É necessário informar uma data de nascimento válida (mínimo 18 anos).',
       },
-      message: 'Cadastro permitido apenas para maiores de 18 anos.',
+      message: 'Cadastro permitido apenas para maiores de 18 anos com data de nascimento válida.',
+    };
+  }
+  const selectedAge = Number(values.age);
+  if (values.age && (!Number.isInteger(selectedAge) || selectedAge < 18 || Math.abs(selectedAge - computedAge) > 1)) {
+    return {
+      ok: false,
+      syncedToSupabase: false,
+      fieldError: {
+        field: 'age',
+        message: 'A idade selecionada não confere com a data de nascimento informada.',
+      },
+      message: 'Idade selecionada incompatível com a data de nascimento.',
     };
   }
 

@@ -3,6 +3,7 @@ export type InternalOrderStatus =
   | 'paid'
   | 'overdue'
   | 'canceled'
+  | 'refund_requested'
   | 'refunded';
 
 export type WebhookLogStatus =
@@ -575,9 +576,10 @@ export async function processAsaasWebhook(params: {
       };
     }
 
-    // Não reabre matrícula automaticamente caso o pedido já tenha sido reembolsado ou cancelado
+    // Não reabre matrícula automaticamente caso o pedido já tenha sido reembolsado, cancelado ou esteja com arrependimento em curso
     const lockedTerminalOrder = order.status === 'refunded' || order.status === 'canceled';
-    const effectiveGrantAccess = webhook.shouldGrantAccess && !lockedTerminalOrder;
+    const withdrawalRequested = order.status === 'refund_requested';
+    const effectiveGrantAccess = webhook.shouldGrantAccess && !lockedTerminalOrder && !withdrawalRequested;
 
     const paidAt = effectiveGrantAccess
       ? order.paid_at ||
@@ -586,12 +588,14 @@ export async function processAsaasWebhook(params: {
         nowIso
       : order.paid_at ?? null;
 
-    // Não regride um pedido já pago em eventos tardios não-reembolso, nem regride refunded para paid
+    // Não regride um pedido já pago/em arrependimento em eventos tardios não-reembolso, nem regride refunded para paid
     const nextStatus: InternalOrderStatus = lockedTerminalOrder
       ? (order.status as InternalOrderStatus)
-      : order.status === 'paid' && !webhook.shouldRevokeAccess
-        ? 'paid'
-        : webhook.orderStatus;
+      : withdrawalRequested && !webhook.shouldRevokeAccess
+        ? 'refund_requested'
+        : order.status === 'paid' && !webhook.shouldRevokeAccess
+          ? 'paid'
+          : webhook.orderStatus;
 
     const updatedOrder = await params.repo.updateOrderStatus({
       orderId: order.id,
@@ -660,7 +664,7 @@ export async function processAsaasWebhook(params: {
         event: webhook.event,
         orderId: updatedOrder?.id ?? order.id,
         orderStatus: updatedOrder?.status ?? nextStatus,
-        accessGranted: webhook.shouldGrantAccess,
+        accessGranted: effectiveGrantAccess,
         accessRevoked: webhook.shouldRevokeAccess,
       },
     };

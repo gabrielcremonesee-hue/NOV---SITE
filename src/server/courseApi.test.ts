@@ -6,7 +6,16 @@ import { AddressInfo } from 'node:net';
 import { PDFDocument } from 'pdf-lib';
 import { registerCourseApiRoutes } from './courseApi';
 import { resetDeveloperLatchForTests } from './developerAuth';
+import { singleSessionManager } from './singleSession';
 import { exam } from '../data/courseData';
+
+function sessionHeaders(uid: string, extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    'x-test-user': uid,
+    'x-fervec-session-id': `sess-${uid}-12345678`,
+    ...extra,
+  };
+}
 
 type Row = Record<string, unknown>;
 
@@ -166,6 +175,10 @@ function createMockSupabaseDb() {
       },
     ],
     payments: [],
+    user_active_sessions: [],
+    legal_acceptances: [],
+    withdrawal_requests: [],
+    coupons: [],
   };
 
   let idSeq = 1;
@@ -180,7 +193,7 @@ function createMockSupabaseDb() {
       let payloadData: Row | null = null;
 
       function applyRls(rows: Row[]): Row[] {
-        if (table === 'courses' || table === 'course_modules') return rows;
+        if (table === 'courses' || table === 'course_modules' || table === 'coupons') return rows;
         if (table === 'profiles') return rows.filter((r) => r.id === userId);
         return rows.filter((r) => r.user_id === userId);
       }
@@ -270,6 +283,28 @@ function createMockSupabaseDb() {
 
     return {
       from,
+      async rpc(fnName: string, args: Record<string, unknown> = {}) {
+        if (fnName === 'claim_active_session') {
+          const idx = db.user_active_sessions.findIndex((r) => r.user_id === userId);
+          const row = {
+            user_id: userId,
+            session_id: String(args.p_session_id || ''),
+            device_hint: args.p_device_hint ?? null,
+            updated_at: new Date().toISOString(),
+          };
+          if (idx >= 0) db.user_active_sessions[idx] = row;
+          else db.user_active_sessions.push(row);
+          return { data: row, error: null };
+        }
+        if (fnName === 'clear_active_session') {
+          const targetSid = String(args.p_session_id || '');
+          db.user_active_sessions = db.user_active_sessions.filter(
+            (r) => !(r.user_id === userId && r.session_id === targetSid)
+          );
+          return { data: true, error: null };
+        }
+        return { data: null, error: null };
+      },
       storage: {
         from(bucket: string) {
           return {
@@ -297,6 +332,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
   app.use(express.json());
 
   resetDeveloperLatchForTests();
+  singleSessionManager.resetForTests();
   registerCourseApiRoutes(app, {
     resolveAuth: async (req) => {
       const uid = req.headers['x-test-user'] as string | undefined;
@@ -342,7 +378,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
   try {
     // Test 1: Registration/profile data recovered per authenticated user + exact non-rounded workload
     const wsA = await fetch(`${baseUrl}/api/workspace/state`, {
-      headers: { 'x-test-user': 'user-a' },
+      headers: sessionHeaders('user-a'),
     });
     assert.equal(wsA.status, 200);
     const wsAData = (await wsA.json()) as Record<string, any>;
@@ -357,7 +393,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     // Sync Student A module steps & review
     const syncA = await fetch(`${baseUrl}/api/progress/sync`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-test-user': 'user-a' },
+      headers: sessionHeaders('user-a', { 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         moduleKey: 'carbonara',
         currentStage: 5,
@@ -373,7 +409,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     const passingAnswers = exam.map((q) => q.correct);
     const passRes = await fetch(`${baseUrl}/api/assessments/submit`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-test-user': 'user-a' },
+      headers: sessionHeaders('user-a', { 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         moduleKey: 'carbonara',
         attemptType: 'exam',
@@ -397,7 +433,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
 
     // Verify GET /api/certificates returns Student A's certificate list (regular student, not just admin)
     const listCertsARes = await fetch(`${baseUrl}/api/certificates`, {
-      headers: { 'x-test-user': 'user-a' },
+      headers: sessionHeaders('user-a'),
     });
     assert.equal(listCertsARes.status, 200);
     const listCertsA = (await listCertsARes.json()) as Record<string, any>;
@@ -411,14 +447,14 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     enrollA.completed_at = '2026-10-05T15:30:00.000Z';
 
     const listCertsAAfterDate = await fetch(`${baseUrl}/api/certificates`, {
-      headers: { 'x-test-user': 'user-a' },
+      headers: sessionHeaders('user-a'),
     });
     const listCertsADated = (await listCertsAAfterDate.json()) as Record<string, any>;
     assert.equal(listCertsADated.certificates[0].completionDate, '05/10/2026');
 
     // Test 4: Generate & download real PDF certificate for Student A + verify Storage upload invocation
     const pdfRes = await fetch(`${baseUrl}/api/certificates/${certCodeA}/pdf`, {
-      headers: { 'x-test-user': 'user-a' },
+      headers: sessionHeaders('user-a'),
     });
     assert.equal(pdfRes.status, 200);
     assert.equal(pdfRes.headers.get('content-type'), 'application/pdf');
@@ -436,12 +472,12 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     const [concurrent1, concurrent2] = await Promise.all([
       fetch(`${baseUrl}/api/certificates/issue`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-test-user': 'user-a' },
+        headers: sessionHeaders('user-a', { 'Content-Type': 'application/json' }),
         body: JSON.stringify({ courseSlug: 'massas-italianas' }),
       }),
       fetch(`${baseUrl}/api/certificates/issue`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-test-user': 'user-a' },
+        headers: sessionHeaders('user-a', { 'Content-Type': 'application/json' }),
         body: JSON.stringify({ courseSlug: 'massas-italianas' }),
       }),
     ]);
@@ -456,7 +492,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     // Test 5: Student B completes module & FAILS exam (< 70%) -> blocked from issuing/downloading certificate
     await fetch(`${baseUrl}/api/progress/sync`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-test-user': 'user-b' },
+      headers: sessionHeaders('user-b', { 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         moduleKey: 'carbonara',
         currentStage: 5,
@@ -469,7 +505,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     const failingAnswers = exam.map((q) => (q.correct + 1) % 4); // 0%
     const failRes = await fetch(`${baseUrl}/api/assessments/submit`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-test-user': 'user-b' },
+      headers: sessionHeaders('user-b', { 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         moduleKey: 'carbonara',
         attemptType: 'exam',
@@ -485,7 +521,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
 
     const blockedIssueB = await fetch(`${baseUrl}/api/certificates/issue`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-test-user': 'user-b' },
+      headers: sessionHeaders('user-b', { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ courseSlug: 'massas-italianas' }),
     });
     assert.equal(blockedIssueB.status, 403);
@@ -493,7 +529,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
 
     // Test 7: Student B CANNOT view/download Student A's certificate PDF, and unauthenticated user gets 401
     const crossUserPdf = await fetch(`${baseUrl}/api/certificates/${certCodeA}/pdf`, {
-      headers: { 'x-test-user': 'user-b' },
+      headers: sessionHeaders('user-b'),
     });
     assert.equal(crossUserPdf.status, 403);
 
@@ -506,11 +542,10 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     // Test 8: Normal user sending spoofed CPF/flags in request body CANNOT gain developer privileges
     const spoofBodyRes = await fetch(`${baseUrl}/api/certificates/issue`, {
       method: 'POST',
-      headers: {
+      headers: sessionHeaders('user-b', {
         'Content-Type': 'application/json',
-        'x-test-user': 'user-b',
         'x-cpf': '102.722.209-90',
-      },
+      }),
       body: JSON.stringify({
         courseSlug: 'cozinha-francesa',
         cpf: '102.722.209-90',
@@ -522,7 +557,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
 
     // Test 9: Exclusive developer account (CPF 102.722.209-90) can emit & download PDF for ANY course without exam
     const devWsRes = await fetch(`${baseUrl}/api/workspace/state`, {
-      headers: { 'x-test-user': 'dev-user' },
+      headers: sessionHeaders('dev-user'),
     });
     assert.equal(devWsRes.status, 200);
     const devWs = (await devWsRes.json()) as Record<string, any>;
@@ -535,12 +570,12 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     const [devFrenchIssue, devFrenchConcurrent] = await Promise.all([
       fetch(`${baseUrl}/api/certificates/issue`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-test-user': 'dev-user' },
+        headers: sessionHeaders('dev-user', { 'Content-Type': 'application/json' }),
         body: JSON.stringify({ courseSlug: 'cozinha-francesa' }),
       }),
       fetch(`${baseUrl}/api/certificates/issue`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-test-user': 'dev-user' },
+        headers: sessionHeaders('dev-user', { 'Content-Type': 'application/json' }),
         body: JSON.stringify({ courseSlug: 'cozinha-francesa' }),
       }),
     ]);
@@ -565,7 +600,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     // Admin issues Cozinha Brasileira (120 min -> "2 horas")
     const devBrazilIssue = await fetch(`${baseUrl}/api/certificates/issue`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-test-user': 'dev-user' },
+      headers: sessionHeaders('dev-user', { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ courseSlug: 'cozinha-brasileira' }),
     });
     assert.equal(devBrazilIssue.status, 200);
@@ -576,7 +611,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
 
     const devFrenchPdf = await fetch(
       `${baseUrl}/api/certificates/${devFrenchJson.certificate.certificate_code}/pdf`,
-      { headers: { 'x-test-user': 'dev-user' } }
+      { headers: sessionHeaders('dev-user') }
     );
     assert.equal(devFrenchPdf.status, 200);
     const devPdfBytes = Buffer.from(await devFrenchPdf.arrayBuffer());
@@ -585,7 +620,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     // Second issue for same course returns 2ª via without duplicate row
     const devFrench2 = await fetch(`${baseUrl}/api/certificates/issue`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-test-user': 'dev-user' },
+      headers: sessionHeaders('dev-user', { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ courseSlug: 'cozinha-francesa' }),
     });
     assert.equal(devFrench2.status, 200);
@@ -599,20 +634,20 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     // Other users cannot download developer's certificate PDF or claim developer privilege via post-cutoff signup
     const crossDevPdf = await fetch(
       `${baseUrl}/api/certificates/${devFrenchJson.certificate.certificate_code}/pdf`,
-      { headers: { 'x-test-user': 'user-b' } }
+      { headers: sessionHeaders('user-b') }
     );
     assert.equal(crossDevPdf.status, 403);
 
     const spoofAccountRes = await fetch(`${baseUrl}/api/certificates/issue`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-test-user': 'spoof-user' },
+      headers: sessionHeaders('spoof-user', { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ courseSlug: 'cozinha-francesa' }),
     });
     assert.equal(spoofAccountRes.status, 403);
 
     // Test 10: Official primary admin (fervecrgastronomia@gmail.com) gets bound profile (masked/hashed CPF + 09/11/2000), Admin Panel permission & revokes old admin gabrielcremonesee@gmail.com
     const ownerWsRes = await fetch(`${baseUrl}/api/workspace/state`, {
-      headers: { 'x-test-user': 'owner-email' },
+      headers: sessionHeaders('owner-email'),
     });
     assert.equal(ownerWsRes.status, 200);
     const ownerWs = (await ownerWsRes.json()) as Record<string, any>;
@@ -628,7 +663,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
 
     const ownerIssueRes = await fetch(`${baseUrl}/api/certificates/issue`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-test-user': 'owner-email' },
+      headers: sessionHeaders('owner-email', { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ courseSlug: 'massas-italianas' }),
     });
     assert.equal(ownerIssueRes.status, 200);
@@ -639,7 +674,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
 
     const ownerPdfRes = await fetch(
       `${baseUrl}/api/certificates/${ownerIssueJson.certificate.certificate_code}/pdf`,
-      { headers: { 'x-test-user': 'owner-email' } }
+      { headers: sessionHeaders('owner-email') }
     );
     assert.equal(ownerPdfRes.status, 200);
     const ownerPdfBuf = Buffer.from(await ownerPdfRes.arrayBuffer());
@@ -647,7 +682,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
 
     // Old admin gabrielcremonesee@gmail.com retains account/profile data but loses ALL admin privileges
     const revokedWsRes = await fetch(`${baseUrl}/api/workspace/state`, {
-      headers: { 'x-test-user': 'revoked-gabriel' },
+      headers: sessionHeaders('revoked-gabriel'),
     });
     assert.equal(revokedWsRes.status, 200);
     const revokedWs = (await revokedWsRes.json()) as Record<string, any>;
@@ -658,7 +693,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
 
     const revokedCertBlock = await fetch(`${baseUrl}/api/certificates/issue`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-test-user': 'revoked-gabriel' },
+      headers: sessionHeaders('revoked-gabriel', { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ courseSlug: 'massas-italianas' }),
     });
     assert.equal(revokedCertBlock.status, 403);
@@ -697,7 +732,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     });
 
     const carlaWsRes = await fetch(`${baseUrl}/api/workspace/state`, {
-      headers: { 'x-test-user': 'user-completed-db' },
+      headers: sessionHeaders('user-completed-db'),
     });
     assert.equal(carlaWsRes.status, 200);
     const carlaWs = (await carlaWsRes.json()) as Record<string, any>;
@@ -705,7 +740,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
 
     const carlaIssueRes = await fetch(`${baseUrl}/api/certificates/issue`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-test-user': 'user-completed-db' },
+      headers: sessionHeaders('user-completed-db', { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ courseSlug: 'massas-italianas' }),
     });
     assert.equal(carlaIssueRes.status, 200);
@@ -713,7 +748,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     assert.equal(carlaIssueJson.certificate.studentName, 'Carla Beatriz Nunes');
     assert.equal(carlaIssueJson.certificate.completionDate, '12/10/2026');
 
-    // Test 12: Unpaid student CANNOT sync progress, submit exams, or issue certificates, and transitions cleanly upon paid order
+    // Test 12: Unpaid student CANNOT sync progress, submit exams, inspect paid content, or issue certificates, and transitions cleanly upon paid order
     db.profiles.push({
       id: 'user-unpaid',
       full_name: 'Pedro Sem Pagamento',
@@ -729,29 +764,40 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     });
 
     const unpaidWsRes = await fetch(`${baseUrl}/api/workspace/state`, {
-      headers: { 'x-test-user': 'user-unpaid' },
+      headers: sessionHeaders('user-unpaid'),
     });
     assert.equal(unpaidWsRes.status, 200);
     const unpaidWs = (await unpaidWsRes.json()) as Record<string, any>;
     assert.equal(unpaidWs.isEnrolled, false);
     assert.equal(unpaidWs.enrollment, null);
 
+    const unpaidContentBlock = await fetch(`${baseUrl}/api/course/content`, {
+      headers: sessionHeaders('user-unpaid'),
+    });
+    assert.equal(unpaidContentBlock.status, 403);
+
+    const unpaidQuestionsBlock = await fetch(
+      `${baseUrl}/api/assessments/questions?moduleKey=carbonara&attemptType=work`,
+      { headers: sessionHeaders('user-unpaid') }
+    );
+    assert.equal(unpaidQuestionsBlock.status, 403);
+
     const unpaidSyncBlock = await fetch(`${baseUrl}/api/progress/sync`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-test-user': 'user-unpaid' },
+      headers: sessionHeaders('user-unpaid', { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ moduleKey: 'carbonara', currentStage: 1, doneSteps: [0] }),
     });
     assert.equal(unpaidSyncBlock.status, 403);
 
     const unpaidExamBlock = await fetch(`${baseUrl}/api/assessments/submit`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-test-user': 'user-unpaid' },
+      headers: sessionHeaders('user-unpaid', { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ moduleKey: 'carbonara', attemptType: 'exam', answers: exam.map((q) => q.correct) }),
     });
     assert.equal(unpaidExamBlock.status, 403);
 
     const unpaidSummaryRes = await fetch(`${baseUrl}/api/payments/course-summary?courseSlug=massas-italianas`, {
-      headers: { 'x-test-user': 'user-unpaid' },
+      headers: sessionHeaders('user-unpaid'),
     });
     assert.equal(unpaidSummaryRes.status, 200);
     const unpaidSummary = (await unpaidSummaryRes.json()) as Record<string, any>;
@@ -766,8 +812,8 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
       status: 'paid',
       amount_cents: 1290,
       asaas_payment_id: 'pay_sandbox_unpaid',
-      paid_at: '2026-11-16T12:00:00.000Z',
-      created_at: '2026-11-16T11:55:00.000Z',
+      paid_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
     });
     db.payments.push({
       id: 'p-1',
@@ -778,13 +824,13 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
       billing_type: 'PIX',
       value_cents: 1290,
       due_date: '2026-11-19',
-      created_at: '2026-11-16T11:55:00.000Z',
+      created_at: new Date().toISOString(),
     });
     const profUnpaid = db.profiles.find((p) => p.id === 'user-unpaid');
     if (profUnpaid) profUnpaid.asaas_customer_id = 'cus_000005492817';
 
     const paidStatusRes = await fetch(`${baseUrl}/api/payments/status/11111111-1111-4111-8111-111111111111`, {
-      headers: { 'x-test-user': 'user-unpaid' },
+      headers: sessionHeaders('user-unpaid'),
     });
     assert.equal(paidStatusRes.status, 200);
     const paidStatus = (await paidStatusRes.json()) as Record<string, any>;
@@ -792,13 +838,118 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     assert.equal(paidStatus.isEnrolled, true);
 
     const paidSummaryRes = await fetch(`${baseUrl}/api/payments/course-summary?courseSlug=massas-italianas`, {
-      headers: { 'x-test-user': 'user-unpaid' },
+      headers: sessionHeaders('user-unpaid'),
     });
     const paidSummary = (await paidSummaryRes.json()) as Record<string, any>;
     assert.equal(paidSummary.isEnrolled, true);
     assert.equal(paidSummary.customerProfile.hasAsaasCustomerId, true);
+
+    // Test 13: Paid user accesses sanitized questions (zero correct/why leaked) & protected course content
+    const paidQuestionsRes = await fetch(
+      `${baseUrl}/api/assessments/questions?moduleKey=carbonara&attemptType=work`,
+      { headers: sessionHeaders('user-unpaid') }
+    );
+    assert.equal(paidQuestionsRes.status, 200);
+    const paidQuestionsRaw = await paidQuestionsRes.text();
+    assert.doesNotMatch(paidQuestionsRaw, /correctOptionId|"correct"\s*:|"why"\s*:/);
+
+    const paidContentRes = await fetch(`${baseUrl}/api/course/content`, {
+      headers: sessionHeaders('user-unpaid'),
+    });
+    assert.equal(paidContentRes.status, 200);
+
+    // Test 14: Single-session enforcement rejects missing/dummy header (401) & replaced session via DB + memory (409)
+    const missingSidRes = await fetch(`${baseUrl}/api/workspace/state`, {
+      headers: { 'x-test-user': 'user-unpaid' },
+    });
+    assert.equal(missingSidRes.status, 401);
+    const missingSidJson = (await missingSidRes.json()) as Record<string, any>;
+    assert.equal(missingSidJson.code, 'SESSION_REQUIRED');
+
+    const dummySidRes = await fetch(`${baseUrl}/api/workspace/state`, {
+      headers: { 'x-test-user': 'user-unpaid', 'x-fervec-session-id': 'server-session' },
+    });
+    assert.equal(dummySidRes.status, 401);
+
+    const claimNewDevice = await fetch(`${baseUrl}/api/session/claim`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-test-user': 'user-unpaid',
+        'x-fervec-session-id': 'sess-new-device-99999',
+      },
+      body: JSON.stringify({ deviceLabel: 'Second Browser' }),
+    });
+    assert.equal(claimNewDevice.status, 200);
+
+    // Even after memory cache reset (simulated cold start), DB user_active_sessions rejects old session
+    singleSessionManager.resetForTests();
+    const kickedOldSidRes = await fetch(`${baseUrl}/api/workspace/state`, {
+      headers: sessionHeaders('user-unpaid'),
+    });
+    assert.equal(kickedOldSidRes.status, 409);
+    const kickedJson = (await kickedOldSidRes.json()) as Record<string, any>;
+    assert.equal(kickedJson.code, 'SESSION_REPLACED_OTHER_DEVICE');
+
+    // Test 15: Legal acceptance records acceptance_kind & marketing preferences in DB
+    const legalRes = await fetch(`${baseUrl}/api/legal/accept`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-test-user': 'user-unpaid',
+        'x-fervec-session-id': 'sess-new-device-99999',
+      },
+      body: JSON.stringify({
+        courseSlug: 'massas-italianas',
+        acceptanceKind: 'checkout',
+        marketingWhatsapp: true,
+        marketingEmail: false,
+      }),
+    });
+    assert.equal(legalRes.status, 200);
+    const legalRow = db.legal_acceptances.find((r) => r.user_id === 'user-unpaid');
+    assert.ok(legalRow);
+    assert.equal(legalRow.acceptance_kind, 'checkout');
+    assert.equal(legalRow.marketing_whatsapp, true);
+    assert.equal(legalRow.marketing_email, false);
+
+    // Test 16: Art. 49 CDC withdrawal creates ARR-* protocol, revokes enrollment, blocks duplicate, preserves attempts & certificates
+    const withdrawRes = await fetch(`${baseUrl}/api/orders/11111111-1111-4111-8111-111111111111/withdraw`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-test-user': 'user-unpaid',
+        'x-fervec-session-id': 'sess-new-device-99999',
+      },
+      body: JSON.stringify({ reason: 'Desistência dentro de 7 dias' }),
+    });
+    assert.equal(withdrawRes.status, 200);
+    const withdrawJson = (await withdrawRes.json()) as Record<string, any>;
+    assert.match(withdrawJson.protocolCode || '', /^ARR-[A-F0-9]{8}$/);
+    assert.equal(withdrawJson.status, 'refund_requested');
+
+    const canceledEnr = db.student_enrollments.find((e) => e.user_id === 'user-unpaid');
+    assert.equal(canceledEnr?.status, 'canceled');
+
+    const dupWithdrawRes = await fetch(`${baseUrl}/api/orders/11111111-1111-4111-8111-111111111111/withdraw`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-test-user': 'user-unpaid',
+        'x-fervec-session-id': 'sess-new-device-99999',
+      },
+      body: JSON.stringify({ reason: 'Tentativa duplicada' }),
+    });
+    assert.equal(dupWithdrawRes.status, 409);
+    const dupWithdrawJson = (await dupWithdrawRes.json()) as Record<string, any>;
+    assert.equal(dupWithdrawJson.code, 'ALREADY_REQUESTED');
+
+    // Auditability preserved: existing assessment attempts & certificates for Student A untouched
+    assert.ok(db.assessment_attempts.some((a) => a.user_id === 'user-a'));
+    assert.ok(db.certificates.some((c) => c.user_id === 'user-a'));
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
 

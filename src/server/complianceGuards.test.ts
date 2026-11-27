@@ -145,3 +145,22 @@ test('legalConfig exposes Gabriel Cremonese supplier details, masks CPF in logs,
   assert.match(contract, /7 dias corridos/);
   assert.match(contract, /pendente de confirmação/i);
 });
+
+test('SlidingFixedRateLimiter enforces sliding/fixed window quota and sets Retry-After semantics', async () => {
+  const { SlidingFixedRateLimiter } = await import('./rateLimit');
+  const limiter = new SlidingFixedRateLimiter({ windowMs: 10_000, maxRequests: 2, name: 'test' });
+  const r1 = limiter.check('k1', 1000);
+  const r2 = limiter.check('k1', 2000);
+  const r3 = limiter.check('k1', 3000);
+  assert.equal(r1.allowed, true);
+  assert.equal(r1.remaining, 1);
+  assert.equal(r2.allowed, true);
+  assert.equal(r2.remaining, 0);
+  assert.equal(r3.allowed, false);
+  assert.ok(r3.retryAfterSeconds >= 7);
+
+  const afterWindow = limiter.check('k1', 12_000);
+  assert.equal(afterWindow.allowed, true);
+  assert.equal(afterWindow.remaining, 1);
+});
+

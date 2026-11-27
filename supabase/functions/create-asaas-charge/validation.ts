@@ -29,6 +29,7 @@ export interface CreateAsaasChargeInput {
   customerId?: string;
   customer?: AsaasCustomerInput;
   couponCode?: string;
+  idempotencyKey?: string;
 }
 
 export interface ValidationFieldError {
@@ -49,6 +50,7 @@ export type ChargeValidationResult =
         customerId?: string;
         customer?: AsaasCustomerInput;
         couponCode?: string;
+        idempotencyKey?: string;
       };
     }
   | {
@@ -345,6 +347,18 @@ export function validateCreateAsaasChargeBody(
     }
   }
 
+  let idempotencyKey: string | undefined;
+  if (raw.idempotencyKey !== undefined && raw.idempotencyKey !== null && raw.idempotencyKey !== '') {
+    if (typeof raw.idempotencyKey !== 'string' || raw.idempotencyKey.trim().length > 100) {
+      errors.push({
+        field: 'idempotencyKey',
+        message: 'idempotencyKey deve ter até 100 caracteres.',
+      });
+    } else {
+      idempotencyKey = raw.idempotencyKey.trim();
+    }
+  }
+
   if (errors.length > 0 || !billingType) {
     return { ok: false, errors };
   }
@@ -361,6 +375,7 @@ export function validateCreateAsaasChargeBody(
       ...(customerId ? { customerId } : {}),
       ...(normalizedCustomer ? { customer: normalizedCustomer } : {}),
       ...(couponCode ? { couponCode } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
     },
   };
 }

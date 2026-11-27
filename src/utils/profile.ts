@@ -190,6 +190,8 @@ export function validateProfileForm(
   const selectedAge = Number(values.age);
   if (!values.age || !Number.isInteger(selectedAge) || selectedAge < 18 || selectedAge > 115) {
     errors.age = 'Selecione uma idade válida (mínimo 18 anos).';
+  } else if (computedAge !== null && computedAge >= 18 && Math.abs(selectedAge - computedAge) > 1) {
+    errors.age = 'A idade selecionada não confere com a data de nascimento informada.';
   }
 
   const dddDigits = digitsOnly(values.ddd);
@@ -222,8 +224,14 @@ export function validateProfileForm(
 
 export function createStoredProfile(values: ProfileFormValues): StoredUserProfile {
   const computedAge = calculateAge(values.birthDate);
+  if (computedAge === null || computedAge < 18) {
+    throw new Error('É necessário informar uma data de nascimento válida de maior de 18 anos.');
+  }
   const parsedAge = Number(values.age);
-  const age = computedAge !== null ? computedAge : Number.isInteger(parsedAge) ? parsedAge : 18;
+  if (Number.isInteger(parsedAge) && Math.abs(parsedAge - computedAge) > 1) {
+    throw new Error('A idade selecionada não confere com a data de nascimento informada.');
+  }
+  const age = computedAge;
   return {
     id: `perfil-${Date.now()}`,
     fullName: values.fullName.trim().replace(/\s+/g, ' '),

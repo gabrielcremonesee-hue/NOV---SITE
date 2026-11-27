@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 110">
+  <defs>
+    <linearGradient id="stH" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="35%" stop-color="#d2d8de"/>
+      <stop offset="68%" stop-color="#69727b"/>
+      <stop offset="100%" stop-color="#dee4e9"/>
+    </linearGradient>
+    <linearGradient id="stW" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="50%" stop-color="#b7c0c9"/>
+      <stop offset="100%" stop-color="#586068"/>
+    </linearGradient>
+    <radialGradient id="wSh" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#090301" stop-opacity="0.68"/>
+      <stop offset="100%" stop-color="#090301" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <ellipse cx="56" cy="95" rx="44" ry="8" transform="rotate(-10 56 95)" fill="url(#wSh)"/>
+  <g transform="translate(60,55) scale(1.14) rotate(-40) translate(-60,-50)">
+    <circle cx="107" cy="50" r="4.5" fill="none" stroke="#dce2e8" stroke-width="2.4"/>
+    <rect x="64" y="44.5" width="41" height="11" rx="5.5" fill="url(#stH)" stroke="#484f56" stroke-width="0.9"/>
+    <line x1="68" y1="47.8" x2="101" y2="47.8" stroke="#ffffff" stroke-opacity="0.82" stroke-width="1.6" stroke-linecap="round"/>
+    <rect x="59" y="44" width="7" height="12" rx="2" fill="#8b949d" stroke="#474e55" stroke-width="0.8"/>
+    <path d="M59 46 C38 29, 10 33, 10 50 C10 67, 38 71, 59 54" fill="none" stroke="url(#stW)" stroke-width="2.2"/>
+    <path d="M59 47.5 C40 34, 15 38, 15 50 C15 62, 40 66, 59 52.5" fill="none" stroke="#f2f6fa" stroke-width="1.9"/>
+    <path d="M59 48.8 C42 40.5, 21 43, 21 50 C21 57, 42 59.5, 59 51.2" fill="none" stroke="#bdc6cf" stroke-width="1.7"/>
+    <path d="M59 50 L13 50" fill="none" stroke="#ffffff" stroke-opacity="0.85" stroke-width="1.5"/>
+    <path d="M59 45.2 C36 24, 8 30, 8 50 C8 70, 36 76, 59 54.8" fill="none" stroke="#909aa3" stroke-width="2"/>
+  </g>
+</svg>
