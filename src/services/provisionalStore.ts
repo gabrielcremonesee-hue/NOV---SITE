@@ -46,15 +46,17 @@ export interface ProvisionalDemoOrder {
   discountCents: number;
   totalCents: number;
   couponCode: string | null;
-  status: 'demo_free_enrolled' | 'awaiting_asaas_phase2';
+  status: 'demo_free_enrolled' | 'awaiting_asaas_phase2' | 'withdrawn_art49';
   paymentMethod: 'PIX' | 'BOLETO' | 'CARD' | 'COUPON_100';
   createdAt: string;
+  withdrawnAt?: string;
+  withdrawalReason?: string;
   isDemo: true;
 }
 
 export interface ProvisionalActivityItem {
   id: string;
-  kind: 'registration' | 'coupon' | 'demo_order' | 'certificate' | 'progress' | 'demo_sample';
+  kind: 'registration' | 'coupon' | 'demo_order' | 'certificate' | 'progress' | 'demo_sample' | 'withdrawal';
   title: string;
   detail: string;
   timestamp: string;
@@ -292,6 +294,61 @@ export function saveProvisionalDemoOrder(order: ProvisionalDemoOrder): Provision
     isDemo: true,
   });
   return order;
+}
+
+export function revokeProvisionalOrderWithdrawal(
+  orderId: string,
+  reason = 'Solicitação de arrependimento em até 7 dias (Art. 49 do CDC).'
+): { ok: boolean; order?: ProvisionalDemoOrder; message: string } {
+  const existing = listProvisionalDemoOrders();
+  const idx = existing.findIndex((o) => o.id === orderId);
+  if (idx < 0) {
+    return { ok: false, message: 'Pedido local não encontrado neste navegador.' };
+  }
+  const cur = existing[idx];
+  const createdMs = Date.parse(cur.createdAt);
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+  if (Number.isFinite(createdMs) && Date.now() - createdMs > sevenDaysMs) {
+    return {
+      ok: false,
+      message: 'O prazo legal de 7 dias corridos (Art. 49 do CDC) já foi encerrado para este pedido.',
+    };
+  }
+  const updated: ProvisionalDemoOrder = {
+    ...cur,
+    status: 'withdrawn_art49',
+    withdrawnAt: new Date().toISOString(),
+    withdrawalReason: reason,
+  };
+  existing[idx] = updated;
+  writeJson(PROVISIONAL_DEMO_ORDERS_KEY, existing);
+
+  const cleanEmail = String(cur.studentEmail || '').trim().toLowerCase();
+  if (cleanEmail) {
+    const accounts = listUnifiedAccounts();
+    const accIdx = accounts.findIndex((a) => a.email === cleanEmail);
+    if (accIdx >= 0) {
+      accounts[accIdx] = {
+        ...accounts[accIdx],
+        entitledCourses: accounts[accIdx].entitledCourses.filter((s) => s !== cur.courseSlug),
+        updatedAt: new Date().toISOString(),
+      };
+      writeJson(PROVISIONAL_ACCOUNTS_KEY, accounts);
+    }
+  }
+
+  appendProvisionalActivity({
+    kind: 'withdrawal',
+    title: `Arrependimento Art. 49 CDC (${cur.id})`,
+    detail: `${cur.courseTitle} · acesso demonstrativo cancelado`,
+    isDemo: true,
+  });
+
+  return {
+    ok: true,
+    order: updated,
+    message: `Direito de arrependimento (Art. 49 CDC) registrado para o pedido ${cur.id}. O acesso demonstrativo ao curso foi revogado.`,
+  };
 }
 
 // ---------- Activity Feed & Phase 1 Admin Preview Toggle ----------

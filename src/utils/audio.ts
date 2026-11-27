@@ -16,10 +16,6 @@ export interface SelectableChefVoiceOption {
   lang: string;
 }
 
-interface WebsimGlobal {
-  textToSpeech?: (opts: { text: string; voice: string; generateFile: boolean }) => Promise<{ url?: string }>;
-}
-
 let player: HTMLAudioElement | null = null;
 let currentText = '';
 let currentVoiceKey = '';
@@ -278,27 +274,6 @@ export async function playChef(text: string, onStatus: (status: AudioStatus) => 
 
   if (await synthesizeAndPlayGeminiMaleVoice(text, onStatus, cfg, true)) {
     return;
-  }
-
-  const websim = (window as Window & { websim?: WebsimGlobal }).websim;
-  if (websim && typeof websim.textToSpeech === 'function') {
-    onStatus('loading');
-    try {
-      const normalized = normalizeCulinarySpeechText(text);
-      const result = await websim.textToSpeech({ text: normalized, voice: 'pt-male', generateFile: true });
-      if (!result || !result.url) throw new Error('Arquivo de voz não retornado.');
-      fileUrl = result.url;
-      player = new Audio(fileUrl);
-      player.volume = computeEffectiveAudioVolume(cfg, true);
-      player.onended = () => onStatus('ended');
-      player.onerror = () => onStatus('unavailable');
-      await player.play();
-      onStatus('playing');
-      return;
-    } catch {
-      player = null;
-      fileUrl = '';
-    }
   }
 
   if (speakWithBrowserSynthesis(text, onStatus, cfg, true)) {

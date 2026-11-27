@@ -77,9 +77,14 @@ import {
 } from './utils/supabase/profileSync';
 import {
   downloadCertificatePdfBlob,
+  fetchAdminTelemetry,
   fetchWorkspaceState,
   hydrateCourseStateFromWorkspace,
   issueOrFetchCertificate,
+  logoutServerSession,
+  recordLegalAcceptance,
+  requestOrderWithdrawal,
+  ServerAdminTelemetry,
   ServerCertificateRecord,
   submitAssessmentToServer,
   syncModuleProgressToServer,
@@ -151,6 +156,7 @@ import {
   listProvisionalDemoOrders,
   listUnifiedAccounts,
   recordProvisionalCouponRedemption,
+  revokeProvisionalOrderWithdrawal,
   saveProvisionalDemoOrder,
   setPhase1AdminPreviewEnabled,
   toggleProvisionalCouponActive,
@@ -172,6 +178,7 @@ import {
 import { AppliedPaymentCouponView } from './components/paymentsView';
 import { listAvailablePtBrVoices, previewChefVoice } from './utils/audio';
 import { createStoredProfile } from './utils/profile';
+import { buildPrintableContractText, SUPPLIER_IDENTITY } from './config/legalConfig';
 
 interface WineProfile {
   id: string;
@@ -404,6 +411,9 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   let adminVoiceConfig = loadChefVoiceConfig();
   let adminVoiceTestPhrase = CHEF_VOICE_TEST_PHRASE;
   let adminVoiceStatusLabel = 'Configuração local salva';
+  let paymentsPreContractAccepted = false;
+  let adminTelemetry: ServerAdminTelemetry | null = null;
+  let adminTelemetryLoaded = false;
 
   function createInitialProfileDraft(profile: StoredUserProfile | null): ProfileFormValues {
     return {
@@ -1102,12 +1112,17 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
 
   function footerNote(): string {
     return `<div class="footer-meta-bar">
-      <p class="local-note" data-save-status>${
-        state.demo
-          ? 'Modo demonstração local: seu progresso permanece salvo apenas neste navegador, sem sincronização entre dispositivos.'
-          : 'Plataforma FerveC Gastronomia · prévia demonstrativa local.'
-      }</p>
+      <div class="footer-meta-copy">
+        <p class="local-note" data-save-status>${
+          state.demo
+            ? 'Modo demonstração local: seu progresso permanece salvo apenas neste navegador, sem sincronização entre dispositivos.'
+            : 'Plataforma FerveC Gastronomia · prévia demonstrativa local.'
+        }</p>
+        <p class="footer-supplier-line">Fornecedor/Controlador: ${esc(SUPPLIER_IDENTITY.civilName)} (${esc(SUPPLIER_IDENTITY.legalNature)}) · CPF ${esc(SUPPLIER_IDENTITY.cpfFormatted)} · ${esc(SUPPLIER_IDENTITY.officialEmail)} · Endereço físico e vigência de acesso pendentes de confirmação do titular.</p>
+      </div>
       <div class="footer-meta-links">
+        <button type="button" class="text-action" data-action="open-terms-modal">Termos v${esc(SUPPLIER_IDENTITY.termsVersion)}</button>
+        <button type="button" class="text-action" data-action="open-privacy-modal">Privacidade (LGPD)</button>
         <button type="button" class="text-action" data-action="open-memorial" data-course="massas-italianas">Memorial Descritivo (acesso público)</button>
       </div>
     </div>`;
@@ -1440,7 +1455,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           </div>
           <div class="home-offer-panel">
             <span>Agora por apenas:</span>
-            <strong class="offer-price-swash">${esc(paymentSummary.courseSlug === 'massas-italianas' ? paymentSummary.priceFormatted : 'R$ 12,00')}</strong>
+            <strong class="offer-price-swash">${esc(paymentSummary.courseSlug === 'massas-italianas' ? paymentSummary.priceFormatted : 'R$ 12,90')}</strong>
             <svg class="offer-swash-svg" viewBox="0 0 140 12" aria-hidden="true"><path d="M6 9C42 2 98 1 134 6" fill="none" stroke="#b9161e" stroke-width="3.2" stroke-linecap="round"/></svg>
             <button class="btn btn-red" data-action="sales">Saber Mais →</button>
             <small><span aria-hidden="true">🔒</span> Acesso imediato ao curso</small>
@@ -1468,6 +1483,14 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 14v-2a7 7 0 0 1 14 0v2"/><rect x="3" y="13" width="3.5" height="6" rx="1.5"/><rect x="17.5" y="13" width="3.5" height="6" rx="1.5"/></svg>
               <span>Precisa de ajuda?</span>
             </button>
+          </div>
+          <div class="footer-legal-row">
+            <span>Fornecedor/Controlador: ${esc(SUPPLIER_IDENTITY.civilName)} (${esc(SUPPLIER_IDENTITY.legalNature)}) · CPF ${esc(SUPPLIER_IDENTITY.cpfFormatted)} · ${esc(SUPPLIER_IDENTITY.officialEmail)}</span>
+            <div class="footer-legal-actions">
+              <button type="button" data-action="open-terms-modal">Termos v${esc(SUPPLIER_IDENTITY.termsVersion)}</button>
+              <button type="button" data-action="open-privacy-modal">Privacidade (LGPD)</button>
+              <button type="button" data-action="open-memorial" data-course="massas-italianas">Memorial Descritivo</button>
+            </div>
           </div>
         </div>
       </footer>
@@ -3102,6 +3125,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         voiceTestPhrase: adminVoiceTestPhrase,
         voiceStatusLabel: adminVoiceStatusLabel,
         availableVoices,
+        serverTelemetry: adminTelemetry,
       }) + footerNote()
     );
   }
@@ -3113,23 +3137,45 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         !PHASE_1_OFFLINE_ONLY && SUPABASE_CONNECTED && userProfile.authSource === 'supabase';
       const hasCourse = hasProvisionalCourseEntitlement(userProfile.email, 'massas-italianas');
       const isAdmin = canShowAdminPanelLink();
+      const localOrders = listProvisionalDemoOrders().filter(
+        (o) =>
+          o.studentEmail.toLowerCase() === userProfile!.email.toLowerCase() &&
+          o.status !== 'withdrawn_art49'
+      );
+      const serverOrderEligible =
+        isSupabase &&
+        activeOrderId &&
+        (paymentSummary.latestOrderStatus === 'paid' || paymentSummary.isEnrolled);
+      const withdrawalOrderId = serverOrderEligible ? activeOrderId : localOrders[0]?.id || null;
+
       return `<main class="page-wrap">
         <section class="account-page">
           <div class="account-avatar">${initial}</div>
           <span class="eyebrow">${isSupabase ? 'MINHA CONTA' : 'MINHA CONTA · ARMAZENAMENTO LOCAL (FASE 1)'}</span>
           <h1>${esc(userProfile.fullName)}</h1>
-          <p>Seu cadastro unificado está salvo localmente neste navegador (${esc(userProfile.email)} · (${esc(userProfile.ddd)}) ${esc(userProfile.phone)}).</p>
+          <p>Seu cadastro unificado está salvo ${isSupabase ? 'com sincronização segura no Supabase' : 'localmente neste navegador'} (${esc(userProfile.email)} · (${esc(userProfile.ddd)}) ${esc(userProfile.phone)}).</p>
           <div class="account-state">
             <span class="state-dot"></span>
             <div>
-              <strong>Conta local ativa (${userProfile.age} anos)</strong>
+              <strong>Conta ativa (${userProfile.age} anos · 1 sessão simultânea)</strong>
               <small>${
-                hasCourse
-                  ? 'Curso de Massas Italianas liberado na Biblioteca Interativa (matrícula demonstrativa local).'
+                hasCourse || paymentSummary.isEnrolled
+                  ? 'Curso de Massas Italianas liberado na Biblioteca Interativa.'
                   : 'Acesso à Biblioteca Interativa requer aquisição do curso em Pagamentos (ou cupom de 100% na Fase 1).'
               }</small>
             </div>
           </div>
+
+          <div class="account-withdrawal-card" aria-label="Direito de Arrependimento Art. 49 CDC">
+            <strong>Direito de Arrependimento (Art. 49 do CDC — 7 dias)</strong>
+            <p>Nos termos do Art. 49 do Código de Defesa do Consumidor e Art. 5º do Decreto 7.962/2013, você pode desistir da contratação em até 7 dias corridos com revogação do acesso e restituição integral.</p>
+            ${
+              withdrawalOrderId
+                ? `<button type="button" class="btn btn-outline-dark" data-action="request-withdrawal" data-order-id="${esc(withdrawalOrderId)}">Solicitar Arrependimento (Art. 49 CDC · Pedido ${esc(withdrawalOrderId)})</button>`
+                : `<small>Nenhum pedido ativo elegível localizado no momento. Atendimento oficial: <a href="mailto:${esc(SUPPLIER_IDENTITY.officialEmail)}">${esc(SUPPLIER_IDENTITY.officialEmail)}</a>.</small>`
+            }
+          </div>
+
           <div class="lesson-actions" style="justify-content:center;flex-wrap:wrap;">
             ${btn('Painel Administrativo', 'admin', 'btn btn-saffron')}
             ${btn('Pagamentos', 'payments', 'btn btn-outline-dark')}
@@ -3142,7 +3188,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
               ? `<button class="text-action" data-action="enable-admin-preview" style="margin-top:8px;">Ativar prévia do Painel Administrativo</button>`
               : ''
           }
-          <button class="text-action account-reset" data-action="clear-profile">Sair e desconectar conta local deste navegador</button>
+          <button class="text-action account-reset" data-action="clear-profile">Sair e desconectar conta deste navegador</button>
         </section>
         ${footerNote()}
       </main>`;
@@ -3208,9 +3254,17 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             <p>Novidades, receitas, bastidores e atendimento por mensagem.</p>
             <a class="btn btn-outline-dark" href="https://www.instagram.com/fervecgastronomia/" target="_blank" rel="noopener noreferrer">@fervecgastronomia</a>
           </article>
+          <article class="help-contact-card">
+            <span class="help-contact-icon" aria-hidden="true">⚖</span>
+            <strong>Arrependimento (Art. 49 CDC) &amp; LGPD</strong>
+            <p>Fornecedor/Controlador: ${esc(SUPPLIER_IDENTITY.civilName)} (Pessoa Física · CPF ${esc(SUPPLIER_IDENTITY.cpfFormatted)}). Cancelamentos em até 7 dias corridos e pedidos LGPD podem ser feitos em Minha Conta ou por e-mail.</p>
+            <button type="button" class="btn btn-outline-dark" data-action="account">Ir para Minha Conta</button>
+          </article>
         </div>
         <div class="lesson-actions" style="justify-content:flex-start;flex-wrap:wrap;">
           ${btn('Voltar aos cursos', 'courses', 'btn btn-red')}
+          ${btn('Termos v1.1', 'open-terms-modal', 'btn btn-outline-dark')}
+          ${btn('Privacidade (LGPD)', 'open-privacy-modal', 'btn btn-outline-dark')}
           ${btn('Memorial Descritivo', 'open-memorial', 'btn btn-outline-dark')}
         </div>
       </section>
@@ -4508,7 +4562,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     openModal(`<div class="modal-backdrop">
       <section class="modal legal-doc-modal" role="dialog" aria-modal="true" aria-labelledby="legal-doc-modal-title">
         <button type="button" class="modal-close" data-action="close-modal" aria-label="Fechar">×</button>
-        <span class="eyebrow">FERVEC GASTRONOMIA · DOCUMENTO ÚNICO V1.0</span>
+        <span class="eyebrow">FERVEC GASTRONOMIA · DOCUMENTO ÚNICO V1.1</span>
         <h2 id="legal-doc-modal-title">${esc(title)}</h2>
         <div class="legal-doc-tabs" role="tablist" aria-label="Seções do documento legal">
           <button
@@ -5363,6 +5417,19 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   }
 
   async function executePaymentsPageCheckout(overrideMethod?: PaymentMethodChoice): Promise<void> {
+    if (!paymentsPreContractAccepted) {
+      paymentsUiStatus = 'refused';
+      paymentsStatusMessage =
+        'Antes de confirmar, marque a caixa de ciência do Resumo Pré-Contratual (Decreto 7.962/2013), identificação do fornecedor, Termos v1.1 e direito de arrependimento (Art. 49 CDC).';
+      toast.warning(
+        'Aceite pré-contratual obrigatório',
+        'Leia e marque o Resumo Pré-Contratual antes de prosseguir.'
+      );
+      render();
+      $<HTMLInputElement>('#payments-precontract-checkbox')?.focus();
+      return;
+    }
+
     if (PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED) {
       const method = overrideMethod || selectedPaymentMethod;
       selectedPaymentMethod = method;
@@ -6347,7 +6414,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           profileDraft.birthDate = formatted;
           clearInlineError('birthDate');
           const computed = calculateAge(formatted);
-          if (computed !== null && computed >= 13 && computed <= 100) {
+          if (computed !== null && computed >= 18 && computed <= 100) {
             profileDraft.age = String(computed);
             const ageSelect = $<HTMLSelectElement>('#cadastro-age');
             if (ageSelect) {
@@ -6397,7 +6464,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             }
             delete profileErrors.birthDate;
             const computed = calculateAge(brDate);
-            if (computed !== null && computed >= 13 && computed <= 100) {
+            if (computed !== null && computed >= 18 && computed <= 100) {
               profileDraft.age = String(computed);
               const ageSelect = $<HTMLSelectElement>('#cadastro-age');
               if (ageSelect) ageSelect.value = String(computed);
@@ -6508,6 +6575,12 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         profileDraft = createInitialProfileDraft(syncResult.profile);
         const firstName = syncResult.profile.fullName.split(' ')[0] || 'Chef';
         if (syncResult.syncedToSupabase) {
+          void recordLegalAcceptance({
+            termsVersion: SUPPLIER_IDENTITY.termsVersion,
+            privacyVersion: SUPPLIER_IDENTITY.privacyVersion,
+            preContractAccepted: false,
+            source: hadExistingProfile ? 'profile_update' : 'signup',
+          });
           toast.success(
             hadExistingProfile ? 'Perfil atualizado com sucesso!' : 'Cadastro realizado com sucesso!',
             `Bem-vindo(a), ${firstName}! Seus dados foram salvos no Supabase${
@@ -6682,6 +6755,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           appliedCoupon: appliedPaymentCoupon,
           couponFeedback: paymentCouponFeedback,
           isPhase1Offline: PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED,
+          preContractAccepted: paymentsPreContractAccepted,
         }),
       memorial: memorialPage,
       progress: progressPage,
@@ -6990,6 +7064,65 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       void executePaymentsPageCheckout('BOLETO');
     } else if (a === 'confirm-payment') {
       void executePaymentsPageCheckout();
+    } else if (a === 'download-contract-summary') {
+      const methodLabel = appliedPaymentCoupon?.isFree
+        ? `Cupom 100% (#${appliedPaymentCoupon.code})`
+        : selectedPaymentMethod === 'PIX'
+        ? 'Pix'
+        : selectedPaymentMethod === 'BOLETO'
+        ? 'Boleto bancário'
+        : 'Cartão de crédito';
+      const txt = buildPrintableContractText({
+        courseTitle: paymentSummary.courseTitle,
+        courseSlug: paymentSummary.courseSlug,
+        priceFormatted: paymentSummary.priceFormatted,
+        paymentMethodLabel: methodLabel,
+        studentName: userProfile?.fullName || 'Aluno não identificado',
+        studentEmail: userProfile?.email || 'Não informado',
+        environmentLabel:
+          PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED
+            ? 'Fase 1 Demonstrativa'
+            : paymentSummary.environment === 'sandbox'
+            ? 'Asaas Sandbox'
+            : 'Produção',
+        orderId: activeOrderId,
+      });
+      const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
+      triggerBlobDownload(blob, `resumo-contratual-fervec-${paymentSummary.courseSlug}.txt`);
+      toast.success('Resumo pré-contratual baixado!', 'Guarde este comprovante contratual.');
+    } else if (a === 'request-withdrawal') {
+      const orderId = b.dataset.orderId || '';
+      if (!orderId) return;
+      void (async () => {
+        if (!PHASE_1_OFFLINE_ONLY && SUPABASE_CONNECTED && userProfile?.authSource === 'supabase') {
+          const res = await requestOrderWithdrawal(orderId);
+          if (!res.ok) {
+            toast.error('Arrependimento não processado', res.message || 'Tente novamente ou contate fervecrgastronomia@gmail.com.');
+            return;
+          }
+          paymentSummary = {
+            ...paymentSummary,
+            isEnrolled: false,
+            latestOrderStatus: 'refund_requested',
+          };
+          toast.success('Solicitação registrada (Art. 49 CDC)', res.message || 'Pedido cancelado dentro do prazo legal.');
+          void hydratePaymentsSummary(true);
+          render();
+          return;
+        }
+        const localRes = revokeProvisionalOrderWithdrawal(orderId);
+        if (!localRes.ok) {
+          toast.error('Arrependimento não processado', localRes.message);
+          return;
+        }
+        paymentSummary = {
+          ...paymentSummary,
+          isEnrolled: false,
+          latestOrderStatus: 'refund_requested',
+        };
+        toast.success('Arrependimento registrado (Art. 49 CDC)', localRes.message);
+        render();
+      })();
     } else if (a === 'refresh-payment-status') {
       void refreshActiveOrderStatus(false);
     } else if (a === 'back-to-cuisines') {
@@ -7413,17 +7546,30 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     else if (a === 'lesson' || a === 'start-course') startCourse();
     else if (a === 'carbonara-cert') go('carbonara-cert');
     else if (a === 'account') go('account');
-    else if (a === 'admin') go('admin');
-    else if (a === 'create-profile' || a === 'edit-profile') {
+    else if (a === 'admin') {
+      go('admin');
+      if (!adminTelemetryLoaded && !PHASE_1_OFFLINE_ONLY && SUPABASE_CONNECTED) {
+        adminTelemetryLoaded = true;
+        void fetchAdminTelemetry().then((t) => {
+          if (t) {
+            adminTelemetry = t;
+            if (route === 'admin') render();
+          }
+        });
+      }
+    } else if (a === 'create-profile' || a === 'edit-profile') {
       closeModal();
       profileJustCreated = false;
       profileErrors = {};
       profileDraft = createInitialProfileDraft(userProfile);
       go('create-profile');
     } else if (a === 'clear-profile') {
+      void logoutServerSession();
       void signOutSupabaseAccount();
       clearProfile();
       clearAsaasAuditCache();
+      adminTelemetry = null;
+      adminTelemetryLoaded = false;
       userProfile = null;
       workspaceData = null;
       issuedCertificate = null;
@@ -7791,6 +7937,10 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   function changeHandler(e: Event) {
     const target = e.target as (HTMLSelectElement | HTMLInputElement) | null;
     if (!target) return;
+    if (target.dataset.paymentInput === 'preContractAccepted' && target instanceof HTMLInputElement) {
+      paymentsPreContractAccepted = target.checked;
+      return;
+    }
     if (target.dataset.paymentInput === 'cardInstallments') {
       const parsed = Number(target.value || 1);
       cardInstallmentsInput = Number.isFinite(parsed) && parsed >= 1 ? parsed : 1;

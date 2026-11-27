@@ -7,6 +7,7 @@ import {
   PaymentMethodChoice,
   PaymentUiStatus,
 } from '../utils/paymentCheckout';
+import { SUPPLIER_IDENTITY } from '../config/legalConfig';
 
 export interface AppliedPaymentCouponView {
   code: string;
@@ -34,6 +35,7 @@ export interface PaymentsViewOptions {
   appliedCoupon?: AppliedPaymentCouponView | null;
   couponFeedback?: { ok: boolean; message: string } | null;
   isPhase1Offline?: boolean;
+  preContractAccepted?: boolean;
 }
 
 function esc(x: unknown): string {
@@ -144,6 +146,7 @@ export function renderPaymentsPage(opts: PaymentsViewOptions): string {
     appliedCoupon = null,
     couponFeedback = null,
     isPhase1Offline = false,
+    preContractAccepted = false,
   } = opts;
 
   const caps = summary.capabilities;
@@ -403,6 +406,28 @@ export function renderPaymentsPage(opts: PaymentsViewOptions): string {
               <div class="payments-price-row is-total">
                 <span class="payments-total-label">Total</span>
                 <strong class="payments-total-value">${esc(finalTotalFormatted)}</strong>
+              </div>
+
+              <div class="payments-precontract-box" aria-label="Resumo pré-contratual obrigatório">
+                <div class="payments-precontract-head">
+                  <strong>Resumo Pré-Contratual (Decreto 7.962/2013 · CDC)</strong>
+                  <button type="button" class="payments-contract-download-btn" data-action="download-contract-summary">Baixar resumo (.txt)</button>
+                </div>
+                <ul class="payments-precontract-list">
+                  <li><strong>Fornecedor:</strong> ${esc(SUPPLIER_IDENTITY.civilName)} (${esc(SUPPLIER_IDENTITY.legalNature)}) · CPF ${esc(SUPPLIER_IDENTITY.cpfFormatted)} · ${esc(SUPPLIER_IDENTITY.officialEmail)}</li>
+                  <li><strong>Endereço e vigência:</strong> ${esc(SUPPLIER_IDENTITY.addressPending ? 'Endereço físico e prazo de acesso pendentes de confirmação oficial do titular.' : `${SUPPLIER_IDENTITY.physicalAddress || ''} · ${SUPPLIER_IDENTITY.accessDurationPendingLabel}`)}</li>
+                  <li><strong>Arrependimento (Art. 49 CDC):</strong> cancelamento e reembolso integral em até ${SUPPLIER_IDENTITY.regretDays} dias corridos.</li>
+                  <li><strong>Licença de uso:</strong> pessoal, intransferível, limitada a 1 sessão ativa simultânea (público 18+).</li>
+                </ul>
+                <label class="payments-precontract-check" for="payments-precontract-checkbox">
+                  <input
+                    id="payments-precontract-checkbox"
+                    type="checkbox"
+                    data-payment-input="preContractAccepted"
+                    ${preContractAccepted ? 'checked' : ''}
+                  />
+                  <span>Li e concordo com o Resumo Pré-Contratual, os <button type="button" class="payments-inline-legal-link" data-action="open-terms-modal">Termos v${esc(SUPPLIER_IDENTITY.termsVersion)}</button> e a <button type="button" class="payments-inline-legal-link" data-action="open-privacy-modal">Política de Privacidade (LGPD)</button>.</span>
+                </label>
               </div>
 
               <button

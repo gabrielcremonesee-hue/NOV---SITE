@@ -308,8 +308,43 @@ export interface OrderRecord {
   user_id: string;
   course_id: string;
   status: string;
+  amount_cents?: number | null;
+  asaas_customer_id?: string | null;
   asaas_payment_id?: string | null;
   paid_at?: string | null;
+}
+
+export function validateWebhookOrderIntegrity(
+  order: OrderRecord,
+  payment: AsaasWebhookPayment
+): { ok: true } | { ok: false; error: string } {
+  if (
+    typeof order.amount_cents === 'number' &&
+    Number.isFinite(order.amount_cents) &&
+    typeof payment.value === 'number' &&
+    Number.isFinite(payment.value)
+  ) {
+    const paymentCents = Math.round(payment.value * 100);
+    if (Math.abs(paymentCents - Math.round(order.amount_cents)) > 1) {
+      return {
+        ok: false,
+        error: `Divergência de valor entre pedido (${order.amount_cents} centavos) e pagamento Asaas (${paymentCents} centavos).`,
+      };
+    }
+  }
+
+  if (
+    order.asaas_customer_id &&
+    payment.customer &&
+    order.asaas_customer_id.trim() !== payment.customer.trim()
+  ) {
+    return {
+      ok: false,
+      error: 'Divergência de cliente (asaas_customer_id) entre pedido e notificação do webhook.',
+    };
+  }
+
+  return { ok: true };
 }
 
 export interface CreateWebhookLogInput {
@@ -525,16 +560,36 @@ export async function processAsaasWebhook(params: {
       };
     }
 
-    const paidAt = webhook.shouldGrantAccess
+    const integrity = validateWebhookOrderIntegrity(order, webhook.payment);
+    if (!integrity.ok) {
+      await safeFinalizeLog(params.repo, logId, {
+        processingStatus: 'failed',
+        httpStatus: 422,
+        orderId: order.id,
+        errorMessage: integrity.error,
+        processedAt: nowIso,
+      });
+      return {
+        statusCode: 422,
+        body: { ok: false, error: integrity.error, orderId: order.id },
+      };
+    }
+
+    // Não reabre matrícula automaticamente caso o pedido já tenha sido reembolsado ou cancelado
+    const lockedTerminalOrder = order.status === 'refunded' || order.status === 'canceled';
+    const effectiveGrantAccess = webhook.shouldGrantAccess && !lockedTerminalOrder;
+
+    const paidAt = effectiveGrantAccess
       ? order.paid_at ||
         webhook.payment.confirmedDate ||
         webhook.payment.paymentDate ||
         nowIso
       : order.paid_at ?? null;
 
-    // Não regride um pedido já pago em eventos tardios não-reembolso (ex.: overdue atrasado)
-    const nextStatus: InternalOrderStatus =
-      order.status === 'paid' && !webhook.shouldRevokeAccess
+    // Não regride um pedido já pago em eventos tardios não-reembolso, nem regride refunded para paid
+    const nextStatus: InternalOrderStatus = lockedTerminalOrder
+      ? (order.status as InternalOrderStatus)
+      : order.status === 'paid' && !webhook.shouldRevokeAccess
         ? 'paid'
         : webhook.orderStatus;
 
@@ -553,11 +608,11 @@ export async function processAsaasWebhook(params: {
       updatedAt: nowIso,
     });
 
-    if (webhook.shouldGrantAccess || webhook.shouldRevokeAccess) {
+    if (effectiveGrantAccess || webhook.shouldRevokeAccess) {
       await params.repo.syncEnrollmentAccess({
         userId: order.user_id,
         courseId: order.course_id,
-        grantAccess: webhook.shouldGrantAccess,
+        grantAccess: effectiveGrantAccess,
         revokeAccess: webhook.shouldRevokeAccess,
         updatedAt: nowIso,
       });

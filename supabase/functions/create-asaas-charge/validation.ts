@@ -28,6 +28,7 @@ export interface CreateAsaasChargeInput {
   externalReference?: string;
   customerId?: string;
   customer?: AsaasCustomerInput;
+  couponCode?: string;
 }
 
 export interface ValidationFieldError {
@@ -47,6 +48,7 @@ export type ChargeValidationResult =
         externalReference?: string;
         customerId?: string;
         customer?: AsaasCustomerInput;
+        couponCode?: string;
       };
     }
   | {
@@ -133,6 +135,28 @@ export function resolveSandboxBaseUrl(envUrl?: string | null): string {
     return fallback;
   } catch {
     return fallback;
+  }
+}
+
+export function resolveAsaasBaseUrl(
+  environment: 'sandbox' | 'production',
+  envUrl?: string | null
+): string {
+  if (environment !== 'production') {
+    return resolveSandboxBaseUrl(envUrl);
+  }
+  const prodFallback = 'https://api.asaas.com/v3';
+  if (!envUrl || !envUrl.trim()) return prodFallback;
+  const trimmed = envUrl.trim().replace(/\/+$/, '');
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'api.asaas.com' || host === 'www.asaas.com') {
+      return trimmed;
+    }
+    return prodFallback;
+  } catch {
+    return prodFallback;
   }
 }
 
@@ -308,6 +332,19 @@ export function validateCreateAsaasChargeBody(
     }
   }
 
+  let couponCode: string | undefined;
+  if (raw.couponCode !== undefined && raw.couponCode !== null && raw.couponCode !== '') {
+    const digits = digitsOnly(raw.couponCode);
+    if (digits.length !== 6) {
+      errors.push({
+        field: 'couponCode',
+        message: 'O cupom promocional deve conter 6 dígitos numéricos.',
+      });
+    } else {
+      couponCode = digits;
+    }
+  }
+
   if (errors.length > 0 || !billingType) {
     return { ok: false, errors };
   }
@@ -323,6 +360,7 @@ export function validateCreateAsaasChargeBody(
       ...(externalReference ? { externalReference } : {}),
       ...(customerId ? { customerId } : {}),
       ...(normalizedCustomer ? { customer: normalizedCustomer } : {}),
+      ...(couponCode ? { couponCode } : {}),
     },
   };
 }

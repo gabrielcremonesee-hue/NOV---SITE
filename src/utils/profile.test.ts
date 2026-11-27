@@ -7,6 +7,7 @@ import {
   formatCpf,
   formatDdd,
   formatPhone,
+  getSaoPauloCivilDate,
   maskCpf,
   validateCpf,
   validateEmail,
@@ -40,12 +41,18 @@ test('formatCpf and validateCpf handle formatting and check digits', () => {
   assert.equal(maskCpf('529.982.247-25'), '***.982.247-**');
 });
 
-test('birth date formatting and age calculation work deterministically', () => {
+test('birth date formatting, Sao Paulo civil date, and age calculation work deterministically', () => {
   assert.equal(formatBirthDate('15051996'), '15/05/1996');
   const refDate = new Date(2026, 10, 16); // 16 Nov 2026
   assert.equal(calculateAge('15/05/1996', refDate), 30);
   assert.equal(calculateAge('20/12/1996', refDate), 29);
   assert.equal(calculateAge('31/02/2000', refDate), null);
+
+  // Near UTC midnight: 2026-11-27T01:30:00Z is still 26/11/2026 22:30 in America/Sao_Paulo
+  const spDate = getSaoPauloCivilDate(new Date('2026-11-27T01:30:00.000Z'));
+  assert.equal(spDate.getFullYear(), 2026);
+  assert.equal(spDate.getMonth(), 10);
+  assert.equal(spDate.getDate(), 26);
 });
 
 test('phone and email helpers format and validate cleanly', () => {
@@ -56,10 +63,32 @@ test('phone and email helpers format and validate cleanly', () => {
   assert.equal(validateEmail('invalid-email'), false);
 });
 
-test('validateProfileForm catches invalid inputs and passes when valid', () => {
-  const refDate = new Date(2026, 10, 16);
+test('validateProfileForm catches invalid inputs and enforces 18+ minimum age', () => {
+  const refDate = new Date(2026, 10, 26); // 26 Nov 2026
   const validErrors = validateProfileForm(makeValidForm(), refDate);
   assert.deepEqual(validErrors, {});
+
+  // 17 years old (turns 18 tomorrow: 27/11/2008) must be blocked
+  const underageErrors = validateProfileForm(
+    makeValidForm({
+      birthDate: '27/11/2008',
+      age: '17',
+    }),
+    refDate
+  );
+  assert.match(underageErrors.birthDate || '', /18 anos/);
+  assert.match(underageErrors.age || '', /18 anos/);
+
+  // Exactly 18 years old today (26/11/2008) must pass
+  const just18Errors = validateProfileForm(
+    makeValidForm({
+      birthDate: '26/11/2008',
+      age: '18',
+    }),
+    refDate
+  );
+  assert.equal(just18Errors.birthDate, undefined);
+  assert.equal(just18Errors.age, undefined);
 
   const invalidErrors = validateProfileForm(
     makeValidForm({

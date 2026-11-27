@@ -1,9 +1,9 @@
+import fs from 'fs';
 import http from 'http';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { WebSocketServer } from 'ws';
-import { GoogleGenAI, Modality } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 import { getChatRole, sanitizeChatHistory } from './lib/chat.js';
 import { createDatabase } from './lib/db.js';
 import { resolveMaleNeuralVoice, synthesizeMaleNeuralTts } from './lib/neural_tts.js';
@@ -12,7 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const HOST = '0.0.0.0';
 const ALLOWED_CHAT_MODELS = new Set(['gemini-4-hydrogen', 'gemini-3.1-flash-lite']);
 const ALLOWED_LIVE_VOICES = new Set(['Orus', 'Charon', 'Fenrir', 'Puck']);
@@ -24,6 +24,10 @@ const TTS_VOICE_STYLES = {
     'Homem brasileiro adulto, chef apaixonado pela gastronomia. Fale com voz masculina firme, leve, envolvente e espontânea, explicando o preparo com confiança real de conversa na bancada.',
   Puck: 'Homem brasileiro adulto, chef comunicativo e acessível. Fale com voz masculina natural, leve, solta e firme na medida certa, fluindo como uma conversa tranquila na cozinha.',
 };
+const PRIVATE_BOOK_PATH = path.join(__dirname, 'private-books', 'fervec-massa-italiana.pdf');
+const AISTUDIO_PUBLIC_ALLOW_RE =
+  /^\/(fervec_x5f_gastronomia_x5f_documento_x5f_unico__1___1__f38fd1c7\.html|[^/]+\.(png|jpg|jpeg|webp|svg|gif))$/i;
+
 const db = createDatabase(path.join(__dirname, 'data', 'fervec-db.json'));
 
 function createAiClient(apiKey) {
@@ -59,12 +63,69 @@ function isTransientGeminiError(err) {
   );
 }
 
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'microphone=(), camera=()');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  next();
+});
+
 app.use(express.json({ limit: '4mb' }));
+
+// --- Protected Private Book Streaming Endpoint ---
+function handleLibraryBook(req, res) {
+  const requestedFile = String(req.query.file || req.query.path || '');
+  if (requestedFile && (requestedFile.includes('..') || requestedFile.includes('/') || requestedFile.includes('\\'))) {
+    return res.status(400).json({ error: 'Parâmetro de arquivo inválido.' });
+  }
+  const token = readBearerToken(req);
+  const sess = db.getSession(token);
+  if (!sess.ok || !sess.user) {
+    return res.status(401).json({ error: 'Autenticação necessária para acessar o livro digital.' });
+  }
+  const entitled =
+    sess.user.role === 'admin' ||
+    (Array.isArray(sess.user.entitledCourses) && sess.user.entitledCourses.includes('massas-italianas'));
+  if (!entitled) {
+    return res.status(403).json({ error: 'Acesso restrito a alunos com matrícula paga.' });
+  }
+  if (!fs.existsSync(PRIVATE_BOOK_PATH)) {
+    return res.status(404).json({ error: 'Livro digital não encontrado.' });
+  }
+  const total = fs.statSync(PRIVATE_BOOK_PATH).size;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Content-Disposition', 'inline; filename="fervec-massa-italiana.pdf"');
+  const range = req.headers.range;
+  if (range) {
+    const m = /^bytes=(\d*)-(\d*)$/.exec(String(range).trim());
+    if (!m) return res.status(416).setHeader('Content-Range', `bytes */${total}`).end();
+    const start = m[1] ? Number(m[1]) : 0;
+    const end = m[2] ? Math.min(Number(m[2]), total - 1) : total - 1;
+    if (start < 0 || start >= total || end < start) {
+      return res.status(416).setHeader('Content-Range', `bytes */${total}`).end();
+    }
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+    res.setHeader('Content-Length', String(end - start + 1));
+    if (req.method === 'HEAD') return res.end();
+    return fs.createReadStream(PRIVATE_BOOK_PATH, { start, end }).pipe(res);
+  }
+  res.setHeader('Content-Length', String(total));
+  if (req.method === 'HEAD') return res.end();
+  return fs.createReadStream(PRIVATE_BOOK_PATH).pipe(res);
+}
+
+app.get('/api/library/book', handleLibraryBook);
+app.head('/api/library/book', handleLibraryBook);
 
 // --- Server-Side Persistent Database Endpoints (Auth + User Data) ---
 app.post('/api/auth/register', (req, res) => {
-  const { name = '', email = '', password = '', initialData = {} } = req.body || {};
-  const result = db.registerUser({ name, email, password, initialData });
+  const { name = '', email = '', password = '', age = undefined, initialData = {} } = req.body || {};
+  const result = db.registerUser({ name, email, password, age, initialData });
   if (!result.ok) {
     return res.status(result.status || 400).json({ error: result.error });
   }
@@ -124,32 +185,36 @@ app.put('/api/user/data', (req, res) => {
   return res.json({ ok: true, data: result.data });
 });
 
-// --- Gemini AI Text Chat with Transient Retry & Model Fallback ---
+// --- Chef Text Chat (Economic R$ 0 Mode by default) ---
 app.post('/api/chat', async (req, res) => {
+  const allowPaidAi = String(process.env.FERVEC_ALLOW_PAID_AI || '').trim().toLowerCase() === 'true';
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return res.status(503).json({
-      error: 'Serviço de IA indisponível: configure GEMINI_API_KEY no servidor.',
+  const { systemInstruction = '', messages = [], roleId = 'chef-tutor', model = '' } = req.body || {};
+  const role = getChatRole(roleId);
+  const cleaned = sanitizeChatHistory(messages, 20);
+  const contents = cleaned.map((m) => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }],
+  }));
+
+  if (contents.length === 0) {
+    return res.status(400).json({ error: 'Mensagem vazia.' });
+  }
+
+  if (!allowPaidAi || !apiKey) {
+    return res.json({
+      content:
+        'Chef CREMONESE (Modo Econômico R$ 0): No preparo das massas italianas clássicas, controle a temperatura fora do fogo direto ao emulsionar com a água rica em amido e siga as proporções da ficha técnica do módulo em estudo.',
+      model: 'fervec-programado-r0',
+      mode: 'local_programmed',
+      roleId: role.id,
     });
   }
 
   try {
-    const { systemInstruction = '', messages = [], roleId = 'chef-tutor', model = '' } = req.body || {};
-    const role = getChatRole(roleId);
     const chosenModel = ALLOWED_CHAT_MODELS.has(model) ? model : role.model;
     const fallbackModel = chosenModel === 'gemini-4-hydrogen' ? 'gemini-3.1-flash-lite' : 'gemini-4-hydrogen';
     const ai = createAiClient(apiKey);
-
-    const cleaned = sanitizeChatHistory(messages, 20);
-    const contents = cleaned.map((m) => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
-    }));
-
-    if (contents.length === 0) {
-      return res.status(400).json({ error: 'Mensagem vazia.' });
-    }
-
     const finalInstruction = String(systemInstruction || role.instruction || '').trim();
     const candidates = [chosenModel, fallbackModel];
     let response = null;
@@ -223,10 +288,14 @@ app.post('/api/tts', async (req, res) => {
       console.warn('[API /api/tts neural fallback]', neuralErr?.message || neuralErr);
     }
 
+    const allowPaidExternalTts =
+      String(process.env.FERVEC_ALLOW_PAID_AI || '').trim().toLowerCase() === 'true' &&
+      String(process.env.FERVEC_ALLOW_EXTERNAL_TTS || '').trim().toLowerCase() === 'true';
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
+    if (!allowPaidExternalTts || !apiKey) {
       return res.status(503).json({
-        error: 'Serviço de voz neural temporariamente indisponível.',
+        fallback: 'browser_speech',
+        error: 'Síntese neural externa desativada; utilize a voz do navegador.',
       });
     }
 
@@ -262,7 +331,7 @@ app.post('/api/tts', async (req, res) => {
 
     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     if (!base64Audio) {
-      return res.status(502).json({ error: 'O serviço de voz não retornou áudio.' });
+      return res.status(503).json({ fallback: 'browser_speech', error: 'O serviço de voz não retornou áudio.' });
     }
 
     return res.json({
@@ -270,63 +339,24 @@ app.post('/api/tts', async (req, res) => {
       mimeType: 'audio/wav',
       voice: voiceProfile.id,
     });
-  } catch (err) {
-    console.error('[API /api/tts error]', err);
-    const status = Number(err?.status) >= 400 && Number(err?.status) < 600 ? Number(err.status) : 500;
-    return res.status(status).json({
-      error: err?.message || 'Falha ao gerar áudio do Chefe.',
-    });
-  }
-});
-
-// --- Gemini Audio Transcription Fallback (pre-recorded browser mic audio) ---
-app.post('/api/transcribe', async (req, res) => {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  } catch {
     return res.status(503).json({
-      error: 'Serviço de transcrição indisponível: configure GEMINI_API_KEY no servidor.',
-    });
-  }
-
-  try {
-    const audioBase64 = String(req.body?.audioBase64 || '').trim();
-    const mimeType = String(req.body?.mimeType || 'audio/webm').split(';')[0].trim() || 'audio/webm';
-    if (!audioBase64) {
-      return res.status(400).json({ error: 'Áudio vazio.' });
-    }
-    const ai = createAiClient(apiKey);
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.5-transcribe',
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType,
-              data: audioBase64,
-            },
-          },
-          {
-            text: 'Transcreva fielmente em português do Brasil o que a pessoa falou na cozinha.',
-          },
-        ],
-      },
-    });
-    return res.json({
-      transcript: String(response.text || '').trim(),
-    });
-  } catch (err) {
-    console.error('[API /api/transcribe error]', err);
-    const status = Number(err?.status) >= 400 && Number(err?.status) < 600 ? Number(err.status) : 500;
-    return res.status(status).json({
-      error: err?.message || 'Falha ao transcrever sua fala.',
+      fallback: 'browser_speech',
+      error: 'Falha ao gerar áudio do Chefe.',
     });
   }
 });
 
 app.use('/vendor/maplibre-gl', express.static(path.join(__dirname, 'node_modules/maplibre-gl/dist')));
 app.use('/src/assets/images', express.static(path.join(__dirname, 'src/assets/images')));
-app.use('/assets/aistudio', express.static(path.join(__dirname, 'public/assets/aistudio')));
-app.use('/assets', express.static(path.join(__dirname, 'assets')));
+const aistudioStatic = express.static(path.join(__dirname, 'public/assets/aistudio'));
+app.use('/assets/aistudio', (req, res, next) => {
+  if (!AISTUDIO_PUBLIC_ALLOW_RE.test(req.path)) {
+    return res.status(404).end();
+  }
+  aistudioStatic(req, res, next);
+});
+app.use('/assets', express.static(path.join(__dirname, 'public/assets')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/lib', express.static(path.join(__dirname, 'lib')));
 app.get('/styles.css', (_req, res) => {
@@ -340,158 +370,6 @@ app.get('/', (_req, res) => {
 });
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ noServer: true });
-
-server.on('upgrade', (request, socket, head) => {
-  try {
-    const parsedUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
-    if (parsedUrl.pathname === '/live') {
-      wss.handleUpgrade(request, socket, head, (ws) => {
-        wss.emit('connection', ws, request, parsedUrl);
-      });
-    } else {
-      socket.destroy();
-    }
-  } catch {
-    socket.destroy();
-  }
-});
-
-wss.on('connection', async (clientWs, _request, parsedUrl) => {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    clientWs.send(JSON.stringify({ error: 'Serviço de voz indisponível: configure GEMINI_API_KEY no servidor.' }));
-    clientWs.close();
-    return;
-  }
-
-  let session = null;
-  let sessionReady = false;
-  const queryVoice = parsedUrl?.searchParams?.get('voice') || 'Antonio';
-
-  async function initLiveSession(voiceName, systemInstruction) {
-    if (session || sessionReady) return;
-    sessionReady = true;
-    const mappedLive = resolveMaleNeuralVoice(voiceName).liveVoice;
-    const chosenVoice = ALLOWED_LIVE_VOICES.has(mappedLive) ? mappedLive : 'Charon';
-    const ai = createAiClient(apiKey);
-    const voiceStyle =
-      ' Fale sempre em português do Brasil com voz masculina leve, natural, fluida e firme de chef experiente explicando uma receita lado a lado na cozinha — evite frases robóticas, artificiais ou tom engessado.';
-    const baseInstruction = systemInstruction
-      ? `${systemInstruction}${voiceStyle}`
-      : 'Você é o Chef Instrutor de Voz da FerveC Gastronomia, homem brasileiro falando em português do Brasil. Ajude o usuário a preparar massa italiana fresca, responder dúvidas rápidas na bancada e explicar receitas com firmeza, naturalidade, calor humano e frases fluidas que soam como conversa real.' +
-        voiceStyle;
-
-    try {
-      session = await ai.live.connect({
-        model: 'gemini-3.8-live',
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: chosenVoice },
-            },
-          },
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
-          systemInstruction: baseInstruction,
-        },
-        callbacks: {
-          onmessage: (message) => {
-            if (clientWs.readyState !== clientWs.OPEN) return;
-            const content = message.serverContent;
-            if (content?.inputTranscription?.text) {
-              clientWs.send(JSON.stringify({ inputTranscript: content.inputTranscription.text }));
-            }
-            if (content?.outputTranscription?.text) {
-              clientWs.send(JSON.stringify({ outputTranscript: content.outputTranscription.text }));
-            }
-            for (const part of content?.modelTurn?.parts ?? []) {
-              if (part.inlineData?.data) {
-                clientWs.send(JSON.stringify({ audio: part.inlineData.data }));
-              }
-            }
-            if (content?.interrupted) {
-              clientWs.send(JSON.stringify({ interrupted: true }));
-            }
-            if (content?.turnComplete) {
-              clientWs.send(JSON.stringify({ turnComplete: true }));
-            }
-          },
-          onerror: (err) => {
-            console.error('[Live API session error]', err);
-            if (clientWs.readyState === clientWs.OPEN) {
-              clientWs.send(JSON.stringify({ error: err?.message || 'Erro na sessão Gemini Live.' }));
-            }
-          },
-          onclose: () => {
-            if (clientWs.readyState === clientWs.OPEN) {
-              clientWs.close();
-            }
-          },
-        },
-      });
-      if (clientWs.readyState === clientWs.OPEN) {
-        clientWs.send(JSON.stringify({ ready: true, voice: chosenVoice, model: 'gemini-3.8-live' }));
-      }
-    } catch (err) {
-      console.error('[Live API connect error]', err);
-      if (clientWs.readyState === clientWs.OPEN) {
-        clientWs.send(JSON.stringify({ error: err?.message || 'Não foi possível iniciar a conversa por voz com Gemini Live.' }));
-        clientWs.close();
-      }
-    }
-  }
-
-  const fallbackTimer = setTimeout(() => {
-    if (!sessionReady && clientWs.readyState === clientWs.OPEN) {
-      initLiveSession(queryVoice, '');
-    }
-  }, 500);
-
-  clientWs.on('message', async (raw) => {
-    let msg;
-    try {
-      msg = JSON.parse(raw.toString());
-    } catch {
-      return;
-    }
-
-    if (msg.type === 'config') {
-      clearTimeout(fallbackTimer);
-      await initLiveSession(msg.voiceName || queryVoice, msg.systemInstruction || '');
-      return;
-    }
-
-    if (!session) return;
-
-    try {
-      if (typeof msg.audio === 'string' && msg.audio.length > 0) {
-        session.sendRealtimeInput({
-          audio: { data: msg.audio, mimeType: 'audio/pcm;rate=16000' },
-        });
-      } else if (typeof msg.text === 'string' && msg.text.trim()) {
-        session.sendRealtimeInput({ text: msg.text.trim() });
-      }
-    } catch (err) {
-      console.error('[Live API sendRealtimeInput error]', err);
-      if (clientWs.readyState === clientWs.OPEN) {
-        clientWs.send(JSON.stringify({ error: 'Falha ao enviar áudio para o Gemini Live.' }));
-      }
-    }
-  });
-
-  clientWs.on('close', () => {
-    clearTimeout(fallbackTimer);
-    if (session) {
-      try {
-        session.close();
-      } catch {}
-      session = null;
-    }
-  });
-});
-
 server.listen(PORT, HOST, () => {
   console.log(`FerveC Gastronomia server listening on http://${HOST}:${PORT}`);
 });

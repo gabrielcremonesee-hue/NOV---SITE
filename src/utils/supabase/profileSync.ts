@@ -3,11 +3,13 @@ import {
   ProfileFieldKey,
   ProfileFormValues,
   StoredUserProfile,
+  calculateAge,
   createStoredProfile,
   saveProfile,
   sha256Cpf,
 } from '../profile';
 import { getSupabaseClient } from './client';
+import { claimActiveServerSession, logoutServerSession } from './courseSync';
 
 export interface ProfileSyncResult {
   ok: boolean;
@@ -67,7 +69,7 @@ export function mapSupabaseUserToProfile(
     safeFallback?.fullName ||
     email.split('@')[0];
   const ageVal = Number(dbRow?.age ?? meta.age);
-  const age = Number.isInteger(ageVal) && ageVal >= 13 ? ageVal : safeFallback?.age || 18;
+  const age = Number.isInteger(ageVal) && ageVal >= 18 ? ageVal : safeFallback?.age && safeFallback.age >= 18 ? safeFallback.age : 18;
 
   const whatsappOptIn =
     typeof dbRow?.whatsapp_opt_in === 'boolean'
@@ -223,6 +225,19 @@ export async function registerOrUpdateSupabaseProfile(
       },
       message:
         'Marque a opção "Concordo com os Termos de Condições e Política de Privacidade" antes de criar sua conta.',
+    };
+  }
+
+  const computedAge = calculateAge(values.birthDate);
+  if (computedAge !== null && computedAge < 18) {
+    return {
+      ok: false,
+      syncedToSupabase: false,
+      fieldError: {
+        field: 'birthDate',
+        message: 'É necessário ter pelo menos 18 anos para criar conta.',
+      },
+      message: 'Cadastro permitido apenas para maiores de 18 anos.',
     };
   }
 
@@ -389,6 +404,7 @@ export async function registerOrUpdateSupabaseProfile(
       };
       if (hasSession) {
         await tryUpsertProfilesTable(user.id, finalProfile);
+        await claimActiveServerSession().catch(() => false);
       }
       saveProfile(finalProfile);
       return {
@@ -465,6 +481,7 @@ export async function signInSupabaseAccount(
       await tryUpsertProfilesTable(data.user.id, mapped);
     }
 
+    await claimActiveServerSession().catch(() => false);
     saveProfile(mapped);
     return { ok: true, profile: mapped };
   } catch {
@@ -546,6 +563,7 @@ export async function verifySupabaseSignupCode(
     if (!dbRow) {
       await tryUpsertProfilesTable(data.user.id, mapped);
     }
+    await claimActiveServerSession().catch(() => false);
     saveProfile(mapped);
     return { ok: true, profile: mapped };
   } catch {
@@ -598,6 +616,7 @@ export function subscribeSupabaseAuthChanges(
 }
 
 export async function signOutSupabaseAccount(): Promise<void> {
+  await logoutServerSession().catch(() => {});
   const supabase = getSupabaseClient();
   if (!supabase) return;
   try {

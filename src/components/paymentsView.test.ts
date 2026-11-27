@@ -233,3 +233,49 @@ test('renderPaymentsPage renders 90% and 100% applied coupon totals and free acq
   assert.match(html100, /R\$\s*0,00/);
   assert.match(html100, /Confirmar aquisição gratuita \(cupom 100%\)/);
 });
+
+test('renderPaymentsPage includes Decreto 7.962/2013 pre-contractual summary, supplier CPF, printable button, and checkbox', () => {
+  const summary = createDefaultCoursePaymentSummary('massas-italianas');
+  const htmlUnchecked = renderPaymentsPage({
+    summary,
+    heroBannerSrc: '/assets/test-chef.jpg',
+    courseThumbSrc: '/assets/test-pasta.png',
+    selectedMethod: 'PIX',
+    cardMode: 'CREDIT_CARD',
+    cardHolderName: '',
+    cardInstallments: 1,
+    uiStatus: 'awaiting_selection',
+    statusMessage: null,
+    isProcessing: false,
+    copiedPix: false,
+    activeOrderId: null,
+    activePayment: null,
+    preContractAccepted: false,
+  });
+
+  assert.match(htmlUnchecked, /Resumo Pré-Contratual/);
+  assert.match(htmlUnchecked, /Gabriel Cremonese/);
+  assert.match(htmlUnchecked, /102\.722\.209-90/);
+  assert.match(htmlUnchecked, /data-action="download-contract-summary"/);
+  assert.match(htmlUnchecked, /Baixar resumo \(\.txt\)/);
+  assert.match(htmlUnchecked, /id="payments-precontract-checkbox"/);
+  assert.doesNotMatch(htmlUnchecked, /id="payments-precontract-checkbox"[^>]*\bchecked\b/);
+
+  const htmlChecked = renderPaymentsPage({
+    summary,
+    heroBannerSrc: '/assets/test-chef.jpg',
+    courseThumbSrc: '/assets/test-pasta.png',
+    selectedMethod: 'PIX',
+    cardMode: 'CREDIT_CARD',
+    cardHolderName: '',
+    cardInstallments: 1,
+    uiStatus: 'awaiting_selection',
+    statusMessage: null,
+    isProcessing: false,
+    copiedPix: false,
+    activeOrderId: null,
+    activePayment: null,
+    preContractAccepted: true,
+  });
+  assert.match(htmlChecked, /id="payments-precontract-checkbox"[^>]*\bchecked\b/);
+});

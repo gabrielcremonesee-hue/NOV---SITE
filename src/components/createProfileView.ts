@@ -51,8 +51,8 @@ function fieldErrorHtml(field: ProfileFieldKey, errors: ProfileValidationErrors)
 }
 
 function renderAgeOptions(selectedAge: string): string {
-  const opts = ['<option value="">Idade</option>'];
-  for (let age = 13; age <= 100; age++) {
+  const opts = ['<option value="">Idade (18+)</option>'];
+  for (let age = 18; age <= 100; age++) {
     const val = String(age);
     opts.push(
       `<option value="${val}" ${selectedAge === val ? 'selected' : ''}>${age} anos</option>`
@@ -389,7 +389,7 @@ export function renderCreateProfilePage(opts: CreateProfileRenderOptions): strin
             <span class="cadastro-divider-line" aria-hidden="true"></span>
           </div>
 
-          <p class="cadastro-terms-subtitle">Marque a opção abaixo para aceitar os termos do site:</p>
+          <p class="cadastro-terms-subtitle">Cadastro exclusivo para maiores de 18 anos. Marque a opção abaixo para aceitar os termos (v1.1):</p>
 
           <div class="cadastro-consent-grid">
             <div class="cadastro-consent-col ${errors.acceptTerms ? 'has-error' : ''}">
@@ -405,7 +405,7 @@ export function renderCreateProfilePage(opts: CreateProfileRenderOptions): strin
                 />
                 <span class="cadastro-consent-icon is-crimson" aria-hidden="true">${ICONS.mail}</span>
                 <span class="cadastro-terms-copy">
-                  Concordo com os
+                  Declaro ter 18 anos ou mais e concordo com os
                   <button
                     type="button"
                     class="cadastro-inline-link"
@@ -464,8 +464,8 @@ export function renderCreateProfilePage(opts: CreateProfileRenderOptions): strin
             </button>
             <p class="cadastro-storage-hint"><svg class="cadastro-lock-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.2" fill="currentColor"/><path d="M8 10.5V7.8a4 4 0 0 1 8 0v2.7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> ${
               supabaseConfigured
-                ? 'Seus dados estão seguros conosco e sincronizados com o Supabase.'
-                : 'Armazenamento provisório local (Fase 1): seus dados ficam salvos neste navegador para acesso ao portal e à Biblioteca.'
+                ? 'Controlador: Gabriel Cremonese (FerveC Gastronomia) · Seus dados são protegidos pela LGPD e sincronizados no Supabase.'
+                : 'Controlador: Gabriel Cremonese (FerveC Gastronomia) · Armazenamento provisório local (Fase 1) protegido para acesso ao portal e à Biblioteca.'
             }</p>
           </div>
         </form>

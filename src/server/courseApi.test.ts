@@ -143,7 +143,28 @@ function createMockSupabaseDb() {
     module_progress: [],
     assessment_attempts: [],
     certificates: [],
-    orders: [],
+    orders: [
+      {
+        id: 'ord-paid-a',
+        user_id: 'user-a',
+        course_id: courseId,
+        status: 'paid',
+        amount_cents: 1290,
+        asaas_payment_id: 'pay_seed_a',
+        paid_at: '2026-11-15T12:00:00.000Z',
+        created_at: '2026-11-15T11:55:00.000Z',
+      },
+      {
+        id: 'ord-paid-b',
+        user_id: 'user-b',
+        course_id: courseId,
+        status: 'paid',
+        amount_cents: 1290,
+        asaas_payment_id: 'pay_seed_b',
+        paid_at: '2026-11-15T12:00:00.000Z',
+        created_at: '2026-11-15T11:55:00.000Z',
+      },
+    ],
     payments: [],
   };
 
@@ -295,7 +316,9 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
                     ? 'spoof@fervec.test'
                     : uid === 'user-a'
                       ? 'ana@fervec.test'
-                      : 'bruno@fervec.test',
+                      : uid === 'user-unpaid'
+                        ? 'unpaid@fervec.test'
+                        : 'bruno@fervec.test',
           created_at:
             uid === 'spoof-user' || uid === 'owner-email'
               ? '2026-11-18T10:00:00.000Z'
@@ -690,9 +713,45 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     assert.equal(carlaIssueJson.certificate.studentName, 'Carla Beatriz Nunes');
     assert.equal(carlaIssueJson.certificate.completionDate, '12/10/2026');
 
-    // Test 12: Payments summary & status endpoints recognize paid orders + in_progress enrollments from webhook
+    // Test 12: Unpaid student CANNOT sync progress, submit exams, or issue certificates, and transitions cleanly upon paid order
+    db.profiles.push({
+      id: 'user-unpaid',
+      full_name: 'Pedro Sem Pagamento',
+      cpf_masked: '***.555.444-**',
+      cpf_hash: 'hash-unpaid',
+      birth_date: '10/10/1994',
+      age: 32,
+      email: 'unpaid@fervec.test',
+      ddd: '11',
+      phone: '96666-5555',
+      whatsapp_opt_in: false,
+      email_opt_in: false,
+    });
+
+    const unpaidWsRes = await fetch(`${baseUrl}/api/workspace/state`, {
+      headers: { 'x-test-user': 'user-unpaid' },
+    });
+    assert.equal(unpaidWsRes.status, 200);
+    const unpaidWs = (await unpaidWsRes.json()) as Record<string, any>;
+    assert.equal(unpaidWs.isEnrolled, false);
+    assert.equal(unpaidWs.enrollment, null);
+
+    const unpaidSyncBlock = await fetch(`${baseUrl}/api/progress/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-test-user': 'user-unpaid' },
+      body: JSON.stringify({ moduleKey: 'carbonara', currentStage: 1, doneSteps: [0] }),
+    });
+    assert.equal(unpaidSyncBlock.status, 403);
+
+    const unpaidExamBlock = await fetch(`${baseUrl}/api/assessments/submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-test-user': 'user-unpaid' },
+      body: JSON.stringify({ moduleKey: 'carbonara', attemptType: 'exam', answers: exam.map((q) => q.correct) }),
+    });
+    assert.equal(unpaidExamBlock.status, 403);
+
     const unpaidSummaryRes = await fetch(`${baseUrl}/api/payments/course-summary?courseSlug=massas-italianas`, {
-      headers: { 'x-test-user': 'user-b' },
+      headers: { 'x-test-user': 'user-unpaid' },
     });
     assert.equal(unpaidSummaryRes.status, 200);
     const unpaidSummary = (await unpaidSummaryRes.json()) as Record<string, any>;
@@ -702,30 +761,30 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
 
     db.orders.push({
       id: '11111111-1111-4111-8111-111111111111',
-      user_id: 'user-b',
+      user_id: 'user-unpaid',
       course_id: '8a3c38ad-d5de-424a-868d-325420b7470b',
       status: 'paid',
       amount_cents: 1290,
-      asaas_payment_id: 'pay_sandbox_b',
+      asaas_payment_id: 'pay_sandbox_unpaid',
       paid_at: '2026-11-16T12:00:00.000Z',
       created_at: '2026-11-16T11:55:00.000Z',
     });
     db.payments.push({
       id: 'p-1',
       order_id: '11111111-1111-4111-8111-111111111111',
-      user_id: 'user-b',
-      asaas_payment_id: 'pay_sandbox_b',
+      user_id: 'user-unpaid',
+      asaas_payment_id: 'pay_sandbox_unpaid',
       status: 'RECEIVED',
       billing_type: 'PIX',
       value_cents: 1290,
       due_date: '2026-11-19',
       created_at: '2026-11-16T11:55:00.000Z',
     });
-    const profB = db.profiles.find((p) => p.id === 'user-b');
-    if (profB) profB.asaas_customer_id = 'cus_000005492817';
+    const profUnpaid = db.profiles.find((p) => p.id === 'user-unpaid');
+    if (profUnpaid) profUnpaid.asaas_customer_id = 'cus_000005492817';
 
     const paidStatusRes = await fetch(`${baseUrl}/api/payments/status/11111111-1111-4111-8111-111111111111`, {
-      headers: { 'x-test-user': 'user-b' },
+      headers: { 'x-test-user': 'user-unpaid' },
     });
     assert.equal(paidStatusRes.status, 200);
     const paidStatus = (await paidStatusRes.json()) as Record<string, any>;
@@ -733,7 +792,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     assert.equal(paidStatus.isEnrolled, true);
 
     const paidSummaryRes = await fetch(`${baseUrl}/api/payments/course-summary?courseSlug=massas-italianas`, {
-      headers: { 'x-test-user': 'user-b' },
+      headers: { 'x-test-user': 'user-unpaid' },
     });
     const paidSummary = (await paidSummaryRes.json()) as Record<string, any>;
     assert.equal(paidSummary.isEnrolled, true);

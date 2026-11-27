@@ -3,6 +3,7 @@ import {
   getSupabaseConnectionInfo,
   initSupabaseRuntimeConfig,
 } from './supabase/client';
+import { getOrCreateClientSessionId } from './supabase/courseSync';
 
 export type CheckoutBillingType = 'PIX' | 'BOLETO' | 'CREDIT_CARD' | 'DEBIT_CARD' | 'UNDEFINED';
 export type PaymentMethodChoice = 'PIX' | 'BOLETO' | 'CARD';
@@ -262,7 +263,10 @@ export async function fetchCoursePaymentSummary(
     const accessToken = await getToken().catch(() => null);
     const fetchImpl = deps?.fetchFn ?? fetch;
 
-    const headers: Record<string, string> = { Accept: 'application/json' };
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      'x-fervec-session-id': getOrCreateClientSessionId(),
+    };
     if (accessToken) {
       headers.Authorization = `Bearer ${accessToken}`;
     }
@@ -384,6 +388,7 @@ export async function fetchOrderPaymentStatus(
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${accessToken}`,
+        'x-fervec-session-id': getOrCreateClientSessionId(),
       },
     });
     const data = (await res.json().catch(() => ({}))) as {
@@ -463,6 +468,7 @@ export async function requestAsaasChargeCheckout(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
         apikey: conn.key,
+        'x-fervec-session-id': getOrCreateClientSessionId(),
       },
       body: JSON.stringify({
         courseSlug: input.courseSlug,

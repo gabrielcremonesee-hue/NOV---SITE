@@ -102,12 +102,41 @@ async function getAccessToken(): Promise<string | null> {
   }
 }
 
+const CLIENT_SESSION_KEY = 'fervec-client-session-id';
+
+export function getOrCreateClientSessionId(): string {
+  if (typeof sessionStorage === 'undefined') return 'server-session';
+  try {
+    let existing = sessionStorage.getItem(CLIENT_SESSION_KEY);
+    if (!existing) {
+      existing =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `sess-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      sessionStorage.setItem(CLIENT_SESSION_KEY, existing);
+    }
+    return existing;
+  } catch {
+    return 'browser-session';
+  }
+}
+
+export function resetClientSessionId(): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.removeItem(CLIENT_SESSION_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const token = await getAccessToken();
   const headers = new Headers(init.headers || {});
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
+  headers.set('x-fervec-session-id', getOrCreateClientSessionId());
   if (init.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
@@ -116,6 +145,123 @@ async function authFetch(input: string, init: RequestInit = {}): Promise<Respons
     headers,
     credentials: 'include',
   });
+}
+
+export async function claimActiveServerSession(): Promise<boolean> {
+  try {
+    const token = await getAccessToken();
+    if (!token) return false;
+    const res = await authFetch('/api/session/claim', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId: getOrCreateClientSessionId() }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function logoutServerSession(): Promise<void> {
+  try {
+    const token = await getAccessToken();
+    if (token) {
+      await authFetch('/api/session/logout', { method: 'POST' });
+    }
+  } catch {
+    // ignore
+  } finally {
+    resetClientSessionId();
+  }
+}
+
+export async function recordLegalAcceptance(payload: {
+  termsVersion: string;
+  privacyVersion: string;
+  preContractAccepted?: boolean;
+  source?: string;
+}): Promise<boolean> {
+  try {
+    const token = await getAccessToken();
+    if (!token) return false;
+    const res = await authFetch('/api/legal/accept', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function requestOrderWithdrawal(
+  orderId: string,
+  reason?: string
+): Promise<{ ok: boolean; message?: string; status?: string; orderId?: string }> {
+  try {
+    const token = await getAccessToken();
+    if (!token) {
+      return { ok: false, message: 'Entre na sua conta para solicitar o arrependimento (Art. 49 CDC).' };
+    }
+    const res = await authFetch(`/api/orders/${encodeURIComponent(orderId)}/withdraw`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason || 'Desistência em até 7 dias (Art. 49 CDC).' }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      error?: string;
+      message?: string;
+      status?: string;
+      orderId?: string;
+    };
+    if (!res.ok) {
+      return { ok: false, message: data.error || data.message || 'Não foi possível processar o arrependimento.' };
+    }
+    return {
+      ok: true,
+      message: data.message || 'Solicitação de arrependimento (Art. 49 CDC) registrada.',
+      status: data.status,
+      orderId: data.orderId || orderId,
+    };
+  } catch {
+    return { ok: false, message: 'Falha de comunicação ao solicitar arrependimento.' };
+  }
+}
+
+export interface ServerAdminTelemetry {
+  ok?: boolean;
+  financialGuard?: {
+    dateKey: string;
+    allowPaidAi: boolean;
+    allowExternalTts: boolean;
+    dailyBudgetUsd: number;
+    estimatedSpendUsd: number;
+    paidAiCallsToday: number;
+    localFallbackCallsToday: number;
+    externalTtsCallsToday: number;
+    blockedCallsToday: number;
+    circuitOpenUntilIso: string | null;
+    lastBlockedReason: string | null;
+  };
+  priceConfirmation?: {
+    confirmed: boolean;
+    envVarName?: string;
+    note?: string | null;
+  };
+  supplierMaskedCpf?: string;
+  addressPending?: boolean;
+  singleSessionActiveCount?: number;
+}
+
+export async function fetchAdminTelemetry(): Promise<ServerAdminTelemetry | null> {
+  try {
+    const token = await getAccessToken();
+    if (!token) return null;
+    const res = await authFetch('/api/admin/telemetry');
+    if (!res.ok) return null;
+    return (await res.json()) as ServerAdminTelemetry;
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchWorkspaceState(

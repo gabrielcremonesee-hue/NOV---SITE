@@ -17,7 +17,16 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function readWebhookSecurityToken(): string | null {
+function resolveEnvironment(): 'sandbox' | 'production' {
+  return Deno.env.get('ASAAS_ENVIRONMENT')?.trim().toLowerCase() === 'production'
+    ? 'production'
+    : 'sandbox';
+}
+
+function readWebhookSecurityToken(environment: 'sandbox' | 'production'): string | null {
+  if (environment === 'production') {
+    return Deno.env.get('ASAAS_WEBHOOK_TOKEN')?.trim() || null;
+  }
   const candidates = [
     Deno.env.get('ASAAS_SANDBOX_WEBHOOK_TOKEN'),
     Deno.env.get('ASAAS_WEBHOOK_TOKEN_SANDBOX'),
@@ -127,7 +136,7 @@ function createSupabaseWebhookRepo(
       if (isUuid(externalReference)) {
         const { data: byId } = await supabase
           .from('orders')
-          .select('id, user_id, course_id, status, asaas_payment_id, paid_at')
+          .select('id, user_id, course_id, status, amount_cents, asaas_customer_id, asaas_payment_id, paid_at')
           .eq('id', externalReference.trim())
           .maybeSingle();
         if (byId) return byId as OrderRecord;
@@ -135,7 +144,7 @@ function createSupabaseWebhookRepo(
 
       const { data: byPaymentOnOrder } = await supabase
         .from('orders')
-        .select('id, user_id, course_id, status, asaas_payment_id, paid_at')
+        .select('id, user_id, course_id, status, amount_cents, asaas_customer_id, asaas_payment_id, paid_at')
         .eq('asaas_payment_id', asaasPaymentId)
         .maybeSingle();
       if (byPaymentOnOrder) return byPaymentOnOrder as OrderRecord;
@@ -149,7 +158,7 @@ function createSupabaseWebhookRepo(
       if (paymentRow?.order_id) {
         const { data: byPaymentTable } = await supabase
           .from('orders')
-          .select('id, user_id, course_id, status, asaas_payment_id, paid_at')
+          .select('id, user_id, course_id, status, amount_cents, asaas_customer_id, asaas_payment_id, paid_at')
           .eq('id', paymentRow.order_id)
           .maybeSingle();
         if (byPaymentTable) return byPaymentTable as OrderRecord;
@@ -240,7 +249,8 @@ function createSupabaseWebhookRepo(
         return;
       }
 
-      if (revokeAccess && existing?.id && existing.status !== 'completed') {
+      // Reembolso/estorno/chargeback revoga a matrícula inclusive se já estiver completed (preserva histórico)
+      if (revokeAccess && existing?.id) {
         await supabase
           .from('student_enrollments')
           .update({
@@ -308,15 +318,16 @@ Deno.serve(async (req: Request) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')?.trim() || '';
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.trim() || '';
+    const environment = resolveEnvironment();
     const supabase = createSupabaseAdminClient();
     const repo = createSupabaseWebhookRepo(supabase, { supabaseUrl, serviceRoleKey });
-    const expectedToken = readWebhookSecurityToken();
+    const expectedToken = readWebhookSecurityToken(environment);
     const providedToken = req.headers.get('asaas-access-token');
 
     if (jsonParseFailed) {
       const nowIso = new Date().toISOString();
       const logId = await repo.createWebhookLog?.({
-        environment: 'sandbox',
+        environment,
         eventId: null,
         eventType: null,
         asaasPaymentId: null,
@@ -346,7 +357,7 @@ Deno.serve(async (req: Request) => {
       providedToken,
       expectedToken,
       requestHeaders: req.headers,
-      environment: 'sandbox',
+      environment,
       repo,
     });
 

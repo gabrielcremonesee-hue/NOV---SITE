@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { ChefHat, Send, Trash2, X, Zap } from 'lucide-react';
 import { MEDIA } from '../data/mediaAssets';
+import { getOrCreateClientSessionId } from '../utils/supabase/courseSync';
 
 interface ChatMessage {
   id: string;
@@ -115,7 +116,10 @@ export default function ChefChatWidget() {
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-fervec-session-id': getOrCreateClientSessionId(),
+        },
         body: JSON.stringify({
           messages: apiMessages,
           mode,

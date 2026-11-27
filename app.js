@@ -78,7 +78,7 @@ import {
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
 
-const BOOK_URL = 'assets/fervec-massa-italiana.pdf';
+const BOOK_URL = '/api/library/book';
 const CHEF_AVATAR_URL = '/assets/aistudio/WhatsApp_Image_2026-11-13_at_20.05.56__1__d8e41516.jpeg';
 const LAB_KITCHEN_IMG_URL = '/src/assets/images/fervec_lab_kitchen_1795252127456.jpg';
 const DEFAULT_BOOKMARK_RIBBON_URL = 'uploads/WhatsApp_Image_2026-11-19_at_06.24.24.jpeg';
@@ -132,12 +132,9 @@ const _autostartParam = new URLSearchParams(location.search).get('autostart');
 const _portalEmbedded = Boolean(window.__fervecPortalEmbedded);
 const _portalInitAction = window.__fervecLibraryInitialAction || 'default';
 const _savedSession = _autostartParam === 'demo' || _autostartParam === '1' ? null : readSavedSession(localStorage);
-const _bootAuthUser =
-  _autostartParam === 'auth'
-    ? { id: 'test-user', name: 'Chef Convidado', email: 'chef@fervec.com' }
-    : _savedSession;
+const _bootAuthUser = _savedSession;
 const _wantsExplicitAuth = _portalEmbedded && (_portalInitAction === 'auth-login' || _portalInitAction === 'auth-register');
-const _initialAuthMode = _bootAuthUser ? 'user' : _autostartParam || (_portalEmbedded && !_wantsExplicitAuth) ? 'demo' : 'none';
+const _initialAuthMode = _bootAuthUser ? 'user' : _autostartParam === 'demo' || (_portalEmbedded && !_wantsExplicitAuth) ? 'demo' : 'none';
 const _initialView = _initialAuthMode === 'none' ? 'login' : 'app';
 
 const state = {
@@ -1236,9 +1233,6 @@ function playChefWelcomeChime() {
 
 let activeTtsAudio = null;
 let activeTtsUrl = '';
-let micMediaRecorder = null;
-let micRecordingStream = null;
-let isMicFallbackRecording = false;
 
 function stopActiveTtsAudio() {
   if (activeTtsAudio) {
@@ -1304,116 +1298,13 @@ async function speakWithGeminiTts(text, voiceName = state.voiceName || 'Antonio'
       audio.playbackRate = mimeType.includes('mpeg') ? 1 : Math.min(1.25, Math.max(0.75, rateNum));
       if ('preservesPitch' in audio) audio.preservesPitch = true;
       activeTtsAudio = audio;
-      audio.onended = () => {
-        if (resumeHandsFree && typeof speechCtrl?.start === 'function') {
-          speechCtrl.start({ handsFree: true });
-        }
-      };
+      audio.onended = () => {};
       await audio.play();
       return true;
     }
   } catch {}
 
-  return speechCtrl.speakResponse(clean, { resumeHandsFree });
-}
-
-async function toggleMicFallbackRecording() {
-  if (isDemoMode()) {
-    redirectToRegister();
-    return;
-  }
-  if (isMicFallbackRecording && micMediaRecorder) {
-    try {
-      micMediaRecorder.stop();
-    } catch {}
-    isMicFallbackRecording = false;
-    state.speechListening = false;
-    state.speechInterim = 'Transcrevendo sua fala…';
-    updateSpeechUI();
-    return;
-  }
-  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-    toast('Microfone indisponível neste navegador. Use a caixa de texto.', true);
-    return;
-  }
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    micRecordingStream = stream;
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : MediaRecorder.isTypeSupported('audio/webm')
-        ? 'audio/webm'
-        : '';
-    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-    micMediaRecorder = recorder;
-    const chunks = [];
-    recorder.ondataavailable = (ev) => {
-      if (ev.data && ev.data.size > 0) chunks.push(ev.data);
-    };
-    recorder.onstop = async () => {
-      try {
-        micRecordingStream?.getTracks().forEach((t) => t.stop());
-      } catch {}
-      micRecordingStream = null;
-      micMediaRecorder = null;
-      isMicFallbackRecording = false;
-      state.speechListening = false;
-      const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-      if (!blob.size) {
-        state.speechInterim = '';
-        updateSpeechUI();
-        return;
-      }
-      state.speechInterim = 'Transcrevendo áudio com o Chef…';
-      updateSpeechUI();
-      try {
-        const reader = new FileReader();
-        const base64 = await new Promise((resolve, reject) => {
-          reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
-        const res = await fetch('/api/transcribe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ audioBase64: base64, mimeType: blob.type || 'audio/webm' }),
-        });
-        const data = await res.json().catch(() => ({}));
-        state.speechInterim = '';
-        updateSpeechUI();
-        const transcript = String(data?.text || '').trim();
-        if (!res.ok || !transcript) {
-          toast(data?.error || 'Não consegui entender o áudio. Tente falar mais perto.', true);
-          return;
-        }
-        if (state.assistantTab === 'voice') {
-          const inp = document.querySelector('#voice-text-input');
-          if (inp) inp.value = transcript;
-          if (liveVoiceClient && state.voiceStatus === 'connected') {
-            liveVoiceClient.sendText(transcript);
-            if (inp) inp.value = '';
-          }
-        } else {
-          await sendChatPrompt(transcript, { speakReply: true });
-        }
-      } catch {
-        state.speechInterim = '';
-        updateSpeechUI();
-        toast('Erro ao transcrever o microfone.', true);
-      }
-    };
-    recorder.start();
-    isMicFallbackRecording = true;
-    state.speechListening = true;
-    state.speechInterim = 'Gravando sua fala… toque no microfone novamente para enviar.';
-    updateSpeechUI();
-  } catch {
-    isMicFallbackRecording = false;
-    state.speechListening = false;
-    state.speechInterim = '';
-    updateSpeechUI();
-    toast('Permissão do microfone negada ou indisponível.', true);
-  }
+  return speechCtrl.speakResponse(clean);
 }
 
 function playChefWelcomeAudio(speakGreeting = true) {
@@ -2162,8 +2053,20 @@ const activeRenderTasks = new WeakMap();
 async function ensurePDF() {
   if (state.pdf) return state.pdf;
   if (pdfLoading) return pdfLoading;
+  const headers = {};
+  const token = getSessionToken();
+  if (token) headers.Authorization = 'Bearer ' + token;
+  if (state.currentUser?.email) headers['x-fervec-user-email'] = state.currentUser.email;
+  try {
+    const sid = sessionStorage.getItem('fervec-client-session-id');
+    if (sid) headers['x-fervec-session-id'] = sid;
+  } catch {}
   pdfLoading = pdfjsLib
-    .getDocument(BOOK_URL)
+    .getDocument({
+      url: BOOK_URL,
+      httpHeaders: headers,
+      withCredentials: true,
+    })
     .promise.then((pdf) => {
       state.pdf = pdf;
       state.total = pdf.numPages;
@@ -2171,7 +2074,9 @@ async function ensurePDF() {
     })
     .catch((e) => {
       console.error(e);
-      toast('Não foi possível abrir o PDF original.', true);
+      pdfLoading = null;
+      state.pdf = null;
+      toast('Entre na sua conta com acesso liberado para visualizar o e-book.', true);
       throw e;
     });
   return pdfLoading;
@@ -3516,35 +3421,14 @@ const speechCtrl = createSpeechController({
 });
 
 function updateSpeechUI() {
-  const micBtn = document.querySelector('#speech-mic-btn');
-  const hfBtn = document.querySelector('#handsfree-toggle-btn');
-  const interimEl = document.querySelector('#speech-interim-bar');
-  if (micBtn) {
-    micBtn.classList.toggle('is-listening', state.speechListening);
-    micBtn.setAttribute('aria-pressed', state.speechListening ? 'true' : 'false');
-    micBtn.title = state.speechListening ? 'Parar escuta' : 'Falar pergunta pelo microfone';
-  }
-  if (hfBtn) {
-    hfBtn.classList.toggle('is-active', state.handsFreeMode);
-    hfBtn.classList.toggle('is-master-pill-active', state.handsFreeMode);
-    hfBtn.setAttribute('aria-pressed', state.handsFreeMode ? 'true' : 'false');
-    if (!hfBtn.classList.contains('interactive-hit')) {
-      hfBtn.textContent = state.handsFreeMode ? '🎙️ Mãos livres: Ativo' : '🎙️ Mãos livres na cozinha';
-    }
-  }
-  if (interimEl) {
-    const txt = state.speechInterim || (state.speechListening ? 'Ouvindo sua voz… pode falar com o Chefe.' : '');
-    interimEl.hidden = !txt;
-    interimEl.textContent = txt ? '🎤 ' + txt : '';
-  }
+  state.speechListening = false;
+  state.handsFreeMode = false;
+  state.speechInterim = '';
 }
 
 function assistantView() {
-  const isChat = state.assistantTab !== 'voice';
-  const isLive = state.voiceStatus === 'connected' || state.voiceStatus === 'connecting';
-  const speechActiveTxt =
-    state.speechInterim || (state.speechListening ? 'Ouvindo sua voz… pode falar com o Chefe.' : '');
-  const hasDynamicChat = state.chat.length > 0 || state.chatBusy || Boolean(speechActiveTxt);
+  state.assistantTab = 'chat';
+  const hasDynamicChat = state.chat.length > 0 || state.chatBusy;
 
   const voiceOpts = LIVE_VOICES.map(
     (v) =>
@@ -3556,71 +3440,17 @@ function assistantView() {
       escapeHtml(v.label) +
       '</option>'
   ).join('');
-  const statusLabel =
-    state.voiceStatus === 'connected'
-      ? 'Chefe ouvindo ao vivo'
-      : state.voiceStatus === 'connecting'
-        ? 'Chamando o Chefe…'
-        : state.voiceStatus === 'error'
-          ? 'Indisponível'
-          : 'Pronto para dialogar';
 
-  const voiceTabOverlay = !isChat
-    ? '<div class="master-parchment-panel assistant-master-voice-panel" style="top:50.2%;left:3.2%;width:93.6%;height:30.8%;padding:8px;display:flex;flex-direction:column;gap:5px;overflow:hidden">' +
-      '<div class="voice-controls-head"><div class="voice-status-badge is-' +
-      escapeHtml(state.voiceStatus) +
-      '" id="voice-status-badge">' +
-      appIcon('mic') +
-      '<span id="voice-status-label">' +
-      statusLabel +
-      '</span></div><div class="voice-select-wrap"><label for="voice-select">Timbre</label><select id="voice-select" ' +
-      (isLive ? 'disabled' : '') +
-      '>' +
-      voiceOpts +
-      '</select></div></div>' +
-      '<p class="voice-detail-text" id="voice-detail-text" style="margin:0;font-size:.78rem">' +
-      escapeHtml(state.voiceDetail) +
-      '</p>' +
-      '<div class="voice-meter"><div class="voice-meter-fill" id="voice-meter-fill" style="width:' +
-      Math.round((state.voiceLevel || 0) * 100) +
-      '%"></div></div>' +
-      '<div class="voice-primary-actions" style="display:flex;gap:6px"><button type="button" id="voice-toggle-btn" class="btn ' +
-      (isLive ? 'btn-danger' : 'btn-primary') +
-      ' btn-small" data-action="toggle-voice-session">' +
-      appIcon('mic') +
-      '<span>' +
-      (state.voiceStatus === 'connecting'
-        ? 'Cancelar chamada'
-        : isLive
-          ? 'Encerrar conversa'
-          : 'Converse com o Chefe') +
-      '</span></button><button type="button" class="btn btn-soft btn-small" data-action="clear-chat">Limpar</button></div>' +
-      '<div class="voice-transcripts" id="voice-transcripts" aria-live="polite" style="flex:1;overflow-y:auto;min-height:0"></div>' +
-      '<form id="voice-text-form" class="chat-input" style="padding:4px 0 0;border:0"><input id="voice-text-input" placeholder="Ou envie uma mensagem rápida…" autocomplete="off" required><button class="btn btn-outline btn-small" type="submit">Enviar</button></form>' +
-      '</div>'
-    : '';
-
-  const tabsIndicatorOverlay = !isChat
-    ? '<div class="assistant-mode-switch master-voice-tabs-cover" style="top:45.4%;left:3.0%;width:94.0%;height:4.4%" role="tablist">' +
-      '<button type="button" role="tab" aria-selected="false" class="assistant-mode-btn" data-action="switch-assistant-tab" data-tab="chat">✍️ Por Escrito</button>' +
-      '<button type="button" role="tab" aria-selected="true" class="assistant-mode-btn is-active" data-action="switch-assistant-tab" data-tab="voice">' +
-      appIcon('mic') +
-      '<span>Por Voz</span></button></div>'
-    : '';
-
-  const chatMessagesOverlay = isChat
-    ? '<div class="chat-messages master-chat-messages ' +
-      (hasDynamicChat ? 'is-populated' : '') +
-      '" id="chat-messages" style="top:61.0%;left:3.8%;width:92.4%;height:12.6%"></div>'
-    : '';
+  const chatMessagesOverlay =
+    '<div class="chat-messages master-chat-messages ' +
+    (hasDynamicChat ? 'is-populated' : '') +
+    '" id="chat-messages" style="top:61.0%;left:3.8%;width:92.4%;height:12.6%"></div>';
 
   return (
     '<div class="app-home-master-wrap">' +
     '<div class="master-image-canvas">' +
     '<img src="/assets/aistudio/WhatsApp_Image_2026-11-23_at_14.11.40_92455218.jpeg" alt="FerveC Gastronomia - Converse com o Chef" class="master-ref-img">' +
-    tabsIndicatorOverlay +
     chatMessagesOverlay +
-    voiceTabOverlay +
     '<div class="interactive-overlay-layer">' +
     masterSubpageChromeMarkup({
       menu: [0.8, 3.0, 6.8, 3.4],
@@ -3629,25 +3459,20 @@ function assistantView() {
       banner: [5.4, 75.0, 22.2, 3.1],
       bannerStrip: [4.4, 2.0, 96.0, 5.1],
     }) +
-    (isChat
-      ? '<button type="button" class="interactive-hit" style="top:45.8%;left:3.2%;width:48.2%;height:3.4%;border-radius:99px" data-action="switch-assistant-tab" data-tab="chat" aria-label="Por Escrito"></button>' +
-        '<button type="button" class="interactive-hit" style="top:45.8%;left:53.0%;width:44.0%;height:3.4%;border-radius:99px" data-action="switch-assistant-tab" data-tab="voice" aria-label="Por Voz"></button>' +
-        '<button type="button" id="handsfree-toggle-btn" class="interactive-hit" style="top:51.4%;left:3.2%;width:60.0%;height:4.2%;border-radius:99px" data-action="toggle-handsfree" aria-pressed="' +
-        (state.handsFreeMode ? 'true' : 'false') +
-        '" aria-label="Mãos livres na cozinha"></button>' +
-        '<button type="button" class="interactive-hit" style="top:51.6%;left:64.5%;width:32.5%;height:3.8%;border-radius:99px" data-action="clear-chat" aria-label="Limpar conversa"></button>' +
-        '<button type="button" class="interactive-hit" style="top:56.8%;left:3.2%;width:62.0%;height:3.3%;border-radius:99px" data-action="use-quick-prompt" data-prompt="Por que a minha massa rasga na hora de abrir?" aria-label="Pergunta rápida: Por que a minha massa rasga na hora de abrir?"></button>' +
-        '<button type="button" class="interactive-hit" style="top:56.8%;left:66.8%;width:30.2%;height:3.3%;border-radius:99px" data-action="use-quick-prompt" data-prompt="Qual o tempo ideal de descanso da massa?" aria-label="Pergunta rápida: Qual o tempo ideal de descanso da massa?"></button>' +
-        '<form id="chat-form" style="display:contents">' +
-        '<input id="chat-prompt" class="master-input" style="top:74.6%;left:4.2%;width:61.5%;height:3.7%" placeholder="Pergunte ao Chef…" autocomplete="off" required aria-label="Pergunte ao Chef">' +
-        '<button type="button" id="speech-mic-btn" class="interactive-hit ' +
-        (state.speechListening ? 'is-listening' : '') +
-        '" style="top:74.6%;left:67.0%;width:9.2%;height:3.7%;border-radius:8px" data-action="toggle-speech-input" aria-label="Falar pergunta por voz" aria-pressed="' +
-        (state.speechListening ? 'true' : 'false') +
-        '"></button>' +
-        '<button type="submit" class="interactive-hit" style="top:74.6%;left:77.2%;width:19.2%;height:3.7%;border-radius:8px" aria-label="Enviar pergunta"></button>' +
-        '</form>'
-      : '') +
+    '<button type="button" class="interactive-hit" style="top:45.8%;left:3.2%;width:48.2%;height:3.4%;border-radius:99px" data-action="switch-assistant-tab" data-tab="chat" aria-label="Chat por Escrito"></button>' +
+    '<div class="voice-select-wrap" style="position:absolute;top:45.8%;left:53.0%;width:44.0%;height:3.4%;display:flex;align-items:center;gap:4px;background:#f7ebd0;border-radius:99px;padding:0 10px;border:1px solid rgba(112,35,28,.25)">' +
+    '<label for="voice-select" style="font-size:.72rem;font-weight:700;color:#6d1b18;white-space:nowrap">Voz do Chef:</label>' +
+    '<select id="voice-select" style="flex:1;min-width:0;font-size:.74rem;background:transparent;border:0;color:#4a1c17;font-weight:600">' +
+    voiceOpts +
+    '</select></div>' +
+    '<button type="button" class="interactive-hit" style="top:51.4%;left:3.2%;width:60.0%;height:4.2%;border-radius:99px" data-action="play-chef-welcome" aria-label="Ouvir boas-vindas do Chefe"></button>' +
+    '<button type="button" class="interactive-hit" style="top:51.6%;left:64.5%;width:32.5%;height:3.8%;border-radius:99px" data-action="clear-chat" aria-label="Limpar conversa"></button>' +
+    '<button type="button" class="interactive-hit" style="top:56.8%;left:3.2%;width:62.0%;height:3.3%;border-radius:99px" data-action="use-quick-prompt" data-prompt="Por que a minha massa rasga na hora de abrir?" aria-label="Pergunta rápida: Por que a minha massa rasga na hora de abrir?"></button>' +
+    '<button type="button" class="interactive-hit" style="top:56.8%;left:66.8%;width:30.2%;height:3.3%;border-radius:99px" data-action="use-quick-prompt" data-prompt="Qual o tempo ideal de descanso da massa?" aria-label="Pergunta rápida: Qual o tempo ideal de descanso da massa?"></button>' +
+    '<form id="chat-form" style="display:contents">' +
+    '<input id="chat-prompt" class="master-input" style="top:74.6%;left:4.2%;width:71.8%;height:3.7%" placeholder="Escreva sua pergunta ao Chef…" autocomplete="off" required aria-label="Escreva sua pergunta ao Chef">' +
+    '<button type="submit" class="interactive-hit" style="top:74.6%;left:77.2%;width:19.2%;height:3.7%;border-radius:8px" aria-label="Enviar pergunta"></button>' +
+    '</form>' +
     '</div>' +
     '</div>' +
     '</div>'
@@ -3798,28 +3623,8 @@ function ensureLiveClient() {
 }
 
 async function toggleVoiceSession() {
-  const client = ensureLiveClient();
-  if (state.voiceStatus === 'connected' || state.voiceStatus === 'connecting') {
-    await client.stop();
-    return;
-  }
-  state.voiceTranscripts = [];
-  renderVoiceTranscripts();
-  const systemInstruction = buildChatSystemInstruction({
-    roleId: 'chef-tutor',
-    page: state.page,
-    pageTitle: pageTitle(state.page),
-    pageText: state.pageText[state.page] || '',
-    includePageContext: state.chatIncludeContext,
-  });
-  try {
-    await client.start({ voiceName: state.voiceName, systemInstruction, withMic: true });
-  } catch (err) {
-    state.voiceStatus = 'error';
-    state.voiceDetail = err?.message || 'Não foi possível iniciar a conversa por voz.';
-    refreshVoiceStatusUI();
-    toast(state.voiceDetail, true);
-  }
+  state.assistantTab = 'chat';
+  toast('Entrada por microfone desativada. Envie sua dúvida por escrito e ouça o Chef!');
 }
 
 function progressView() {
@@ -4862,6 +4667,12 @@ function renderDelegatedAction(action, el) {
       exitBookFullscreen(false);
       speechCtrl?.stop();
       liveVoiceClient?.stop();
+      try {
+        state.pdf?.destroy?.();
+      } catch {}
+      state.pdf = null;
+      pdfLoading = null;
+      state.pageText = {};
       clearSavedSession(localStorage);
       state.speechListening = false;
       state.handsFreeMode = false;
@@ -4893,13 +4704,7 @@ function renderDelegatedAction(action, el) {
       break;
     }
     case 'switch-assistant-tab':
-      if (state.speechListening) {
-        speechCtrl?.stop();
-        state.speechListening = false;
-        state.handsFreeMode = false;
-        state.speechInterim = '';
-      }
-      state.assistantTab = el.dataset.tab === 'voice' ? 'voice' : 'chat';
+      state.assistantTab = 'chat';
       renderView();
       break;
     case 'set-chat-role':
@@ -4910,7 +4715,7 @@ function renderDelegatedAction(action, el) {
       break;
     case 'use-quick-prompt': {
       const p = el.dataset.prompt || '';
-      if (p) sendChatPrompt(p, { speakReply: state.handsFreeMode });
+      if (p) sendChatPrompt(p, { speakReply: false });
       break;
     }
     case 'play-chef-welcome':
@@ -4923,39 +4728,13 @@ function renderDelegatedAction(action, el) {
       state.voiceTranscripts = [];
       state.data.voiceTranscripts = [];
       persist();
-      if (state.assistantTab === 'voice') renderVoiceTranscripts();
-      else renderChat();
+      renderChat();
       toast('Conversa limpa.');
       break;
     case 'toggle-speech-input':
-      if (!speechCtrl.isSupported()) {
-        toggleMicFallbackRecording();
-      } else if (state.speechListening) {
-        speechCtrl.stop();
-        state.speechListening = false;
-        state.handsFreeMode = false;
-        updateSpeechUI();
-      } else {
-        speechCtrl.start({ handsFree: state.handsFreeMode });
-      }
-      break;
     case 'toggle-handsfree':
-      state.handsFreeMode = !state.handsFreeMode;
-      if (state.handsFreeMode) {
-        const started = speechCtrl.start({ handsFree: true });
-        if (!started) {
-          state.handsFreeMode = false;
-        } else {
-          toast('Modo mãos livres ativo! Pode falar com o Chefe enquanto cozinha.');
-        }
-      } else {
-        speechCtrl.stop();
-        state.speechListening = false;
-      }
-      updateSpeechUI();
-      break;
     case 'toggle-voice-session':
-      toggleVoiceSession();
+      toast('Entrada por microfone desativada. Digite sua pergunta ao Chefe.');
       break;
     case 'password': {
       const input = document.querySelector('#password');
@@ -5633,6 +5412,11 @@ document.addEventListener('change', (e) => {
   }
   if (e.target.id === 'voice-select') {
     state.voiceName = e.target.value || 'Antonio';
+    try {
+      const cfg = JSON.parse(localStorage.getItem('fervec-voice-config-v1') || '{}') || {};
+      cfg.voiceUri = 'neural:' + state.voiceName;
+      localStorage.setItem('fervec-voice-config-v1', JSON.stringify(cfg));
+    } catch {}
   }
   if (e.target.id === 'bookmark-image-input') {
     const file = e.target.files?.[0];

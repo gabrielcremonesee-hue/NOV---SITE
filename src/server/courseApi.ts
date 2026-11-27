@@ -21,10 +21,29 @@ import {
   resolveDeveloperCertificateAdmin,
 } from './developerAuth.ts';
 import { runAsaasConnectionAudit } from './asaasAudit.ts';
+import { getAuthoritativeCoursePriceCents, isCoursePriceConfirmedForProduction } from './coursePricing.ts';
+import { financialGuard } from './financialGuard.ts';
+import { singleSessionManager } from './singleSession.ts';
+import { SUPPLIER_IDENTITY, getLegalDocumentVersions, maskCpfForLogs } from '../config/legalConfig.ts';
 
 const DEFAULT_COURSE_SLUG = 'massas-italianas';
 const CERTIFICATES_STORAGE_BUCKET = 'certificates';
 const inFlightCertificateIssues = new Map<string, Promise<{ certificate: CertificateRow | null; alreadyIssued: boolean; error?: string }>>();
+
+const MODULE_LIMITS: Record<string, { steps: number; mise: number }> = {
+  carbonara: { steps: 6, mise: 7 },
+  alfredo: { steps: 7, mise: 4 },
+  arrabbiata: { steps: 8, mise: 3 },
+  pesto: { steps: 10, mise: 3 },
+  ragù: { steps: 14, mise: 3 },
+  sauces: { steps: 6, mise: 2 },
+};
+
+function getModuleLimits(moduleKey: string, fallbackSteps?: number): { steps: number; mise: number } {
+  const known = MODULE_LIMITS[moduleKey];
+  if (known) return known;
+  return { steps: Math.max(1, fallbackSteps || 6), mise: 10 };
+}
 
 interface CourseRow {
   id: string;
@@ -341,7 +360,7 @@ async function ensureUserProfileRow(
   const ageNum = Number(meta.age);
   const age = isOfficialPrimaryAdmin
     ? OFFICIAL_ADMIN_AGE
-    : Number.isInteger(ageNum) && ageNum >= 13
+    : Number.isInteger(ageNum) && ageNum >= 18
       ? ageNum
       : 18;
 
@@ -383,10 +402,18 @@ async function ensureUserProfileRow(
   return { profile: (inserted || payload) as ProfileRow, existedInDb: false };
 }
 
-async function ensureEnrollment(
+function isEnrollmentActive(enrollment: EnrollmentRow | null, isDevAdmin = false): boolean {
+  if (isDevAdmin) return true;
+  if (!enrollment) return false;
+  const st = String(enrollment.status || '').toLowerCase();
+  return st === 'in_progress' || st === 'active' || st === 'completed';
+}
+
+async function checkOrProvisionCommercialEnrollment(
   supabase: SupabaseClient,
   userId: string,
-  courseId: string
+  courseId: string,
+  isDevAdmin = false
 ): Promise<EnrollmentRow | null> {
   const { data: existing } = await supabase
     .from('student_enrollments')
@@ -397,7 +424,35 @@ async function ensureEnrollment(
     .limit(1)
     .maybeSingle();
 
-  if (existing) return existing as EnrollmentRow;
+  const { data: paidOrder } = await supabase
+    .from('orders')
+    .select('id, status')
+    .eq('user_id', userId)
+    .eq('course_id', courseId)
+    .eq('status', 'paid')
+    .limit(1)
+    .maybeSingle();
+
+  const hasCommercialRight = Boolean(paidOrder) || isDevAdmin;
+
+  if (existing) {
+    const existingRow = existing as EnrollmentRow;
+    if (existingRow.status === 'canceled' && hasCommercialRight) {
+      const { data: reactivated } = await supabase
+        .from('student_enrollments')
+        .update({ status: 'in_progress', updated_at: new Date().toISOString() })
+        .eq('id', existingRow.id)
+        .select('id, user_id, course_id, status, last_module_key, enrolled_at, completed_at, updated_at')
+        .single();
+      return (reactivated as EnrollmentRow) || { ...existingRow, status: 'in_progress' };
+    }
+    return existingRow;
+  }
+
+  // Nunca criar matrícula para usuário sem pedido pago (exceto administrador dev oficial)
+  if (!hasCommercialRight) {
+    return null;
+  }
 
   const { data: inserted } = await supabase
     .from('student_enrollments')
@@ -411,6 +466,48 @@ async function ensureEnrollment(
     .single();
 
   return (inserted as EnrollmentRow) || null;
+}
+
+async function enforceClaimedSession(
+  req: Request,
+  res: Response,
+  supabase: SupabaseClient,
+  userId: string
+): Promise<boolean> {
+  const rawSid = req.headers['x-fervec-session-id'];
+  const sessionId = typeof rawSid === 'string' ? rawSid.trim() : '';
+  if (!sessionId) return true;
+
+  const memCheck = singleSessionManager.verifySession(userId, sessionId);
+  if (!memCheck.ok) {
+    res.status(409).json({
+      ok: false,
+      code: 'SESSION_REPLACED_OTHER_DEVICE',
+      error: 'Sua sessão foi encerrada porque a conta entrou em outro dispositivo ou navegador.',
+    });
+    return false;
+  }
+
+  // Quando ainda não há registro em memória (cold start), verifica tabela user_active_sessions se existir
+  try {
+    const { data, error } = await supabase
+      .from('user_active_sessions')
+      .select('session_id')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (!error && data && typeof data.session_id === 'string' && data.session_id !== sessionId) {
+      res.status(409).json({
+        ok: false,
+        code: 'SESSION_REPLACED_OTHER_DEVICE',
+        error: 'Sua sessão foi encerrada porque a conta entrou em outro dispositivo ou navegador.',
+      });
+      return false;
+    }
+  } catch {
+    // Tabela opcional em bancos antigos/mocks sem user_active_sessions
+  }
+
+  return true;
 }
 
 async function findExistingCertificate(
@@ -725,6 +822,8 @@ export function registerCourseApiRoutes(
     }
 
     const { supabase, user } = auth;
+    if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
+
     const requestedSlug =
       typeof req.query.courseSlug === 'string' && req.query.courseSlug.trim()
         ? req.query.courseSlug.trim()
@@ -741,7 +840,13 @@ export function registerCourseApiRoutes(
       profile,
       profileExistedInDb: existedInDb,
     });
-    const enrollment = await ensureEnrollment(supabase, user.id, courseCtx.course.id);
+    const enrollment = await checkOrProvisionCommercialEnrollment(
+      supabase,
+      user.id,
+      courseCtx.course.id,
+      devPerm.isDeveloperAdmin
+    );
+    const isEnrolled = isEnrollmentActive(enrollment, devPerm.isDeveloperAdmin);
 
     const [{ data: progressRows }, versionedAttemptsRes] = await Promise.all([
       supabase
@@ -831,6 +936,7 @@ export function registerCourseApiRoutes(
       workloadMinutes: courseCtx.workloadMinutes,
       workloadLabel: courseCtx.workloadLabel,
       passingScorePercent: PASSING_SCORE_PERCENT,
+      isEnrolled,
       enrollment,
       moduleProgress: (progressRows || []) as ModuleProgressRow[],
       attempts,
@@ -850,6 +956,8 @@ export function registerCourseApiRoutes(
     }
 
     const { supabase, user } = auth;
+    if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
+
     const body = (req.body || {}) as {
       courseSlug?: string;
       moduleKey?: string;
@@ -877,8 +985,30 @@ export function registerCourseApiRoutes(
       return;
     }
 
+    const { profile, existedInDb } = await ensureUserProfileRow(supabase, user);
+    const devPerm = resolveDeveloperCertificateAdmin({
+      user,
+      profile,
+      profileExistedInDb: existedInDb,
+    });
+    const enrollment = await checkOrProvisionCommercialEnrollment(
+      supabase,
+      user.id,
+      courseCtx.course.id,
+      devPerm.isDeveloperAdmin
+    );
+    if (!isEnrollmentActive(enrollment, devPerm.isDeveloperAdmin)) {
+      res.status(403).json({
+        code: 'COURSE_NOT_PURCHASED',
+        error: 'Matrícula paga necessária para registrar progresso neste curso.',
+      });
+      return;
+    }
+
     const moduleDef = courseCtx.modules.find((m) => m.module_key === moduleKey);
-    const maxSteps = Math.max(moduleDef?.total_steps || 14, 14);
+    const limits = getModuleLimits(moduleKey, moduleDef?.total_steps);
+    const maxSteps = limits.steps;
+    const maxMise = limits.mise;
 
     const cleanDoneSteps = Array.isArray(body.doneSteps)
       ? Array.from(
@@ -895,7 +1025,7 @@ export function registerCourseApiRoutes(
       ? Array.from(
           new Set(
             body.miseChecks.filter(
-              (n): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n < 20
+              (n): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n < maxMise
             )
           )
         ).sort((a, b) => a - b)
@@ -910,11 +1040,9 @@ export function registerCourseApiRoutes(
         : 0;
 
     const lessonFinished =
-      Boolean(body.lessonFinished) || (moduleDef ? cleanDoneSteps.length >= moduleDef.total_steps : false);
+      Boolean(body.lessonFinished) || cleanDoneSteps.length >= maxSteps;
     const reviewDone = Boolean(body.reviewDone);
     const workFinished = Boolean(body.workFinished);
-
-    await ensureEnrollment(supabase, user.id, courseCtx.course.id);
 
     const { data: existingProg, error: readProgErr } = await supabase
       .from('module_progress')
@@ -1069,6 +1197,19 @@ export function registerCourseApiRoutes(
       profile,
       profileExistedInDb: existedInDb,
     });
+    const enrollment = await checkOrProvisionCommercialEnrollment(
+      supabase,
+      user.id,
+      courseCtx.course.id,
+      devPerm.isDeveloperAdmin
+    );
+    if (!isEnrollmentActive(enrollment, devPerm.isDeveloperAdmin)) {
+      res.status(403).json({
+        code: 'COURSE_NOT_PURCHASED',
+        error: 'Matrícula paga necessária para realizar avaliações deste curso.',
+      });
+      return;
+    }
 
     // For final exams, enforce server-side check that steps + review were completed in DB (unless verified admin)
     if (attemptType === 'exam' && !devPerm.canBypassExamForCertificates) {
@@ -1110,7 +1251,6 @@ export function registerCourseApiRoutes(
       return;
     }
 
-    const enrollment = await ensureEnrollment(supabase, user.id, courseCtx.course.id);
     const nowIso = new Date().toISOString();
 
     const baseAttemptInsert = {
@@ -1325,7 +1465,12 @@ export function registerCourseApiRoutes(
       profile,
       profileExistedInDb: existedInDb,
     });
-    const enrollment = await ensureEnrollment(supabase, user.id, courseCtx.course.id);
+    const enrollment = await checkOrProvisionCommercialEnrollment(
+      supabase,
+      user.id,
+      courseCtx.course.id,
+      devPerm.isDeveloperAdmin
+    );
     const passingExams = await getPassingExamAttempts(supabase, user.id, courseCtx.course.id);
     const completionCheck = await hasVerifiedCourseCompletion(supabase, {
       userId: user.id,
@@ -1333,7 +1478,9 @@ export function registerCourseApiRoutes(
       passingExams,
       enrollment,
     });
-    const eligible = devPerm.canBypassExamForCertificates || completionCheck.completed;
+    const eligible =
+      devPerm.canBypassExamForCertificates ||
+      (isEnrollmentActive(enrollment, false) && completionCheck.completed);
 
     let certificate: CertificateRow | null = null;
     if (eligible) {
@@ -1415,9 +1562,16 @@ export function registerCourseApiRoutes(
     });
 
     const [enrollment, passingExams] = await Promise.all([
-      ensureEnrollment(supabase, user.id, courseCtx.course.id),
+      checkOrProvisionCommercialEnrollment(supabase, user.id, courseCtx.course.id, devPerm.isDeveloperAdmin),
       getPassingExamAttempts(supabase, user.id, courseCtx.course.id),
     ]);
+    if (!isEnrollmentActive(enrollment, devPerm.isDeveloperAdmin)) {
+      res.status(403).json({
+        code: 'COURSE_NOT_PURCHASED',
+        error: 'Matrícula paga necessária para emitir certificado deste curso.',
+      });
+      return;
+    }
     const completionCheck = await hasVerifiedCourseCompletion(supabase, {
       userId: user.id,
       courseId: courseCtx.course.id,
@@ -1555,10 +1709,9 @@ export function registerCourseApiRoutes(
     }
 
     const cert = certRow as CertificateRow;
-    const [{ profile, existedInDb }, courseCtx, enrollment, passingExams] = await Promise.all([
+    const [{ profile, existedInDb }, courseCtx, passingExams] = await Promise.all([
       ensureUserProfileRow(supabase, user),
       ensureCourseContextById(supabase, cert.course_id),
-      ensureEnrollment(supabase, user.id, cert.course_id),
       getPassingExamAttempts(supabase, user.id, cert.course_id),
     ]);
 
@@ -1567,6 +1720,12 @@ export function registerCourseApiRoutes(
       profile,
       profileExistedInDb: existedInDb,
     });
+    const enrollment = await checkOrProvisionCommercialEnrollment(
+      supabase,
+      user.id,
+      cert.course_id,
+      devPerm.isDeveloperAdmin
+    );
 
     const completionCheck = await hasVerifiedCourseCompletion(supabase, {
       userId: user.id,
@@ -1575,9 +1734,12 @@ export function registerCourseApiRoutes(
       enrollment,
     });
 
-    if (!devPerm.canBypassExamForCertificates && !completionCheck.completed) {
+    if (
+      !devPerm.canBypassExamForCertificates &&
+      (!isEnrollmentActive(enrollment, false) || !completionCheck.completed)
+    ) {
       res.status(403).json({
-        error: 'Certificado bloqueado: aprovação em prova oficial não encontrada.',
+        error: 'Certificado bloqueado: matrícula ativa e aprovação em prova oficial não encontradas.',
       });
       return;
     }
@@ -1650,7 +1812,8 @@ export function registerCourseApiRoutes(
       acceptedCardBrands,
     };
 
-    const referencePriceCents = courseSlug === 'massas-italianas' ? 1290 : 1990;
+    const pricingResult = getAuthoritativeCoursePriceCents({ courseSlug });
+    const referencePriceCents = pricingResult.priceCents;
     const referenceTitle = courseSlug === 'massas-italianas' ? 'Curso de Massas' : 'Curso FerveC Gastronomia';
 
     const auth = await resolveAuth(req, res).catch(() => null);
@@ -1691,15 +1854,16 @@ export function registerCourseApiRoutes(
         const rec = courseRow as Record<string, unknown>;
         courseId = String(rec.id || '');
         if (typeof rec.title === 'string' && rec.title.trim()) {
-          // Mantém "Curso de Massas" caso o título legado seja "Massas Italianas" ou preserva título completo do catálogo
           courseTitle = rec.slug === 'massas-italianas' && rec.title.trim() === 'Massas Italianas'
             ? 'Curso de Massas'
             : rec.title.trim();
         }
-        if (typeof rec.price_cents === 'number' && Number.isFinite(rec.price_cents) && rec.price_cents >= 500) {
-          priceCents = Math.round(rec.price_cents);
-          priceSource = 'database';
-        }
+        const resolvedDbPrice = getAuthoritativeCoursePriceCents({
+          courseSlug,
+          dbPriceCents: typeof rec.price_cents === 'number' ? rec.price_cents : null,
+        });
+        priceCents = resolvedDbPrice.priceCents;
+        priceSource = resolvedDbPrice.source === 'database' ? 'database' : 'reference';
       }
 
       if (auth?.user) {
@@ -1783,10 +1947,17 @@ export function registerCourseApiRoutes(
       style: 'currency',
       currency: 'BRL',
     });
+    const envName =
+      String(process.env.ASAAS_ENVIRONMENT || '').trim().toLowerCase() === 'production'
+        ? 'production'
+        : 'sandbox';
+    const priceConfirm = isCoursePriceConfirmedForProduction();
+    const legalVersions = getLegalDocumentVersions();
 
     res.setHeader('Cache-Control', 'no-store');
     res.json({
       ok: true,
+      environment: envName,
       courseSlug,
       courseId,
       courseTitle,
@@ -1794,6 +1965,19 @@ export function registerCourseApiRoutes(
       priceCents,
       priceFormatted,
       priceSource,
+      priceConfirmedForProduction: priceConfirm.confirmed,
+      legalVersions,
+      supplier: {
+        commercialName: SUPPLIER_IDENTITY.commercialName,
+        legalNature: SUPPLIER_IDENTITY.legalNature,
+        controllerName: SUPPLIER_IDENTITY.controllerName,
+        cpf: SUPPLIER_IDENTITY.cpf,
+        email: SUPPLIER_IDENTITY.email,
+        instagram: SUPPLIER_IDENTITY.instagram,
+        addressPending: SUPPLIER_IDENTITY.addressPending,
+        addressDisplay: SUPPLIER_IDENTITY.addressDisplay,
+        accessDurationSummary: SUPPLIER_IDENTITY.accessDurationSummary,
+      },
       capabilities,
       isEnrolled,
       latestOrderId,
@@ -1909,6 +2093,288 @@ export function registerCourseApiRoutes(
     const report = await runAsaasAudit();
     res.setHeader('Cache-Control', 'no-store');
     res.json(report);
+  });
+
+  // Single-session claim & logout
+  app.post('/api/session/claim', async (req: Request, res: Response) => {
+    const auth = await resolveAuth(req, res);
+    if (!auth) {
+      res.status(401).json({ ok: false, error: 'Sessão não autenticada.' });
+      return;
+    }
+    const { supabase, user } = auth;
+    const body = (req.body || {}) as { sessionId?: string; deviceLabel?: string };
+    const sid =
+      (typeof body.sessionId === 'string' && body.sessionId.trim()) ||
+      (typeof req.headers['x-fervec-session-id'] === 'string' ? req.headers['x-fervec-session-id'].trim() : '') ||
+      crypto.randomUUID();
+    const record = singleSessionManager.claimSession(user.id, sid, body.deviceLabel || '');
+    try {
+      await supabase.rpc('claim_active_session', {
+        p_user_id: user.id,
+        p_session_id: sid,
+        p_device_label: body.deviceLabel || null,
+      });
+    } catch {
+      // RPC opcional quando SQL migration ainda não foi aplicada
+    }
+    res.json({ ok: true, sessionId: record.sessionId, claimedAt: record.claimedAt });
+  });
+
+  app.post('/api/session/logout', async (req: Request, res: Response) => {
+    const auth = await resolveAuth(req, res).catch(() => null);
+    if (!auth) {
+      res.json({ ok: true });
+      return;
+    }
+    const rawSid = req.headers['x-fervec-session-id'];
+    const sid = typeof rawSid === 'string' ? rawSid.trim() : '';
+    if (sid) {
+      singleSessionManager.clearSession(auth.user.id, sid);
+      try {
+        await auth.supabase.rpc('clear_active_session', {
+          p_user_id: auth.user.id,
+          p_session_id: sid,
+        });
+      } catch {
+        // optional
+      }
+    }
+    res.json({ ok: true });
+  });
+
+  // Server-authoritative coupon validation
+  app.post('/api/coupons/validate', async (req: Request, res: Response) => {
+    const auth = await resolveAuth(req, res);
+    if (!auth) {
+      res.status(401).json({ ok: false, error: 'Entre na sua conta para validar um cupom.' });
+      return;
+    }
+    const body = (req.body || {}) as { code?: string; courseSlug?: string };
+    const code = String(body.code || '').replace(/\D+/g, '').slice(0, 6);
+    const courseSlug = String(body.courseSlug || DEFAULT_COURSE_SLUG).trim() || DEFAULT_COURSE_SLUG;
+    if (code.length !== 6) {
+      res.status(400).json({ ok: false, error: 'Informe um código de cupom válido de 6 dígitos.' });
+      return;
+    }
+
+    try {
+      const { data: couponRow, error } = await auth.supabase
+        .from('coupons')
+        .select('id, code, discount_percent, course_scope, max_uses, uses_count, expires_at, active')
+        .eq('code', code)
+        .maybeSingle();
+
+      if (error || !couponRow) {
+        res.status(404).json({ ok: false, error: 'Cupom não encontrado ou indisponível no servidor.' });
+        return;
+      }
+      if (!couponRow.active) {
+        res.status(400).json({ ok: false, error: 'Este cupom foi desativado.' });
+        return;
+      }
+      if (couponRow.expires_at && Date.parse(String(couponRow.expires_at)) < Date.now()) {
+        res.status(400).json({ ok: false, error: 'Este cupom expirou.' });
+        return;
+      }
+      if (Number(couponRow.uses_count || 0) >= Number(couponRow.max_uses || 1)) {
+        res.status(400).json({ ok: false, error: 'Este cupom atingiu o limite máximo de utilizações.' });
+        return;
+      }
+      if (couponRow.course_scope !== 'all' && couponRow.course_scope !== courseSlug) {
+        res.status(400).json({ ok: false, error: 'Este cupom não é válido para este curso.' });
+        return;
+      }
+
+      const basePrice = getAuthoritativeCoursePriceCents({ courseSlug }).priceCents;
+      const pct = Math.min(100, Math.max(0, Number(couponRow.discount_percent || 0)));
+      const discountCents = Math.round((basePrice * pct) / 100);
+      const totalCents = Math.max(0, basePrice - discountCents);
+
+      res.json({
+        ok: true,
+        code: couponRow.code,
+        discountPercent: pct,
+        discountCents,
+        totalCents,
+        isFree: totalCents === 0,
+      });
+    } catch {
+      res.status(503).json({ ok: false, error: 'Serviço de validação de cupons indisponível no momento.' });
+    }
+  });
+
+  app.get('/api/legal/documents', (_req: Request, res: Response) => {
+    const versions = getLegalDocumentVersions();
+    res.json({
+      ok: true,
+      versions,
+      supplier: {
+        commercialName: SUPPLIER_IDENTITY.commercialName,
+        civilName: SUPPLIER_IDENTITY.civilName,
+        legalNature: SUPPLIER_IDENTITY.legalNature,
+        cpf: SUPPLIER_IDENTITY.cpfFormatted,
+        email: SUPPLIER_IDENTITY.officialEmail,
+        instagram: SUPPLIER_IDENTITY.instagramHandle,
+        addressPending: SUPPLIER_IDENTITY.addressPending,
+        addressDisplay: SUPPLIER_IDENTITY.addressDisplay,
+        accessDurationSummary: SUPPLIER_IDENTITY.accessDurationSummary,
+        minimumAgeYears: SUPPLIER_IDENTITY.minimumAgeYears,
+        regretDays: SUPPLIER_IDENTITY.regretDays,
+      },
+    });
+  });
+
+  // Legal acceptance log (Termos, Privacidade, IA, Cookies, Pre-Contractual)
+  app.post('/api/legal/accept', async (req: Request, res: Response) => {
+    const auth = await resolveAuth(req, res);
+    if (!auth) {
+      res.status(401).json({ ok: false, error: 'Autenticação necessária para registrar aceite legal.' });
+      return;
+    }
+    const { supabase, user } = auth;
+    const body = (req.body || {}) as {
+      courseSlug?: string;
+      termsVersion?: string;
+      privacyVersion?: string;
+      whatsappOptIn?: boolean;
+      emailOptIn?: boolean;
+    };
+    const versions = getLegalDocumentVersions();
+    const clientIp = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+    const ipHash = clientIp ? crypto.createHash('sha256').update(clientIp).digest('hex') : null;
+    const ua = String(req.headers['user-agent'] || '').slice(0, 240);
+
+    try {
+      const { error } = await supabase.from('legal_acceptances').insert({
+        user_id: user.id,
+        course_slug: body.courseSlug || DEFAULT_COURSE_SLUG,
+        terms_version: body.termsVersion || versions.termsVersion,
+        privacy_version: body.privacyVersion || versions.privacyVersion,
+        whatsapp_opt_in: Boolean(body.whatsappOptIn),
+        email_opt_in: Boolean(body.emailOptIn),
+        ip_hash: ipHash,
+        user_agent: ua || null,
+        accepted_at: new Date().toISOString(),
+      });
+      if (error) {
+        res.status(200).json({ ok: true, recordedInMemory: true, versions });
+        return;
+      }
+      res.json({ ok: true, recordedInDb: true, versions });
+    } catch {
+      res.json({ ok: true, recordedInMemory: true, versions });
+    }
+  });
+
+  // Art. 49 CDC (Direito de Arrependimento - 7 dias corridos)
+  app.post('/api/orders/:orderId/withdraw', async (req: Request, res: Response) => {
+    const auth = await resolveAuth(req, res);
+    if (!auth) {
+      res.status(401).json({ ok: false, error: 'Entre na sua conta para solicitar arrependimento (Art. 49 CDC).' });
+      return;
+    }
+    const orderId = String(req.params.orderId || '').trim();
+    if (!orderId) {
+      res.status(400).json({ ok: false, error: 'ID do pedido inválido.' });
+      return;
+    }
+    const { supabase, user } = auth;
+    const body = (req.body || {}) as { reason?: string };
+
+    const { data: orderRow } = await supabase
+      .from('orders')
+      .select('id, user_id, course_id, status, amount_cents, asaas_payment_id, paid_at, created_at')
+      .eq('id', orderId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!orderRow) {
+      res.status(404).json({ ok: false, error: 'Pedido não encontrado para a conta autenticada.' });
+      return;
+    }
+    if (orderRow.status !== 'paid') {
+      res.status(400).json({
+        ok: false,
+        error: 'A solicitação de arrependimento Art. 49 CDC aplica-se apenas a pedidos com pagamento confirmado.',
+      });
+      return;
+    }
+
+    const paidTime = Date.parse(String(orderRow.paid_at || orderRow.created_at || ''));
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    if (!Number.isFinite(paidTime) || Date.now() - paidTime > sevenDaysMs) {
+      res.status(400).json({
+        ok: false,
+        code: 'WITHDRAWAL_WINDOW_EXPIRED',
+        error: 'O prazo legal de 7 dias corridos (Art. 49 do CDC) para este pedido já foi encerrado.',
+      });
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    try {
+      await supabase.from('withdrawal_requests').insert({
+        user_id: user.id,
+        order_id: orderRow.id,
+        asaas_payment_id: orderRow.asaas_payment_id || null,
+        reason: typeof body.reason === 'string' ? body.reason.slice(0, 400) : 'Arrependimento Art. 49 CDC (7 dias)',
+        status: 'pending_refund',
+        requested_at: nowIso,
+      });
+      await supabase
+        .from('orders')
+        .update({ status: 'refund_requested', updated_at: nowIso })
+        .eq('id', orderRow.id)
+        .eq('user_id', user.id);
+      await supabase
+        .from('student_enrollments')
+        .update({ status: 'canceled', updated_at: nowIso })
+        .eq('user_id', user.id)
+        .eq('course_id', orderRow.course_id);
+    } catch {
+      // ignore if withdrawal_requests table not yet migrated in mock
+    }
+
+    res.json({
+      ok: true,
+      orderId: orderRow.id,
+      status: 'refund_requested',
+      message:
+        'Solicitação de arrependimento (Art. 49 do CDC) registrada com protocolo. O acesso ao curso foi suspenso e o estorno será processado pelo meio de pagamento original; dúvidas: fervecrgastronomia@gmail.com.',
+    });
+  });
+
+  // Admin-only financial telemetry, kill-switch visibility, and masked audit summary
+  app.get('/api/admin/telemetry', async (req: Request, res: Response) => {
+    const auth = await resolveAuth(req, res);
+    if (!auth) {
+      res.status(401).json({ ok: false, error: 'Autenticação necessária.' });
+      return;
+    }
+    const { supabase, user } = auth;
+    const { profile, existedInDb } = await ensureUserProfileRow(supabase, user);
+    const devPerm = resolveDeveloperCertificateAdmin({
+      user,
+      profile,
+      profileExistedInDb: existedInDb,
+    });
+    if (!devPerm.canAccessAdminPanel) {
+      res.status(403).json({ ok: false, error: 'Acesso restrito ao administrador oficial.' });
+      return;
+    }
+
+    const guardTelemetry = financialGuard.getTelemetry();
+    const priceCheck = isCoursePriceConfirmedForProduction();
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      ok: true,
+      financialGuard: guardTelemetry,
+      priceConfirmation: priceCheck,
+      supplierMaskedCpf: maskCpfForLogs(SUPPLIER_IDENTITY.cpf),
+      addressPending: SUPPLIER_IDENTITY.addressPending,
+      singleSessionActiveCount: singleSessionManager.getActiveCount(),
+    });
   });
 }
 

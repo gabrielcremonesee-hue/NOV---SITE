@@ -19,6 +19,8 @@ import {
   ChefVoiceProfileConfig,
   CHEF_VOICE_TEST_PHRASE,
 } from '../utils/voiceProfile';
+import type { ServerAdminTelemetry } from '../utils/supabase/courseSync';
+import { SUPPLIER_IDENTITY } from '../config/legalConfig';
 
 const ADMIN_COURSES_CATALOG: Array<{
   slug: string;
@@ -95,6 +97,7 @@ export interface AdminDashboardRenderOptions {
   voiceTestPhrase: string;
   voiceStatusLabel: string;
   availableVoices: Array<{ voiceURI: string; name: string; lang: string }>;
+  serverTelemetry?: ServerAdminTelemetry | null;
 }
 
 function esc(v: unknown): string {
@@ -234,11 +237,60 @@ export function renderAdminDashboard(opts: AdminDashboardRenderOptions): string 
     voiceTestPhrase,
     voiceStatusLabel,
     availableVoices,
+    serverTelemetry = null,
   } = opts;
 
   const activeCouponsCount = coupons.filter((c) => getCouponComputedStatus(c) === 'active').length;
   const totalCouponUses = coupons.reduce((acc, c) => acc + c.usesCount, 0);
   const totalDiscountCents = demoOrders.reduce((acc, o) => acc + (o.discountCents || 0), 0);
+  const fg = serverTelemetry?.financialGuard;
+  const priceConf = serverTelemetry?.priceConfirmation;
+
+  const governanceCardHtml = `
+    <section class="fadmin-card">
+      <div class="fadmin-card-head">
+        <div>
+          <span class="fadmin-eyebrow">GOVERNANÇA FINANCEIRA, SEGURANÇA &amp; CONFORMIDADE (LGPD / CDC)</span>
+          <h2>Trava de Gastos IA, Sessão Única e Validação Comercial</h2>
+          <p>Controlador/Fornecedor: ${esc(SUPPLIER_IDENTITY.civilName)} (CPF mascarado em logs: ${esc(SUPPLIER_IDENTITY.cpfMasked)}) · Mínimo 18 anos · Microfone de aluno desativado permanentemente.</p>
+        </div>
+        <span class="fadmin-status-badge ${fg?.allowPaidAi ? 'is-amber' : 'is-active'}">${
+          fg?.allowPaidAi ? 'IA paga controlada' : 'Modo R$ 0 ativo (Kill Switch)'
+        }</span>
+      </div>
+      <div class="fadmin-integrations-grid">
+        <article class="fadmin-integ-card">
+          <div class="fadmin-course-head">
+            <strong>Trava Financeira IA / TTS</strong>
+            <span class="fadmin-status-badge ${fg?.allowPaidAi ? 'is-amber' : 'is-active'}">${
+              fg ? (fg.allowPaidAi ? 'Pago limitado' : 'R$ 0 Programado') : 'R$ 0 Local'
+            }</span>
+          </div>
+          <p>${
+            fg
+              ? `Gasto est. hoje: US$ ${fg.estimatedSpendUsd.toFixed(4)} / teto US$ ${fg.dailyBudgetUsd.toFixed(2)} · Locais: ${fg.localFallbackCallsToday} · Bloqueadas: ${fg.blockedCallsToday}`
+              : 'Kill switch padrão ativo no servidor (FERVEC_ALLOW_PAID_AI=false, FERVEC_ALLOW_EXTERNAL_TTS=false). 4 vozes masculinas do Chef preservadas via síntese neural local/navegador.'
+          }</p>
+        </article>
+        <article class="fadmin-integ-card">
+          <div class="fadmin-course-head">
+            <strong>Integridade de Preço &amp; Pendências Comerciais</strong>
+            <span class="fadmin-status-badge ${priceConf?.confirmed ? 'is-active' : 'is-amber'}">${
+              priceConf?.confirmed ? 'Preço confirmado' : 'Aguarda confirmação'
+            }</span>
+          </div>
+          <p>${esc(
+            priceConf?.note ||
+              'Divergência histórica R$ 12,00 vs R$ 12,90: aguardando FERVEC_PRICE_CONFIRMED=true e confirmação oficial de endereço físico e prazo de acesso.'
+          )}${
+            typeof serverTelemetry?.singleSessionActiveCount === 'number'
+              ? ` · Sessões únicas ativas: ${serverTelemetry.singleSessionActiveCount}`
+              : ''
+          }</p>
+        </article>
+      </div>
+    </section>
+  `;
 
   let mainSectionHtml = '';
 
@@ -354,6 +406,7 @@ export function renderAdminDashboard(opts: AdminDashboardRenderOptions): string 
           </button>
         </div>
       </section>
+      ${governanceCardHtml}
     `;
   } else if (activeTab === 'coupons') {
     mainSectionHtml = `
@@ -765,6 +818,7 @@ export function renderAdminDashboard(opts: AdminDashboardRenderOptions): string 
           ).join('')}
         </div>
       </section>
+      ${governanceCardHtml}
     `;
   }
 

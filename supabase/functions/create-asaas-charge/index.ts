@@ -3,16 +3,35 @@ import {
   AsaasCustomerInput,
   digitsOnly,
   isValidCpfOrCnpj,
+  resolveAsaasBaseUrl,
   resolveAsaasCapabilities,
-  resolveSandboxBaseUrl,
   validateCreateAsaasChargeBody,
 } from './validation.ts';
 
-const CORS_HEADERS: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-};
+function resolveCorsHeaders(req: Request): Record<string, string> {
+  const origin = (req.headers.get('Origin') || '').trim();
+  const allowRaw =
+    Deno.env.get('ALLOWED_ORIGINS') ||
+    Deno.env.get('FERVEC_SITE_URL') ||
+    Deno.env.get('APP_BASE_URL') ||
+    '';
+  const allowList = allowRaw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const allowedOrigin =
+    !origin || allowList.length === 0 || allowList.includes(origin)
+      ? origin || allowList[0] || 'https://fervecgastronomia.com.br'
+      : 'null';
+
+  return {
+    'Access-Control-Allow-Origin': allowedOrigin,
+    Vary: 'Origin',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  };
+}
 
 const REFERENCE_COURSE_PRICES_CENTS: Record<string, { title: string; priceCents: number }> = {
   'massas-italianas': {
@@ -21,26 +40,38 @@ const REFERENCE_COURSE_PRICES_CENTS: Record<string, { title: string; priceCents:
   },
 };
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, status = 200, corsHeaders?: Record<string, string>): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...CORS_HEADERS,
+      ...(corsHeaders || {
+        'Access-Control-Allow-Origin': 'https://fervecgastronomia.com.br',
+        'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      }),
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
     },
   });
 }
 
-function readAsaasSandboxApiKey(): string | null {
-  // Prioriza chaves explicitamente nomeadas para Sandbox para evitar uso acidental de produção
+function resolveEnvironment(): 'sandbox' | 'production' {
+  return Deno.env.get('ASAAS_ENVIRONMENT')?.trim().toLowerCase() === 'production'
+    ? 'production'
+    : 'sandbox';
+}
+
+function readAsaasApiKey(environment: 'sandbox' | 'production'): string | null {
+  if (environment === 'production') {
+    const prod = Deno.env.get('ASAAS_API_KEY')?.trim();
+    return prod || null;
+  }
   const candidates = [
     Deno.env.get('ASAAS_SANDBOX_API_KEY'),
     Deno.env.get('ASAAS_API_KEY_SANDBOX'),
     Deno.env.get('ASAAS_TEST_API_KEY'),
     Deno.env.get('ASAAS_API_KEY'),
   ];
-
   for (const candidate of candidates) {
     const trimmed = candidate?.trim();
     if (trimmed) return trimmed;
@@ -208,7 +239,7 @@ async function ensureAsaasSandboxCustomer(params: {
       cpfCnpj: params.customer.cpfCnpj,
       mobilePhone: params.customer.mobilePhone,
       externalReference: params.externalReference,
-      notificationDisabled: false,
+      notificationDisabled: true,
     }),
   });
 
@@ -218,7 +249,7 @@ async function ensureAsaasSandboxCustomer(params: {
   };
 
   if (!createRes.ok || !createdData.id) {
-    const detail = createdData?.errors?.[0]?.description || 'Falha ao registrar cliente no Asaas Sandbox.';
+    const detail = createdData?.errors?.[0]?.description || 'Falha ao registrar cliente no Asaas.';
     throw new Error(detail);
   }
 
@@ -226,10 +257,12 @@ async function ensureAsaasSandboxCustomer(params: {
 }
 
 Deno.serve(async (req: Request) => {
+  const corsHeaders = resolveCorsHeaders(req);
   if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 204, headers: CORS_HEADERS });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
+  const environment = resolveEnvironment();
   const capabilities = resolveAsaasCapabilities((name) => Deno.env.get(name));
   const serviceSupabase = getServiceSupabaseClient();
 
@@ -278,28 +311,49 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    return jsonResponse({
-      ok: true,
-      environment: 'sandbox',
-      course,
-      capabilities,
-      order: orderSummary,
-    });
+    return jsonResponse(
+      {
+        ok: true,
+        environment,
+        course,
+        capabilities,
+        order: orderSummary,
+      },
+      200,
+      corsHeaders
+    );
   }
 
   if (req.method !== 'POST') {
-    return jsonResponse({ ok: false, error: 'Método não permitido. Utilize GET ou POST.' }, 405);
+    return jsonResponse({ ok: false, error: 'Método não permitido. Utilize GET ou POST.' }, 405, corsHeaders);
   }
 
-  const apiKey = readAsaasSandboxApiKey();
+  if (
+    environment === 'production' &&
+    Deno.env.get('FERVEC_PRICE_CONFIRMED')?.trim().toLowerCase() !== 'true'
+  ) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'PRICE_CONFIRMATION_REQUIRED',
+        error:
+          'Cobranças em produção bloqueadas até a confirmação formal do preço oficial pelo proprietário (FERVEC_PRICE_CONFIRMED=true).',
+      },
+      403,
+      corsHeaders
+    );
+  }
+
+  const apiKey = readAsaasApiKey(environment);
   if (!apiKey) {
     return jsonResponse(
       {
         ok: false,
         error:
-          'Chave do Asaas Sandbox não encontrada nos Secrets do Supabase (configure ASAAS_SANDBOX_API_KEY).',
+          'Chave do Asaas não encontrada nos Secrets do Supabase.',
       },
-      500
+      500,
+      corsHeaders
     );
   }
 
@@ -307,7 +361,8 @@ Deno.serve(async (req: Request) => {
   if (!user) {
     return jsonResponse(
       { ok: false, error: 'Usuário não autenticado. Envie um token de sessão Supabase válido.' },
-      401
+      401,
+      corsHeaders
     );
   }
 
@@ -357,19 +412,66 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  if (serviceSupabase) {
+    const { data: ageRow } = await serviceSupabase
+      .from('profiles')
+      .select('age')
+      .eq('id', user.id)
+      .maybeSingle();
+    if (ageRow && typeof ageRow.age === 'number' && ageRow.age < 18) {
+      return jsonResponse(
+        {
+          ok: false,
+          code: 'AGE_18_REQUIRED',
+          error: 'Contratação e pagamento disponíveis exclusivamente para maiores de 18 anos.',
+        },
+        403,
+        corsHeaders
+      );
+    }
+  }
+
   // Resolve valor autoritativo no servidor/banco de dados, nunca confiando em preço enviado pelo navegador
   const authoritativeCourse = await resolveCourseAuthoritativePrice(serviceSupabase, payload.courseSlug);
   if (!authoritativeCourse) {
     return jsonResponse(
       { ok: false, error: `Curso '${payload.courseSlug}' não encontrado para cobrança.` },
-      404
+      404,
+      corsHeaders
     );
   }
 
-  const authoritativeValue = Math.round(authoritativeCourse.priceCents) / 100;
-  const authoritativeValueCents = authoritativeCourse.priceCents;
+  let authoritativeValueCents = authoritativeCourse.priceCents;
+  if (payload.couponCode && serviceSupabase) {
+    const { data: couponRow } = await serviceSupabase
+      .from('coupons')
+      .select('id, discount_percent, course_scope, max_uses, uses_count, expires_at, active')
+      .eq('code', payload.couponCode)
+      .maybeSingle();
 
-  const baseUrl = resolveSandboxBaseUrl(Deno.env.get('ASAAS_SANDBOX_URL'));
+    if (
+      !couponRow ||
+      !couponRow.active ||
+      (couponRow.expires_at && Date.parse(String(couponRow.expires_at)) < Date.now()) ||
+      Number(couponRow.uses_count || 0) >= Number(couponRow.max_uses || 1) ||
+      (couponRow.course_scope !== 'all' && couponRow.course_scope !== payload.courseSlug)
+    ) {
+      return jsonResponse(
+        { ok: false, error: 'Cupom promocional inválido, expirado ou esgotado.' },
+        400,
+        corsHeaders
+      );
+    }
+    const pct = Math.min(100, Math.max(0, Number(couponRow.discount_percent || 0)));
+    const discountCents = Math.round((authoritativeValueCents * pct) / 100);
+    authoritativeValueCents = Math.max(0, authoritativeValueCents - discountCents);
+  }
+
+  const authoritativeValue = Math.round(authoritativeValueCents) / 100;
+  const baseUrl = resolveAsaasBaseUrl(
+    environment,
+    environment === 'production' ? Deno.env.get('ASAAS_API_URL') : Deno.env.get('ASAAS_SANDBOX_URL')
+  );
 
   try {
     const profileCustomer = await resolveCustomerFromProfile(serviceSupabase, user);
@@ -520,7 +622,7 @@ Deno.serve(async (req: Request) => {
     return jsonResponse(
       {
         ok: true,
-        environment: 'sandbox',
+        environment,
         orderId: createdOrderId,
         course: authoritativeCourse,
         capabilities,

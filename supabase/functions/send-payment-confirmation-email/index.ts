@@ -8,17 +8,38 @@ import {
   validateSendPaymentEmailBody,
 } from './logic.ts';
 
-const CORS_HEADERS: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-internal-secret',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-};
+function resolveCorsHeaders(req: Request): Record<string, string> {
+  const origin = (req.headers.get('Origin') || '').trim();
+  const allowRaw =
+    Deno.env.get('ALLOWED_ORIGINS') ||
+    Deno.env.get('FERVEC_SITE_URL') ||
+    Deno.env.get('APP_BASE_URL') ||
+    '';
+  const allowList = allowRaw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const allowedOrigin =
+    !origin || allowList.length === 0 || allowList.includes(origin)
+      ? origin || allowList[0] || 'https://fervecgastronomia.com.br'
+      : 'null';
+  return {
+    'Access-Control-Allow-Origin': allowedOrigin,
+    Vary: 'Origin',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-internal-secret',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  };
+}
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, status = 200, corsHeaders?: Record<string, string>): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...CORS_HEADERS,
+      ...(corsHeaders || {
+        'Access-Control-Allow-Origin': 'https://fervecgastronomia.com.br',
+        'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-internal-secret',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      }),
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
     },
@@ -26,8 +47,9 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 Deno.serve(async (req: Request) => {
+  const corsHeaders = resolveCorsHeaders(req);
   if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 204, headers: CORS_HEADERS });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   if (req.method !== 'POST' && req.method !== 'GET') {

@@ -111,7 +111,25 @@ export function parseBirthDate(dateStr: string): Date | null {
   return dt;
 }
 
-export function calculateAge(dateStr: string, now: Date = new Date()): number | null {
+export function getSaoPauloCivilDate(date: Date = new Date()): Date {
+  try {
+    const formatted = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(formatted);
+    if (match) {
+      return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    }
+  } catch {
+    // Fallback to local date when Intl timezone data is unavailable
+  }
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+export function calculateAge(dateStr: string, now: Date = getSaoPauloCivilDate()): number | null {
   const dt = parseBirthDate(dateStr);
   if (!dt) return null;
   if (dt.getTime() > now.getTime()) return null;
@@ -141,7 +159,7 @@ export function validateEmail(email: string): boolean {
 
 export function validateProfileForm(
   values: ProfileFormValues,
-  now: Date = new Date()
+  now: Date = getSaoPauloCivilDate()
 ): ProfileValidationErrors {
   const errors: ProfileValidationErrors = {};
 
@@ -159,8 +177,8 @@ export function validateProfileForm(
   const computedAge = calculateAge(values.birthDate, now);
   if (!parsedBirth || computedAge === null) {
     errors.birthDate = 'Informe uma data válida no formato DD/MM/AAAA.';
-  } else if (computedAge < 13) {
-    errors.birthDate = 'É necessário ter pelo menos 13 anos para criar conta.';
+  } else if (computedAge < 18) {
+    errors.birthDate = 'É necessário ter pelo menos 18 anos para criar conta.';
   } else if (computedAge > 115) {
     errors.birthDate = 'Verifique o ano de nascimento informado.';
   }
@@ -170,8 +188,8 @@ export function validateProfileForm(
   }
 
   const selectedAge = Number(values.age);
-  if (!values.age || !Number.isInteger(selectedAge) || selectedAge < 13 || selectedAge > 115) {
-    errors.age = 'Selecione sua idade.';
+  if (!values.age || !Number.isInteger(selectedAge) || selectedAge < 18 || selectedAge > 115) {
+    errors.age = 'Selecione uma idade válida (mínimo 18 anos).';
   }
 
   const dddDigits = digitsOnly(values.ddd);
