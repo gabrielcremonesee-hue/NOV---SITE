@@ -172,11 +172,22 @@ async function resolveCustomerFromProfile(
   user: { id: string; email?: string }
 ): Promise<{ customerId?: string; customer?: AsaasCustomerInput }> {
   if (!serviceSupabase) return {};
-  const { data: profile } = await serviceSupabase
+  let { data: profile, error } = await serviceSupabase
     .from('profiles')
-    .select('full_name, email, cpf_masked, ddd, phone, asaas_customer_id')
+    .select(
+      'full_name, email, cpf_masked, ddd, phone, asaas_customer_id, postal_code, street, street_number, complement, neighborhood, city, state'
+    )
     .eq('id', user.id)
     .maybeSingle();
+
+  if (error) {
+    const legacy = await serviceSupabase
+      .from('profiles')
+      .select('full_name, email, cpf_masked, ddd, phone, asaas_customer_id')
+      .eq('id', user.id)
+      .maybeSingle();
+    profile = legacy.data as typeof profile;
+  }
 
   if (!profile) return {};
 
@@ -189,6 +200,11 @@ async function resolveCustomerFromProfile(
   const email = (typeof profile.email === 'string' ? profile.email.trim().toLowerCase() : '') || user.email || '';
   const cpfRaw = digitsOnly(profile.cpf_masked);
   const mobilePhone = digitsOnly(`${profile.ddd ?? ''}${profile.phone ?? ''}`);
+  const postalCode = digitsOnly(profile.postal_code);
+  const address = typeof profile.street === 'string' ? profile.street.trim() : '';
+  const addressNumber = typeof profile.street_number === 'string' ? profile.street_number.trim() : '';
+  const complement = typeof profile.complement === 'string' ? profile.complement.trim() : '';
+  const province = typeof profile.neighborhood === 'string' ? profile.neighborhood.trim() : '';
 
   if (name.length >= 3 && email && isValidCpfOrCnpj(cpfRaw)) {
     return {
@@ -198,6 +214,11 @@ async function resolveCustomerFromProfile(
         email,
         cpfCnpj: cpfRaw,
         ...(mobilePhone.length >= 10 && mobilePhone.length <= 11 ? { mobilePhone } : {}),
+        ...(postalCode.length === 8 ? { postalCode } : {}),
+        ...(address ? { address } : {}),
+        ...(addressNumber ? { addressNumber } : {}),
+        ...(complement ? { complement } : {}),
+        ...(province ? { province } : {}),
       },
     };
   }
@@ -238,6 +259,11 @@ async function ensureAsaasSandboxCustomer(params: {
       email: params.customer.email,
       cpfCnpj: params.customer.cpfCnpj,
       mobilePhone: params.customer.mobilePhone,
+      ...(params.customer.postalCode ? { postalCode: params.customer.postalCode } : {}),
+      ...(params.customer.address ? { address: params.customer.address } : {}),
+      ...(params.customer.addressNumber ? { addressNumber: params.customer.addressNumber } : {}),
+      ...(params.customer.complement ? { complement: params.customer.complement } : {}),
+      ...(params.customer.province ? { province: params.customer.province } : {}),
       externalReference: params.externalReference,
       notificationDisabled: true,
     }),
@@ -329,20 +355,30 @@ Deno.serve(async (req: Request) => {
   }
 
   if (environment === 'production') {
-    const priceConfirmed =
-      Deno.env.get('FERVEC_PRICE_CONFIRMED')?.trim().toLowerCase() === 'true';
-    const launchApproved =
+    if (Deno.env.get('FERVEC_PRICE_CONFIRMED')?.trim().toLowerCase() !== 'true') {
+      return jsonResponse(
+        {
+          ok: false,
+          code: 'PRICE_CONFIRMATION_REQUIRED',
+          error:
+            'Cobranças em produção bloqueadas até a confirmação formal do preço oficial pelo proprietário (FERVEC_PRICE_CONFIRMED=true).',
+        },
+        403,
+        corsHeaders
+      );
+    }
+
+    const commercialApproved =
       Deno.env.get('FERVEC_COMMERCIAL_LAUNCH_APPROVED')?.trim().toLowerCase() === 'true';
     const legalCleared =
       Deno.env.get('FERVEC_LEGAL_PENDING_CLEARED')?.trim().toLowerCase() === 'true';
-
-    if (!priceConfirmed || !launchApproved || !legalCleared) {
+    if (!commercialApproved || !legalCleared) {
       return jsonResponse(
         {
           ok: false,
           code: 'COMMERCIAL_LAUNCH_LOCKED',
           error:
-            'Cobranças em produção seguem bloqueadas até a liberação formal das pendências jurídicas (endereço físico, prazo de acesso) e aprovação comercial (FERVEC_PRICE_CONFIRMED=true, FERVEC_COMMERCIAL_LAUNCH_APPROVED=true e FERVEC_LEGAL_PENDING_CLEARED=true).',
+            'Checkout em produção bloqueado até liberação comercial e jurídica (FERVEC_COMMERCIAL_LAUNCH_APPROVED=true e FERVEC_LEGAL_PENDING_CLEARED=true).',
         },
         403,
         corsHeaders
@@ -378,7 +414,8 @@ Deno.serve(async (req: Request) => {
   } catch {
     return jsonResponse(
       { ok: false, error: 'Corpo da requisição inválido. Envie um JSON válido.' },
-      400
+      400,
+      corsHeaders
     );
   }
 
@@ -390,31 +427,32 @@ Deno.serve(async (req: Request) => {
         error: 'Dados inválidos para criação da cobrança.',
         errors: validation.errors,
       },
-      400
+      400,
+      corsHeaders
     );
   }
 
   const payload = validation.data;
+  const providerLabel = environment === 'production' ? 'Asaas' : 'Asaas Sandbox';
 
-  // Respeita exclusivamente as modalidades habilitadas e confirmadas na conta Asaas Sandbox
   if (payload.billingType === 'CREDIT_CARD' && !capabilities.creditCard) {
     return jsonResponse(
       {
         ok: false,
-        error:
-          'Pagamento no cartão de crédito não está habilitado nesta conta Asaas Sandbox. Escolha Pix ou Boleto bancário.',
+        error: `Pagamento no cartão de crédito não está habilitado nesta conta ${providerLabel}. Escolha Pix ou Boleto bancário.`,
       },
-      400
+      400,
+      corsHeaders
     );
   }
   if (payload.billingType === 'DEBIT_CARD' && !capabilities.debitCard) {
     return jsonResponse(
       {
         ok: false,
-        error:
-          'Pagamento no cartão de débito não está habilitado nesta conta Asaas Sandbox. Escolha Pix ou Boleto bancário.',
+        error: `Pagamento no cartão de débito não está habilitado nesta conta ${providerLabel}. Escolha Pix ou Boleto bancário.`,
       },
-      400
+      400,
+      corsHeaders
     );
   }
 
@@ -549,8 +587,7 @@ Deno.serve(async (req: Request) => {
         {
           ok: false,
           code: 'CUSTOMER_CPF_REQUIRED',
-          error:
-            'Informe seu CPF válido para registrar o comprador no Asaas Sandbox e gerar a cobrança.',
+          error: `Informe seu CPF válido para registrar o comprador no ${providerLabel} e gerar a cobrança.`,
         },
         400,
         corsHeaders
@@ -575,6 +612,7 @@ Deno.serve(async (req: Request) => {
 
     // Cria pedido local pendente antes de resgatar cupom / criar cobrança no Asaas
     let createdOrderId: string | null = null;
+    let couponRedeemedForOrder = false;
     if (serviceSupabase && authoritativeCourse.courseId) {
       const insertPayload: Record<string, unknown> = {
         user_id: user.id,
@@ -587,7 +625,7 @@ Deno.serve(async (req: Request) => {
         environment,
         ...(payload.idempotencyKey ? { idempotency_key: payload.idempotencyKey } : {}),
       };
-      const { data: orderData } = await serviceSupabase
+      const { data: orderData, error: orderInsertErr } = await serviceSupabase
         .from('orders')
         .insert(insertPayload)
         .select('id')
@@ -599,6 +637,52 @@ Deno.serve(async (req: Request) => {
           .from('orders')
           .update({ external_reference: createdOrderId })
           .eq('id', createdOrderId);
+      } else if (orderInsertErr && payload.idempotencyKey) {
+        const { data: racedOrder } = await serviceSupabase
+          .from('orders')
+          .select('id, status, asaas_payment_id')
+          .eq('user_id', user.id)
+          .eq('idempotency_key', payload.idempotencyKey)
+          .maybeSingle();
+
+        if (racedOrder?.id) {
+          if (racedOrder.asaas_payment_id) {
+            const { data: racedPayment } = await serviceSupabase
+              .from('payments')
+              .select('asaas_payment_id, status, billing_type, value_cents, due_date, invoice_url, bank_slip_url')
+              .eq('order_id', racedOrder.id)
+              .maybeSingle();
+
+            return jsonResponse(
+              {
+                ok: true,
+                idempotentReplay: true,
+                environment,
+                orderId: racedOrder.id,
+                course: authoritativeCourse,
+                capabilities,
+                payment: racedPayment
+                  ? {
+                      id: racedPayment.asaas_payment_id,
+                      orderId: racedOrder.id,
+                      status: racedPayment.status,
+                      billingType: racedPayment.billing_type,
+                      value:
+                        typeof racedPayment.value_cents === 'number'
+                          ? racedPayment.value_cents / 100
+                          : authoritativeValueCents / 100,
+                      dueDate: racedPayment.due_date,
+                      invoiceUrl: racedPayment.invoice_url,
+                      bankSlipUrl: racedPayment.bank_slip_url,
+                    }
+                  : null,
+              },
+              200,
+              corsHeaders
+            );
+          }
+          createdOrderId = String(racedOrder.id);
+        }
       }
     }
 
@@ -631,6 +715,7 @@ Deno.serve(async (req: Request) => {
         );
       }
 
+      couponRedeemedForOrder = true;
       const discountCents = Math.max(0, Number(redeemRow.discount_cents || 0));
       authoritativeValueCents = Math.max(0, Number(redeemRow.final_cents ?? authoritativeCourse.priceCents - discountCents));
 
@@ -684,8 +769,22 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    const rollbackPendingOrderAndCoupon = async () => {
+      if (!serviceSupabase || !createdOrderId) return;
+      await serviceSupabase
+        .from('orders')
+        .update({ status: 'canceled', updated_at: new Date().toISOString() })
+        .eq('id', createdOrderId);
+      if (couponRedeemedForOrder) {
+        await serviceSupabase
+          .rpc('release_coupon_redemption', { p_order_id: createdOrderId })
+          .catch(() => null);
+      }
+    };
+
     const authoritativeValue = Math.round(authoritativeValueCents) / 100;
     if (authoritativeValue < 5) {
+      await rollbackPendingOrderAndCoupon();
       return jsonResponse(
         {
           ok: false,
@@ -729,8 +828,9 @@ Deno.serve(async (req: Request) => {
     };
 
     if (!paymentRes.ok || !paymentData.id) {
+      await rollbackPendingOrderAndCoupon();
       const detail =
-        paymentData?.errors?.[0]?.description || 'Não foi possível criar a cobrança no Asaas Sandbox.';
+        paymentData?.errors?.[0]?.description || `Não foi possível criar a cobrança no ${providerLabel}.`;
       return jsonResponse({ ok: false, error: detail }, 502, corsHeaders);
     }
 
@@ -810,7 +910,7 @@ Deno.serve(async (req: Request) => {
       corsHeaders
     );
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Erro interno ao comunicar com o Asaas Sandbox.';
+    const message = err instanceof Error ? err.message : `Erro interno ao comunicar com o ${providerLabel}.`;
     return jsonResponse({ ok: false, error: message }, 502, corsHeaders);
   }
 });

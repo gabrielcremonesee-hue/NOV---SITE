@@ -1,4 +1,4 @@
-import { SUPPLIER_IDENTITY } from '../config/legalConfig';
+import { SUPPLIER_IDENTITY } from '../config/legalConfig.ts';
 
 export interface CoursePriceResolution {
   courseSlug: string;
@@ -16,14 +16,13 @@ export interface CoursePriceConfirmationStatus {
 }
 
 export interface ProductionLaunchLockStatus {
-  productionAllowed: boolean;
+  environment: 'production' | 'sandbox';
   priceConfirmed: boolean;
   commercialLaunchApproved: boolean;
   legalPendingCleared: boolean;
-  supplierAddressPending: boolean;
-  officialPriceCents: number;
+  addressPending: boolean;
+  productionCheckoutAllowed: boolean;
   blockers: string[];
-  summaryNote: string;
 }
 
 export const OFFICIAL_CONFIRMED_PRICES_CENTS: Record<string, number> = {
@@ -31,6 +30,10 @@ export const OFFICIAL_CONFIRMED_PRICES_CENTS: Record<string, number> = {
   'cozinha-francesa': 1990,
   'cozinha-japonesa': 1990,
   'cozinha-brasileira': 1990,
+};
+
+const DEFAULT_COURSE_PRICES_CENTS: Record<string, number> = {
+  ...OFFICIAL_CONFIRMED_PRICES_CENTS,
 };
 
 export function isCoursePriceConfirmedForProduction(
@@ -43,51 +46,51 @@ export function isCoursePriceConfirmedForProduction(
     envVarName: 'FERVEC_PRICE_CONFIRMED',
     note: confirmed
       ? null
-      : 'Defina FERVEC_PRICE_CONFIRMED=true para refletir o preço oficial de R$ 12,90 confirmado pelo proprietário.',
+      : 'Divergência histórica R$ 12,00 vs R$ 12,90: aguarda FERVEC_PRICE_CONFIRMED=true após confirmação do proprietário.',
   };
 }
 
 export function evaluateProductionLaunchLock(
-  env: Record<string, string | undefined> = typeof process !== 'undefined' ? process.env : {}
+  env: Record<string, string | undefined> = typeof process !== 'undefined' ? process.env : {},
+  opts?: { addressPending?: boolean }
 ): ProductionLaunchLockStatus {
+  const environment =
+    String(env.ASAAS_ENVIRONMENT ?? 'sandbox').trim().toLowerCase() === 'production'
+      ? 'production'
+      : 'sandbox';
   const priceConfirmed = isCoursePriceConfirmedForProduction(env).confirmed;
   const commercialLaunchApproved =
     String(env.FERVEC_COMMERCIAL_LAUNCH_APPROVED ?? 'false').trim().toLowerCase() === 'true';
   const legalPendingCleared =
     String(env.FERVEC_LEGAL_PENDING_CLEARED ?? 'false').trim().toLowerCase() === 'true';
-  const supplierAddressPending = Boolean(SUPPLIER_IDENTITY.addressPending);
+  const addressPending = opts?.addressPending ?? SUPPLIER_IDENTITY.addressPending;
 
   const blockers: string[] = [];
   if (!priceConfirmed) {
-    blockers.push('Confirmação formal de preço em ambiente (FERVEC_PRICE_CONFIRMED=true).');
+    blockers.push('FERVEC_PRICE_CONFIRMED não confirmado (preço oficial R$ 12,90).');
   }
-  if (!commercialLaunchApproved) {
-    blockers.push('Aprovação comercial de abertura em produção (FERVEC_COMMERCIAL_LAUNCH_APPROVED=false).');
+  if (addressPending) {
+    blockers.push('Endereço físico completo e política de expiração pendentes em legalConfig.');
   }
   if (!legalPendingCleared) {
-    blockers.push('Pendências jurídicas externas ainda não liberadas (FERVEC_LEGAL_PENDING_CLEARED=false).');
+    blockers.push('FERVEC_LEGAL_PENDING_CLEARED=false (pendências jurídicas/contratuais abertas).');
   }
-  if (supplierAddressPending) {
-    blockers.push('Endereço físico completo e prazo oficial de acesso pendentes de definição pelo titular.');
+  if (!commercialLaunchApproved) {
+    blockers.push('FERVEC_COMMERCIAL_LAUNCH_APPROVED=false (abertura comercial pública bloqueada).');
   }
 
-  const productionAllowed =
-    priceConfirmed &&
-    commercialLaunchApproved &&
-    legalPendingCleared &&
-    !supplierAddressPending;
+  const productionCheckoutAllowed =
+    environment !== 'production' ||
+    (priceConfirmed && commercialLaunchApproved && legalPendingCleared && !addressPending);
 
   return {
-    productionAllowed,
+    environment,
     priceConfirmed,
     commercialLaunchApproved,
     legalPendingCleared,
-    supplierAddressPending,
-    officialPriceCents: OFFICIAL_CONFIRMED_PRICES_CENTS['massas-italianas'],
+    addressPending,
+    productionCheckoutAllowed,
     blockers,
-    summaryNote: productionAllowed
-      ? 'Abertura comercial em produção liberada após validação completa.'
-      : 'Preço oficial confirmado em R$ 12,90 (1.290 centavos); venda comercial em produção mantida bloqueada até fechamento das pendências jurídicas e aprovação comercial.',
   };
 }
 
@@ -143,7 +146,7 @@ export function getAuthoritativeCoursePriceCents(
     };
   }
 
-  const priceCents = OFFICIAL_CONFIRMED_PRICES_CENTS[cleanSlug] ?? 1990;
+  const priceCents = DEFAULT_COURSE_PRICES_CENTS[cleanSlug] ?? 1990;
   return {
     courseSlug: cleanSlug,
     priceCents,

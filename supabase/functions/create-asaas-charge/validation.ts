@@ -17,6 +17,13 @@ export interface AsaasCustomerInput {
   email: string;
   cpfCnpj: string;
   mobilePhone?: string;
+  postalCode?: string;
+  address?: string;
+  addressNumber?: string;
+  complement?: string;
+  province?: string;
+  city?: string;
+  state?: string;
 }
 
 export interface CreateAsaasChargeInput {
@@ -272,6 +279,16 @@ export function validateCreateAsaasChargeBody(
       const email = typeof cust.email === 'string' ? cust.email.trim().toLowerCase() : '';
       const cpfCnpj = digitsOnly(cust.cpfCnpj);
       const mobilePhone = digitsOnly(cust.mobilePhone);
+      const postalCode = digitsOnly(cust.postalCode);
+      const address = typeof cust.address === 'string' ? cust.address.trim().replace(/\s+/g, ' ').slice(0, 160) : '';
+      const addressNumber =
+        typeof cust.addressNumber === 'string' ? cust.addressNumber.trim().replace(/\s+/g, ' ').slice(0, 20) : '';
+      const complement =
+        typeof cust.complement === 'string' ? cust.complement.trim().replace(/\s+/g, ' ').slice(0, 120) : '';
+      const province =
+        typeof cust.province === 'string' ? cust.province.trim().replace(/\s+/g, ' ').slice(0, 100) : '';
+      const city = typeof cust.city === 'string' ? cust.city.trim().replace(/\s+/g, ' ').slice(0, 100) : '';
+      const state = typeof cust.state === 'string' ? cust.state.trim().toUpperCase().slice(0, 2) : '';
 
       if (name.length < 3 || name.length > 120) {
         errors.push({
@@ -297,6 +314,12 @@ export function validateCreateAsaasChargeBody(
           message: 'Telefone celular deve conter DDD + número (10 ou 11 dígitos).',
         });
       }
+      if (postalCode && postalCode.length !== 8) {
+        errors.push({
+          field: 'customer.postalCode',
+          message: 'CEP do cliente deve conter 8 dígitos.',
+        });
+      }
 
       if (errors.length === 0) {
         normalizedCustomer = {
@@ -304,6 +327,13 @@ export function validateCreateAsaasChargeBody(
           email,
           cpfCnpj,
           ...(mobilePhone ? { mobilePhone } : {}),
+          ...(postalCode ? { postalCode } : {}),
+          ...(address ? { address } : {}),
+          ...(addressNumber ? { addressNumber } : {}),
+          ...(complement ? { complement } : {}),
+          ...(province ? { province } : {}),
+          ...(city ? { city } : {}),
+          ...(state ? { state } : {}),
         };
       }
     }

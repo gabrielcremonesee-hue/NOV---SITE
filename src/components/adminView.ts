@@ -245,13 +245,6 @@ export function renderAdminDashboard(opts: AdminDashboardRenderOptions): string 
   const totalDiscountCents = demoOrders.reduce((acc, o) => acc + (o.discountCents || 0), 0);
   const fg = serverTelemetry?.financialGuard;
   const priceConf = serverTelemetry?.priceConfirmation;
-  const launchLock = serverTelemetry?.launchLock;
-  const launchAllowed = Boolean(launchLock?.productionAllowed);
-  const priceText =
-    launchLock?.summaryNote ||
-    (priceConf?.confirmed
-      ? 'Preço oficial confirmado em R$ 12,90 (1.290 centavos); venda comercial em produção mantida bloqueada até fechamento das pendências jurídicas e aprovação comercial.'
-      : 'Preço oficial confirmado em R$ 12,90 (1.290 centavos); confirme FERVEC_PRICE_CONFIRMED=true e finalize pendências jurídicas (endereço físico e prazo de acesso) antes de liberar produção.');
 
   const governanceCardHtml = `
     <section class="fadmin-card">
@@ -281,12 +274,15 @@ export function renderAdminDashboard(opts: AdminDashboardRenderOptions): string 
         </article>
         <article class="fadmin-integ-card">
           <div class="fadmin-course-head">
-            <strong>Preço Oficial &amp; Trava Comercial</strong>
-            <span class="fadmin-status-badge ${launchAllowed ? 'is-active' : 'is-amber'}">${
-              launchAllowed ? 'Produção liberada' : 'R$ 12,90 · Produção bloqueada'
+            <strong>Integridade de Preço &amp; Pendências Comerciais</strong>
+            <span class="fadmin-status-badge ${priceConf?.confirmed ? 'is-active' : 'is-amber'}">${
+              priceConf?.confirmed ? 'Preço confirmado' : 'Aguarda confirmação'
             }</span>
           </div>
-          <p>${esc(priceText)}${
+          <p>${esc(
+            priceConf?.note ||
+              'Divergência histórica R$ 12,00 vs R$ 12,90: aguardando FERVEC_PRICE_CONFIRMED=true e confirmação oficial de endereço físico e prazo de acesso.'
+          )}${
             typeof serverTelemetry?.singleSessionActiveCount === 'number'
               ? ` · Sessões únicas ativas: ${serverTelemetry.singleSessionActiveCount}`
               : ''

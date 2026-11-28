@@ -50,6 +50,13 @@ export interface CustomerProfileHint {
   email?: string;
   ddd?: string;
   phone?: string;
+  cep?: string;
+  street?: string;
+  streetNumber?: string;
+  complement?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
 }
 
 export interface CoursePaymentSummary {
@@ -83,6 +90,13 @@ export interface CheckoutCustomerPayload {
   email: string;
   cpfCnpj: string;
   mobilePhone?: string;
+  postalCode?: string;
+  address?: string;
+  addressNumber?: string;
+  complement?: string;
+  province?: string;
+  city?: string;
+  state?: string;
 }
 
 export interface RequestAsaasChargeInput {
@@ -94,17 +108,18 @@ export interface RequestAsaasChargeInput {
   customer?: CheckoutCustomerPayload;
   externalReference?: string;
   couponCode?: string;
+  idempotencyKey?: string;
 }
 
 export interface RequestAsaasChargeOutcome {
   ok: boolean;
   environment?: string;
-  freeEnrollmentByCoupon?: boolean;
   reason?: 'already_processing' | 'unconfigured' | 'unauthenticated' | 'api_error' | 'network_error';
   errorCode?: string;
   error?: string;
   payment?: AsaasChargeResponsePayment;
   orderId?: string | null;
+  freeEnrollmentByCoupon?: boolean;
   capabilities?: AsaasCapabilities;
 }
 
@@ -182,7 +197,6 @@ export function mapAsaasStatusToUiStatus(
   if (
     ord === 'canceled' ||
     ord === 'refunded' ||
-    ord === 'refund_requested' ||
     pay === 'REFUNDED' ||
     pay === 'REFUND_REQUESTED' ||
     pay === 'CHARGEBACK_REQUESTED' ||
@@ -266,10 +280,9 @@ export async function fetchCoursePaymentSummary(
     const accessToken = await getToken().catch(() => null);
     const fetchImpl = deps?.fetchFn ?? fetch;
 
-    const sid = getOrCreateClientSessionId();
     const headers: Record<string, string> = {
       Accept: 'application/json',
-      ...(sid ? { 'x-fervec-session-id': sid } : {}),
+      'x-fervec-session-id': getOrCreateClientSessionId(),
     };
     if (accessToken) {
       headers.Authorization = `Bearer ${accessToken}`;
@@ -373,11 +386,6 @@ export async function fetchOrderPaymentStatus(
   uiStatus?: PaymentUiStatus;
   orderStatus?: string;
   isEnrolled?: boolean;
-  withdrawalStatus?: string | null;
-  protocolCode?: string | null;
-  refundProviderStatus?: string | null;
-  refundError?: string | null;
-  refundProcessedAt?: string | null;
   payment?: AsaasChargeResponsePayment | null;
   error?: string;
 }> {
@@ -392,24 +400,18 @@ export async function fetchOrderPaymentStatus(
     }
 
     const fetchImpl = deps?.fetchFn ?? fetch;
-    const sid = getOrCreateClientSessionId();
     const res = await fetchImpl(`/api/payments/status/${encodeURIComponent(orderId)}`, {
       method: 'GET',
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${accessToken}`,
-        ...(sid ? { 'x-fervec-session-id': sid } : {}),
+        'x-fervec-session-id': getOrCreateClientSessionId(),
       },
     });
     const data = (await res.json().catch(() => ({}))) as {
       ok?: boolean;
       orderStatus?: string;
       isEnrolled?: boolean;
-      withdrawalStatus?: string | null;
-      protocolCode?: string | null;
-      refundProviderStatus?: string | null;
-      refundError?: string | null;
-      refundProcessedAt?: string | null;
       payment?: AsaasChargeResponsePayment | null;
       error?: string;
     };
@@ -420,11 +422,6 @@ export async function fetchOrderPaymentStatus(
       ok: true,
       orderStatus: data.orderStatus,
       isEnrolled: Boolean(data.isEnrolled),
-      withdrawalStatus: data.withdrawalStatus ?? null,
-      protocolCode: data.protocolCode ?? null,
-      refundProviderStatus: data.refundProviderStatus ?? null,
-      refundError: data.refundError ?? null,
-      refundProcessedAt: data.refundProcessedAt ?? null,
       payment: data.payment ?? null,
       uiStatus: mapAsaasStatusToUiStatus(data.payment?.status, data.orderStatus, data.isEnrolled),
     };
@@ -481,7 +478,6 @@ export async function requestAsaasChargeCheckout(
 
     const fetchImpl = deps?.fetchFn ?? fetch;
     const endpoint = `${conn.url}/functions/v1/create-asaas-charge`;
-    const sid = getOrCreateClientSessionId();
 
     const response = await fetchImpl(endpoint, {
       method: 'POST',
@@ -489,7 +485,7 @@ export async function requestAsaasChargeCheckout(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
         apikey: conn.key,
-        ...(sid ? { 'x-fervec-session-id': sid } : {}),
+        'x-fervec-session-id': getOrCreateClientSessionId(),
       },
       body: JSON.stringify({
         courseSlug: input.courseSlug,
@@ -499,17 +495,18 @@ export async function requestAsaasChargeCheckout(
         ...(input.externalReference ? { externalReference: input.externalReference } : {}),
         ...(input.customer ? { customer: input.customer } : {}),
         ...(input.couponCode ? { couponCode: input.couponCode } : {}),
+        ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
       }),
     });
 
     const data = (await response.json().catch(() => ({}))) as {
       ok?: boolean;
       environment?: string;
-      freeEnrollmentByCoupon?: boolean;
       code?: string;
       error?: string;
       errors?: Array<{ field?: string; message?: string }>;
       orderId?: string | null;
+      freeEnrollmentByCoupon?: boolean;
       capabilities?: AsaasCapabilities;
       payment?: AsaasChargeResponsePayment | null;
     };
@@ -538,9 +535,9 @@ export async function requestAsaasChargeCheckout(
     return {
       ok: true,
       environment: data.environment,
-      freeEnrollmentByCoupon: Boolean(data.freeEnrollmentByCoupon),
-      payment: data.payment ?? undefined,
+      ...(data.payment ? { payment: data.payment } : {}),
       orderId: data.orderId ?? data.payment?.orderId ?? null,
+      ...(data.freeEnrollmentByCoupon ? { freeEnrollmentByCoupon: true } : {}),
       capabilities: data.capabilities,
     };
   } catch (err: unknown) {
@@ -563,3 +560,68 @@ export async function requestAsaasChargeCheckout(
     emit();
   }
 }
+
+export async function validatePaymentCouponOnServer(
+  code: string,
+  courseSlug = 'massas-italianas',
+  deps?: CheckoutDeps
+): Promise<{
+  ok: boolean;
+  code?: string;
+  discountPercent?: number;
+  discountCents?: number;
+  totalCents?: number;
+  isFree?: boolean;
+  error?: string;
+}> {
+  const cleanCode = String(code || '').replace(/\D+/g, '').slice(0, 6);
+  if (cleanCode.length !== 6) {
+    return { ok: false, error: 'Informe um código de cupom válido de 6 dígitos.' };
+  }
+
+  try {
+    const getToken = deps?.getAccessToken ?? defaultGetAccessToken;
+    const accessToken = await getToken().catch(() => null);
+    if (!accessToken) {
+      return { ok: false, error: 'Entre na sua conta para validar um cupom.' };
+    }
+
+    const fetchImpl = deps?.fetchFn ?? fetch;
+    const res = await fetchImpl('/api/coupons/validate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'x-fervec-session-id': getOrCreateClientSessionId(),
+      },
+      body: JSON.stringify({ code: cleanCode, courseSlug }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      code?: string;
+      discountPercent?: number;
+      discountCents?: number;
+      totalCents?: number;
+      isFree?: boolean;
+      error?: string;
+    };
+    if (!res.ok || !data?.ok) {
+      return { ok: false, error: data?.error || 'Cupom inválido ou indisponível.' };
+    }
+    return {
+      ok: true,
+      code: data.code || cleanCode,
+      discountPercent: Number(data.discountPercent || 0),
+      discountCents: Number(data.discountCents || 0),
+      totalCents: Number(data.totalCents || 0),
+      isFree: Boolean(data.isFree),
+    };
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Erro ao validar cupom no servidor.',
+    };
+  }
+}
+

@@ -50,9 +50,11 @@ import {
   clearProfile,
   digitsOnly,
   formatBirthDate,
+  formatCep,
   formatCpf,
   formatDdd,
   formatPhone,
+  formatUf,
   loadProfile,
   ProfileFormValues,
   ProfileValidationErrors,
@@ -63,7 +65,6 @@ import {
   validateProfileForm,
 } from './utils/profile';
 import {
-  getSupabaseClient,
   initSupabaseRuntimeConfig,
   isSupabaseConfigured,
 } from './utils/supabase/client';
@@ -78,13 +79,11 @@ import {
 } from './utils/supabase/profileSync';
 import {
   checkWorkAnswerOnServer,
-  claimActiveServerSession,
   downloadCertificatePdfBlob,
   fetchAdminTelemetry,
   fetchProtectedCourseContent,
   fetchSanitizedAssessmentQuestions,
   fetchWorkspaceState,
-  getOrCreateClientSessionId,
   hydrateCourseStateFromWorkspace,
   issueOrFetchCertificate,
   logoutServerSession,
@@ -113,6 +112,7 @@ import {
   PaymentUiStatus,
   requestAsaasChargeCheckout,
   subscribePaymentCheckout,
+  validatePaymentCouponOnServer,
 } from './utils/paymentCheckout';
 import { renderPaymentsPage } from './components/paymentsView';
 import { createElement } from 'react';
@@ -405,6 +405,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   let paymentCouponInput = '';
   let appliedPaymentCoupon: AppliedPaymentCouponView | null = null;
   let paymentCouponFeedback: { ok: boolean; message: string } | null = null;
+  let paymentCheckoutIdempotencyKey: string | null = null;
   let adminActiveTab: AdminTabId = 'overview';
   let adminMobileMenuOpen = false;
   let adminCouponDraft: AdminCouponDraftView = {
@@ -420,15 +421,6 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
   let paymentsPreContractAccepted = false;
   let adminTelemetry: ServerAdminTelemetry | null = null;
   let adminTelemetryLoaded = false;
-  let withdrawalUiInfo: {
-    status: string | null;
-    protocolCode: string | null;
-    errorMessage: string | null;
-  } = {
-    status: null,
-    protocolCode: null,
-    errorMessage: null,
-  };
 
   type ProtectedExtraRecipe = ProtectedCourseContentPayload['extraRecipes'][number];
   let protectedContent: ProtectedCourseContentPayload | null = null;
@@ -644,6 +636,13 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       age: profile?.age ? String(profile.age) : '',
       ddd: profile?.ddd || '',
       phone: profile?.phone || '',
+      cep: profile?.cep ? formatCep(profile.cep) : '',
+      street: profile?.street || '',
+      streetNumber: profile?.streetNumber || '',
+      complement: profile?.complement || '',
+      neighborhood: profile?.neighborhood || '',
+      city: profile?.city || '',
+      state: profile?.state ? formatUf(profile.state) : '',
       password: '',
       confirmPassword: '',
       acceptTerms: Boolean(profile),
@@ -3419,45 +3418,11 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           o.studentEmail.toLowerCase() === userProfile!.email.toLowerCase() &&
           o.status !== 'withdrawn_art49'
       );
-      const serverOrderStatus = String(paymentSummary.latestOrderStatus || '').toLowerCase();
       const serverOrderEligible =
         isSupabase &&
         activeOrderId &&
-        (serverOrderStatus === 'paid' ||
-          paymentSummary.isEnrolled ||
-          serverOrderStatus === 'refund_requested' ||
-          serverOrderStatus === 'refunded');
+        (paymentSummary.latestOrderStatus === 'paid' || paymentSummary.isEnrolled);
       const withdrawalOrderId = serverOrderEligible ? activeOrderId : localOrders[0]?.id || null;
-
-      let withdrawalBodyHtml = '';
-      if (isSupabase && activeOrderId && serverOrderStatus === 'refunded') {
-        withdrawalBodyHtml = `<p class="account-withdrawal-status is-refunded">Reembolso confirmado pelo gateway Asaas${
-          withdrawalUiInfo.protocolCode ? ` · Protocolo ${esc(withdrawalUiInfo.protocolCode)}` : ''
-        }. Acesso comercial encerrado com histórico preservado.</p>`;
-      } else if (
-        isSupabase &&
-        activeOrderId &&
-        serverOrderStatus === 'refund_requested' &&
-        withdrawalUiInfo.status === 'refund_failed'
-      ) {
-        withdrawalBodyHtml = `<p class="account-withdrawal-status is-error">${esc(
-          withdrawalUiInfo.errorMessage ||
-            'Falha ao solicitar estorno no gateway Asaas. É possível reenviar a solicitação.'
-        )}</p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" class="btn btn-red" data-action="request-withdrawal" data-order-id="${esc(activeOrderId)}">Tentar reenviar estorno (${esc(withdrawalUiInfo.protocolCode || activeOrderId)})</button>
-          <button type="button" class="btn btn-outline-dark" data-action="refresh-payment-status">Verificar status</button>
-        </div>`;
-      } else if (isSupabase && activeOrderId && serverOrderStatus === 'refund_requested') {
-        withdrawalBodyHtml = `<p class="account-withdrawal-status is-pending">Solicitação registrada${
-          withdrawalUiInfo.protocolCode ? ` (Protocolo ${esc(withdrawalUiInfo.protocolCode)})` : ''
-        }. Estorno em processamento aguardando confirmação definitiva do Asaas.</p>
-        <button type="button" class="btn btn-outline-dark" data-action="refresh-payment-status">Verificar confirmação no Asaas</button>`;
-      } else if (withdrawalOrderId) {
-        withdrawalBodyHtml = `<button type="button" class="btn btn-outline-dark" data-action="request-withdrawal" data-order-id="${esc(withdrawalOrderId)}">Solicitar Arrependimento (Art. 49 CDC · Pedido ${esc(withdrawalOrderId)})</button>`;
-      } else {
-        withdrawalBodyHtml = `<small>Nenhum pedido ativo elegível localizado no momento. Atendimento oficial: <a href="mailto:${esc(SUPPLIER_IDENTITY.officialEmail)}">${esc(SUPPLIER_IDENTITY.officialEmail)}</a>.</small>`;
-      }
 
       return `<main class="page-wrap">
         <section class="account-page">
@@ -3480,7 +3445,11 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           <div class="account-withdrawal-card" aria-label="Direito de Arrependimento Art. 49 CDC">
             <strong>Direito de Arrependimento (Art. 49 do CDC — 7 dias)</strong>
             <p>Nos termos do Art. 49 do Código de Defesa do Consumidor e Art. 5º do Decreto 7.962/2013, você pode desistir da contratação em até 7 dias corridos com revogação do acesso e restituição integral.</p>
-            ${withdrawalBodyHtml}
+            ${
+              withdrawalOrderId
+                ? `<button type="button" class="btn btn-outline-dark" data-action="request-withdrawal" data-order-id="${esc(withdrawalOrderId)}">Solicitar Arrependimento (Art. 49 CDC · Pedido ${esc(withdrawalOrderId)})</button>`
+                : `<small>Nenhum pedido ativo elegível localizado no momento. Atendimento oficial: <a href="mailto:${esc(SUPPLIER_IDENTITY.officialEmail)}">${esc(SUPPLIER_IDENTITY.officialEmail)}</a>.</small>`
+            }
           </div>
 
           <div class="lesson-actions" style="justify-content:center;flex-wrap:wrap;">
@@ -5469,11 +5438,12 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     const prefillCpf = sessionBillingCustomer?.cpfCnpj
       ? formatCpf(sessionBillingCustomer.cpfCnpj)
       : '';
+    const isProductionEnv = paymentSummary.environment === 'production';
 
     openModal(`<div class="modal-backdrop">
       <section class="modal" role="dialog" aria-modal="true" aria-labelledby="billing-customer-title">
         <button type="button" class="modal-close" data-action="close-modal" aria-label="Fechar">×</button>
-        <span class="eyebrow">ASAAS SANDBOX · IDENTIFICAÇÃO DO COMPRADOR</span>
+        <span class="eyebrow">${isProductionEnv ? 'ASAAS PRODUÇÃO · IDENTIFICAÇÃO DO COMPRADOR' : 'ASAAS SANDBOX · IDENTIFICAÇÃO DO COMPRADOR'}</span>
         <h2 id="billing-customer-title">Confirme seu CPF para emissão</h2>
         <p>${esc(subtitle)}</p>
         <form id="billing-customer-form" style="display:grid;gap:12px;margin-top:14px;">
@@ -5544,11 +5514,61 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         return;
       }
 
+      const resolvedPostalCode = digitsOnly(
+        sessionBillingCustomer?.postalCode ||
+          paymentSummary.customerProfile?.cep ||
+          userProfile?.cep ||
+          ''
+      );
+      const resolvedStreet = (
+        sessionBillingCustomer?.address ||
+        paymentSummary.customerProfile?.street ||
+        userProfile?.street ||
+        ''
+      ).trim();
+      const resolvedStreetNumber = (
+        sessionBillingCustomer?.addressNumber ||
+        paymentSummary.customerProfile?.streetNumber ||
+        userProfile?.streetNumber ||
+        ''
+      ).trim();
+      const resolvedComplement = (
+        sessionBillingCustomer?.complement ||
+        paymentSummary.customerProfile?.complement ||
+        userProfile?.complement ||
+        ''
+      ).trim();
+      const resolvedProvince = (
+        sessionBillingCustomer?.province ||
+        paymentSummary.customerProfile?.neighborhood ||
+        userProfile?.neighborhood ||
+        ''
+      ).trim();
+      const resolvedCity = (
+        sessionBillingCustomer?.city ||
+        paymentSummary.customerProfile?.city ||
+        userProfile?.city ||
+        ''
+      ).trim();
+      const resolvedState = formatUf(
+        sessionBillingCustomer?.state ||
+          paymentSummary.customerProfile?.state ||
+          userProfile?.state ||
+          ''
+      );
+
       const payload: CheckoutCustomerPayload = {
         name: nameVal,
         email: emailVal,
         cpfCnpj: cpfDigits,
         ...(phoneDigits ? { mobilePhone: phoneDigits } : {}),
+        ...(resolvedPostalCode.length === 8 ? { postalCode: resolvedPostalCode } : {}),
+        ...(resolvedStreet ? { address: resolvedStreet } : {}),
+        ...(resolvedStreetNumber ? { addressNumber: resolvedStreetNumber } : {}),
+        ...(resolvedComplement ? { complement: resolvedComplement } : {}),
+        ...(resolvedProvince ? { province: resolvedProvince } : {}),
+        ...(resolvedCity ? { city: resolvedCity } : {}),
+        ...(resolvedState ? { state: resolvedState } : {}),
       };
       sessionBillingCustomer = payload;
       closeModal();
@@ -5613,7 +5633,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       openModal(`<div class="modal-backdrop">
         <section class="modal" role="dialog" aria-modal="true" aria-labelledby="asaas-charge-title">
           <button type="button" class="modal-close" data-action="close-modal" aria-label="Fechar">×</button>
-          <span class="eyebrow">${isSandbox ? 'ASAAS SANDBOX · PAGAMENTO GERADO' : 'ASAAS · PAGAMENTO GERADO'}</span>
+          <span class="eyebrow">${isSandbox ? 'ASAAS SANDBOX · PAGAMENTO GERADO' : 'ASAAS PRODUÇÃO · PAGAMENTO GERADO'}</span>
           <h2 id="asaas-charge-title">Cobrança criada com sucesso</h2>
           <p><strong>${esc(params.courseTitle)}</strong> · Valor: <strong>${esc(formattedVal)}</strong> · Status: <strong>${esc(p.status)}</strong></p>
           ${pixQrHtml || pixPayloadHtml ? `<div class="payment-pix-box">${pixQrHtml}${pixPayloadHtml}</div>` : ''}
@@ -5687,21 +5707,6 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       };
     }
 
-    if (result.orderStatus === 'refund_requested' || result.orderStatus === 'refunded') {
-      paymentSummary = {
-        ...paymentSummary,
-        isEnrolled: Boolean(result.isEnrolled),
-        latestOrderStatus: result.orderStatus,
-      };
-      withdrawalUiInfo = {
-        status:
-          result.withdrawalStatus ||
-          (result.orderStatus === 'refunded' ? 'refunded' : 'approved_refund_pending'),
-        protocolCode: result.protocolCode ?? withdrawalUiInfo.protocolCode,
-        errorMessage: result.refundError ?? null,
-      };
-    }
-
     const nextStatus = result.uiStatus || 'awaiting_confirmation';
     paymentsUiStatus = nextStatus;
 
@@ -5716,19 +5721,6 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         'Pagamento confirmado pelo webhook do Asaas. Seu acesso ao Curso de Massas foi liberado!';
       toast.success('Pagamento aprovado!', 'Seu curso já está liberado.');
       void hydrateAuthenticatedWorkspace();
-    } else if (result.orderStatus === 'refunded') {
-      stopPaymentPollTimer();
-      paymentsStatusMessage = `Reembolso confirmado pelo Asaas${
-        result.protocolCode ? ` (Protocolo ${result.protocolCode})` : ''
-      }.`;
-    } else if (result.orderStatus === 'refund_requested') {
-      stopPaymentPollTimer();
-      paymentsStatusMessage =
-        result.withdrawalStatus === 'refund_failed'
-          ? result.refundError || 'Falha no estorno junto ao Asaas. Tente reenviar em Minha Conta.'
-          : `Estorno em processamento no Asaas${
-              result.protocolCode ? ` (Protocolo ${result.protocolCode})` : ''
-            }. Aguardando confirmação definitiva.`;
     } else if (nextStatus === 'expired') {
       stopPaymentPollTimer();
       paymentsStatusMessage = 'Esta cobrança expirou. Selecione a forma de pagamento e gere uma nova cobrança.';
@@ -5748,7 +5740,7 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       }
     }
 
-    if (route === 'payments' || route === 'account') render();
+    if (route === 'payments') render();
   }
 
   function startPaymentPollTimer(orderId: string): void {
@@ -5996,59 +5988,60 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     copiedPixCode = false;
     render();
 
+    if (!paymentCheckoutIdempotencyKey) {
+      paymentCheckoutIdempotencyKey =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `chk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+
     const outcome = await requestAsaasChargeCheckout({
       courseId: paymentSummary.courseId || 'italiana',
       courseSlug: paymentSummary.courseSlug || 'massas-italianas',
       courseTitle: paymentSummary.courseTitle || 'Curso de Massas',
       billingType,
-      ...(sessionBillingCustomer ? { customer: sessionBillingCustomer } : {}),
       ...(appliedPaymentCoupon?.code ? { couponCode: appliedPaymentCoupon.code } : {}),
+      idempotencyKey: paymentCheckoutIdempotencyKey,
+      ...(sessionBillingCustomer ? { customer: sessionBillingCustomer } : {}),
     });
 
     if (outcome.reason === 'already_processing') return;
 
-    if (outcome.ok && (outcome.payment || outcome.freeEnrollmentByCoupon)) {
-      void recordLegalAcceptance({
-        courseSlug: paymentSummary.courseSlug || 'massas-italianas',
-        orderId: outcome.orderId || outcome.payment?.orderId || undefined,
-        acceptanceKind: 'checkout',
-        termsVersion: SUPPLIER_IDENTITY.termsVersion,
-        privacyVersion: SUPPLIER_IDENTITY.privacyVersion,
-        preContractAccepted: true,
-        source: 'checkout',
-      });
+    if (outcome.ok && outcome.freeEnrollmentByCoupon) {
+      paymentCheckoutIdempotencyKey = null;
+      activeOrderId = outcome.orderId ?? activeOrderId;
+      paymentSummary = {
+        ...paymentSummary,
+        ...(outcome.environment ? { environment: outcome.environment } : {}),
+        ...(outcome.capabilities ? { capabilities: outcome.capabilities } : {}),
+        isEnrolled: true,
+        latestOrderStatus: 'paid',
+      };
+      paymentsUiStatus = 'approved';
+      paymentsStatusMessage = `Cupom promocional 100% (#${appliedPaymentCoupon?.code || ''}) confirmado! Sua matrícula no ${paymentSummary.courseTitle} foi liberada.`;
+      stopPaymentPollTimer();
+      toast.success('Matrícula liberada!', 'Cupom 100% validado no servidor e acesso ativado.');
+      render();
+      return;
+    }
 
-      if (outcome.freeEnrollmentByCoupon) {
-        activeOrderId = outcome.orderId ?? activeOrderId;
-        activePaymentCharge = null;
-        paymentSummary = {
-          ...paymentSummary,
-          isEnrolled: true,
-          latestOrderStatus: 'paid',
-        };
-        paymentsUiStatus = 'approved';
-        paymentsStatusMessage = `Cupom 100% (#${appliedPaymentCoupon?.code || ''}) aplicado no servidor. Seu acesso ao curso foi liberado!`;
-        toast.success('Matrícula liberada com cupom 100%!', 'Seu acesso ao curso já está ativo.');
-        void hydrateAuthenticatedWorkspace();
-        render();
-        return;
-      }
-
+    if (outcome.ok && outcome.payment) {
+      paymentCheckoutIdempotencyKey = null;
       const chargeIsSandbox = (outcome.environment || paymentSummary.environment) === 'sandbox';
       const chargeProviderLabel = chargeIsSandbox ? 'Asaas Sandbox' : 'Asaas';
       if (outcome.environment) {
         paymentSummary = { ...paymentSummary, environment: outcome.environment };
       }
-      if (outcome.payment!.customerId && paymentSummary.customerProfile) {
+      if (outcome.payment.customerId && paymentSummary.customerProfile) {
         paymentSummary.customerProfile.hasAsaasCustomerId = true;
       }
-      activePaymentCharge = outcome.payment!;
-      activeOrderId = outcome.orderId ?? outcome.payment!.orderId ?? activeOrderId;
+      activePaymentCharge = outcome.payment;
+      activeOrderId = outcome.orderId ?? outcome.payment.orderId ?? activeOrderId;
       if (outcome.capabilities) {
         paymentSummary = { ...paymentSummary, capabilities: outcome.capabilities };
       }
 
-      const nextStatus = mapAsaasStatusToUiStatus(outcome.payment!.status, null, false);
+      const nextStatus = mapAsaasStatusToUiStatus(outcome.payment.status, null, false);
       paymentsUiStatus = nextStatus === 'awaiting_selection' ? 'awaiting_confirmation' : nextStatus;
 
       if (billingType === 'PIX') {
@@ -6201,6 +6194,14 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           email: acc.email,
           ddd: acc.ddd,
           phone: acc.phone,
+          cep: acc.cep,
+          street: acc.street,
+          streetNumber: acc.streetNumber,
+          complement: acc.complement,
+          neighborhood: acc.neighborhood,
+          city: acc.city,
+          state: acc.state,
+          fullAddress: acc.fullAddress,
           promoWhatsapp: acc.promoWhatsapp,
           promoEmail: acc.promoEmail,
           createdAt: acc.createdAt,
@@ -6872,6 +6873,30 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
               splitErr.classList.toggle('is-visible', Boolean(nextSplit));
             }
           }
+          if (field === 'cep' || field === 'city' || field === 'state') {
+            const addrTopErr = profileForm.querySelector<HTMLElement>('[data-error-split-address-top]');
+            const nextAddrTop = profileErrors.cep || profileErrors.city || profileErrors.state || '';
+            if (addrTopErr) {
+              addrTopErr.textContent = nextAddrTop;
+              addrTopErr.classList.toggle('is-visible', Boolean(nextAddrTop));
+            }
+          }
+          if (field === 'street' || field === 'streetNumber') {
+            const addrStreetErr = profileForm.querySelector<HTMLElement>('[data-error-split-address-street]');
+            const nextAddrStreet = profileErrors.street || profileErrors.streetNumber || '';
+            if (addrStreetErr) {
+              addrStreetErr.textContent = nextAddrStreet;
+              addrStreetErr.classList.toggle('is-visible', Boolean(nextAddrStreet));
+            }
+          }
+          if (field === 'neighborhood' || field === 'complement') {
+            const addrExtraErr = profileForm.querySelector<HTMLElement>('[data-error-split-address-extra]');
+            const nextAddrExtra = profileErrors.neighborhood || profileErrors.complement || '';
+            if (addrExtraErr) {
+              addrExtraErr.textContent = nextAddrExtra;
+              addrExtraErr.classList.toggle('is-visible', Boolean(nextAddrExtra));
+            }
+          }
           const inputEl = profileForm.querySelector<HTMLElement>(`[name="${field}"]`);
           inputEl?.closest('.cadastro-pill')?.classList.remove('has-error');
           if (field === 'acceptTerms') {
@@ -6917,6 +6942,26 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
           target.value = formatted;
           profileDraft.phone = formatted;
           clearInlineError('phone');
+        } else if (name === 'cep') {
+          const formatted = formatCep(target.value);
+          target.value = formatted;
+          profileDraft.cep = formatted;
+          clearInlineError('cep');
+        } else if (name === 'street') {
+          profileDraft.street = target.value;
+          clearInlineError('street');
+        } else if (name === 'streetNumber') {
+          profileDraft.streetNumber = target.value;
+          clearInlineError('streetNumber');
+        } else if (name === 'complement') {
+          profileDraft.complement = target.value;
+          clearInlineError('complement');
+        } else if (name === 'neighborhood') {
+          profileDraft.neighborhood = target.value;
+          clearInlineError('neighborhood');
+        } else if (name === 'city') {
+          profileDraft.city = target.value;
+          clearInlineError('city');
         } else if (name === 'fullName') {
           profileDraft.fullName = target.value;
           clearInlineError('fullName');
@@ -6960,6 +7005,9 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
         if (name === 'age') {
           profileDraft.age = target.value;
           clearInlineError('age');
+        } else if (name === 'state') {
+          profileDraft.state = formatUf(target.value);
+          clearInlineError('state');
         } else if (name === 'acceptTerms' && target instanceof HTMLInputElement) {
           profileDraft.acceptTerms = target.checked;
           clearInlineError('acceptTerms');
@@ -7475,9 +7523,11 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       portalMenuOpen = false;
       go('home');
     } else if (a === 'open-library') {
+      const hadOpenMenu = accountMenuOpen || cuisinesMenuOpen || portalMenuOpen;
       accountMenuOpen = false;
       cuisinesMenuOpen = false;
       portalMenuOpen = false;
+      if (hadOpenMenu) render();
       switchEnvironment('library');
     } else if (a === 'home') go('home');
     else if (a === 'payments') {
@@ -7485,83 +7535,58 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
       void hydratePaymentsSummary(true);
     } else if (a === 'apply-coupon') {
       const code = normalizeCouponCode(paymentCouponInput);
-      if (!PHASE_1_OFFLINE_ONLY && SUPABASE_CONNECTED && userProfile?.authSource === 'supabase') {
+      paymentCheckoutIdempotencyKey = null;
+      if (PHASE_1_OFFLINE_ONLY || !SUPABASE_CONNECTED) {
+        const coupons = listProvisionalCoupons();
+        const validation = validateCouponForCourse(code, coupons, paymentSummary.courseSlug);
+        if (!validation.ok || !validation.coupon) {
+          appliedPaymentCoupon = null;
+          paymentCouponFeedback = { ok: false, message: validation.message };
+          toast.warning('Cupom inválido', validation.message);
+        } else {
+          const disc = applyCouponDiscount(paymentSummary.priceCents, validation.coupon.discountPercent);
+          appliedPaymentCoupon = {
+            code: validation.coupon.code,
+            discountPercent: validation.coupon.discountPercent,
+            discountCents: disc.discountCents,
+            totalCents: disc.totalCents,
+            isFree: disc.isFree,
+          };
+          paymentCouponFeedback = { ok: true, message: validation.message };
+          toast.success('Cupom aplicado!', validation.message);
+        }
+        render();
+      } else {
         void (async () => {
-          const supabaseClient = getSupabaseClient();
-          const tokenData = supabaseClient ? await supabaseClient.auth.getSession() : null;
-          const accessToken = tokenData?.data?.session?.access_token;
-          const sid = getOrCreateClientSessionId();
-          if (!accessToken) {
-            toast.warning('Entre na sua conta', 'Autentique-se antes de validar um cupom.');
-            return;
-          }
-          try {
-            const resp = await fetch('/api/coupons/validate', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${accessToken}`,
-                ...(sid ? { 'x-fervec-session-id': sid } : {}),
-              },
-              body: JSON.stringify({ code, courseSlug: paymentSummary.courseSlug }),
-            });
-            const body = (await resp.json().catch(() => ({}))) as {
-              ok?: boolean;
-              code?: string;
-              discountPercent?: number;
-              discountCents?: number;
-              totalCents?: number;
-              isFree?: boolean;
-              error?: string;
+          const srvRes = await validatePaymentCouponOnServer(code, paymentSummary.courseSlug);
+          if (!srvRes.ok) {
+            appliedPaymentCoupon = null;
+            paymentCouponFeedback = {
+              ok: false,
+              message: srvRes.error || 'Cupom inválido ou indisponível no servidor.',
             };
-            if (!resp.ok || !body.ok || typeof body.discountPercent !== 'number') {
-              appliedPaymentCoupon = null;
-              const msg = body.error || 'Cupom inválido ou indisponível no servidor.';
-              paymentCouponFeedback = { ok: false, message: msg };
-              toast.warning('Cupom inválido', msg);
-            } else {
-              appliedPaymentCoupon = {
-                code: body.code || code,
-                discountPercent: body.discountPercent,
-                discountCents: Number(body.discountCents || 0),
-                totalCents: Number(body.totalCents ?? paymentSummary.priceCents),
-                isFree: Boolean(body.isFree),
-              };
-              const okMsg = `Cupom #${appliedPaymentCoupon.code} aplicado (${appliedPaymentCoupon.discountPercent}% de desconto).`;
-              paymentCouponFeedback = { ok: true, message: okMsg };
-              toast.success('Cupom aplicado!', okMsg);
-            }
-          } catch {
-            paymentCouponFeedback = { ok: false, message: 'Erro de comunicação ao validar cupom.' };
+            toast.warning('Cupom inválido', paymentCouponFeedback.message);
+          } else {
+            const pct = srvRes.discountPercent ?? 0;
+            const msg = `Cupom #${srvRes.code || code} (${pct}% OFF) validado no servidor.`;
+            appliedPaymentCoupon = {
+              code: srvRes.code || code,
+              discountPercent: pct,
+              discountCents: srvRes.discountCents ?? 0,
+              totalCents: srvRes.totalCents ?? paymentSummary.priceCents,
+              isFree: Boolean(srvRes.isFree),
+            };
+            paymentCouponFeedback = { ok: true, message: msg };
+            toast.success('Cupom aplicado!', msg);
           }
           render();
         })();
-        return;
       }
-
-      const coupons = listProvisionalCoupons();
-      const validation = validateCouponForCourse(code, coupons, paymentSummary.courseSlug);
-      if (!validation.ok || !validation.coupon) {
-        appliedPaymentCoupon = null;
-        paymentCouponFeedback = { ok: false, message: validation.message };
-        toast.warning('Cupom inválido', validation.message);
-      } else {
-        const disc = applyCouponDiscount(paymentSummary.priceCents, validation.coupon.discountPercent);
-        appliedPaymentCoupon = {
-          code: validation.coupon.code,
-          discountPercent: validation.coupon.discountPercent,
-          discountCents: disc.discountCents,
-          totalCents: disc.totalCents,
-          isFree: disc.isFree,
-        };
-        paymentCouponFeedback = { ok: true, message: validation.message };
-        toast.success('Cupom aplicado!', validation.message);
-      }
-      render();
     } else if (a === 'remove-coupon') {
       appliedPaymentCoupon = null;
       paymentCouponInput = '';
       paymentCouponFeedback = null;
+      paymentCheckoutIdempotencyKey = null;
       render();
     } else if (a === 'enable-admin-preview') {
       setPhase1AdminPreviewEnabled(true);
@@ -7687,29 +7712,12 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
             toast.error('Arrependimento não processado', res.message || 'Tente novamente ou contate fervecrgastronomia@gmail.com.');
             return;
           }
-          const nextOrderStatus = res.status || 'refund_requested';
-          const nextWStatus = res.withdrawalStatus || 'approved_refund_pending';
-          withdrawalUiInfo = {
-            status: nextWStatus,
-            protocolCode: res.protocolCode ?? withdrawalUiInfo.protocolCode,
-            errorMessage: res.refundError ?? null,
-          };
           paymentSummary = {
             ...paymentSummary,
             isEnrolled: false,
-            latestOrderStatus: nextOrderStatus,
+            latestOrderStatus: 'refund_requested',
           };
-          if (nextWStatus === 'refund_failed') {
-            toast.warning(
-              'Protocolo registrado com falha no gateway',
-              res.message || 'O estorno falhou no Asaas; clique em tentar reenviar em Minha Conta.'
-            );
-          } else {
-            toast.success(
-              'Solicitação registrada (Art. 49 CDC)',
-              res.message || 'Pedido em processamento de estorno aguardando confirmação do Asaas.'
-            );
-          }
+          toast.success('Solicitação registrada (Art. 49 CDC)', res.message || 'Pedido cancelado dentro do prazo legal.');
           void hydratePaymentsSummary(true);
           render();
           return;
@@ -8670,9 +8678,8 @@ export function mountFervecApp(app: HTMLElement, modal: HTMLElement): () => void
     if (authBootstrapped || !isSupabaseConfigured()) return;
     authBootstrapped = true;
     const refreshFromSupabaseSession = () => {
-      void fetchCurrentSupabaseProfile(userProfile).then(async (synced) => {
+      void fetchCurrentSupabaseProfile(userProfile).then((synced) => {
         if (synced) {
-          await claimActiveServerSession({ forceNew: false }).catch(() => false);
           userProfile = synced;
           syncProgressScope(synced);
           profileDraft = createInitialProfileDraft(synced);

@@ -110,3 +110,44 @@ test('resolveAsaasCapabilities only exposes card brands when card modalities are
   assert.equal(enabledCaps.debitCard, true);
   assert.deepEqual(enabledCaps.acceptedCardBrands, ['VISA', 'MASTERCARD', 'ELO', 'AMEX']);
 });
+
+test('validateCreateAsaasChargeBody preserves optional buyer address fields and rejects malformed postalCode', () => {
+  const valid = validateCreateAsaasChargeBody({
+    courseSlug: 'massas-italianas',
+    billingType: 'PIX',
+    customer: {
+      name: 'Maria Clara Silva',
+      email: 'maria@exemplo.com',
+      cpfCnpj: '529.982.247-25',
+      mobilePhone: '(11) 98765-4321',
+      postalCode: '01310-100',
+      address: 'Avenida Paulista',
+      addressNumber: '1578',
+      complement: 'Apto 42',
+      province: 'Bela Vista',
+    },
+  });
+  assert.equal(valid.ok, true);
+  if (valid.ok) {
+    assert.equal(valid.data.customer?.postalCode, '01310100');
+    assert.equal(valid.data.customer?.address, 'Avenida Paulista');
+    assert.equal(valid.data.customer?.addressNumber, '1578');
+    assert.equal(valid.data.customer?.province, 'Bela Vista');
+  }
+
+  const badCep = validateCreateAsaasChargeBody({
+    courseSlug: 'massas-italianas',
+    billingType: 'PIX',
+    customer: {
+      name: 'Maria Clara Silva',
+      email: 'maria@exemplo.com',
+      cpfCnpj: '529.982.247-25',
+      postalCode: '123',
+    },
+  });
+  assert.equal(badCep.ok, false);
+  if (!badCep.ok) {
+    assert.ok(badCep.errors.some((e) => e.field === 'customer.postalCode'));
+  }
+});
+

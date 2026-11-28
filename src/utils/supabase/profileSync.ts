@@ -5,6 +5,9 @@ import {
   StoredUserProfile,
   calculateAge,
   createStoredProfile,
+  formatCep,
+  formatFullAddress,
+  formatUf,
   saveProfile,
   sha256Cpf,
 } from '../profile';
@@ -40,9 +43,32 @@ interface SupabaseProfileRow {
   email?: string | null;
   ddd?: string | null;
   phone?: string | null;
+  postal_code?: string | null;
+  street?: string | null;
+  street_number?: string | null;
+  complement?: string | null;
+  neighborhood?: string | null;
+  city?: string | null;
+  state?: string | null;
+  full_address?: string | null;
   whatsapp_opt_in?: boolean | null;
   email_opt_in?: boolean | null;
   created_at?: string | null;
+}
+
+function isMissingAddressColumnErr(err: { code?: string; message?: string } | null | undefined): boolean {
+  if (!err) return false;
+  const code = String(err.code || '');
+  const msg = String(err.message || '').toLowerCase();
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    msg.includes('postal_code') ||
+    msg.includes('street') ||
+    msg.includes('neighborhood') ||
+    msg.includes('full_address') ||
+    msg.includes('schema cache')
+  );
 }
 
 function sameUserFallback(
@@ -89,6 +115,57 @@ export function mapSupabaseUserToProfile(
           ? meta.promo_email
           : safeFallback?.promoEmail ?? false;
 
+  const cepRaw =
+    (dbRow?.postal_code && dbRow.postal_code.trim()) ||
+    (typeof meta.postal_code === 'string' && meta.postal_code.trim()) ||
+    safeFallback?.cep ||
+    '';
+  const cep = cepRaw ? formatCep(cepRaw) : '';
+  const street =
+    (dbRow?.street && dbRow.street.trim()) ||
+    (typeof meta.street === 'string' && meta.street.trim()) ||
+    safeFallback?.street ||
+    '';
+  const streetNumber =
+    (dbRow?.street_number && dbRow.street_number.trim()) ||
+    (typeof meta.street_number === 'string' && meta.street_number.trim()) ||
+    safeFallback?.streetNumber ||
+    '';
+  const complement =
+    (dbRow?.complement && dbRow.complement.trim()) ||
+    (typeof meta.complement === 'string' && meta.complement.trim()) ||
+    safeFallback?.complement ||
+    '';
+  const neighborhood =
+    (dbRow?.neighborhood && dbRow.neighborhood.trim()) ||
+    (typeof meta.neighborhood === 'string' && meta.neighborhood.trim()) ||
+    safeFallback?.neighborhood ||
+    '';
+  const city =
+    (dbRow?.city && dbRow.city.trim()) ||
+    (typeof meta.city === 'string' && meta.city.trim()) ||
+    safeFallback?.city ||
+    '';
+  const stateRaw =
+    (dbRow?.state && dbRow.state.trim()) ||
+    (typeof meta.state === 'string' && meta.state.trim()) ||
+    safeFallback?.state ||
+    '';
+  const state = stateRaw ? formatUf(stateRaw) : '';
+  const fullAddress =
+    (dbRow?.full_address && dbRow.full_address.trim()) ||
+    (typeof meta.full_address === 'string' && meta.full_address.trim()) ||
+    safeFallback?.fullAddress ||
+    formatFullAddress({
+      street,
+      streetNumber,
+      complement,
+      neighborhood,
+      city,
+      state,
+      cep,
+    });
+
   return {
     id: user.id,
     supabaseUserId: user.id,
@@ -122,6 +199,14 @@ export function mapSupabaseUserToProfile(
       (typeof meta.phone === 'string' && meta.phone) ||
       safeFallback?.phone ||
       '90000-0000',
+    ...(cep ? { cep } : {}),
+    ...(street ? { street } : {}),
+    ...(streetNumber ? { streetNumber } : {}),
+    ...(complement ? { complement } : {}),
+    ...(neighborhood ? { neighborhood } : {}),
+    ...(city ? { city } : {}),
+    ...(state ? { state } : {}),
+    ...(fullAddress ? { fullAddress } : {}),
     promoWhatsapp: whatsappOptIn,
     promoEmail: emailOptIn,
     createdAt: dbRow?.created_at || user.created_at || safeFallback?.createdAt || new Date().toISOString(),
@@ -137,6 +222,14 @@ function buildMetadata(profile: StoredUserProfile): Record<string, unknown> {
     age: profile.age,
     ddd: profile.ddd,
     phone: profile.phone,
+    postal_code: profile.cep || null,
+    street: profile.street || null,
+    street_number: profile.streetNumber || null,
+    complement: profile.complement || null,
+    neighborhood: profile.neighborhood || null,
+    city: profile.city || null,
+    state: profile.state || null,
+    full_address: profile.fullAddress || null,
     whatsapp_opt_in: profile.promoWhatsapp,
     email_opt_in: profile.promoEmail,
   };
@@ -147,8 +240,19 @@ async function tryUpsertProfilesTable(userId: string, profile: StoredUserProfile
   if (!supabase) return;
   try {
     const existing = await fetchProfilesRow(userId);
+    const addressFields: Record<string, unknown> = {
+      postal_code: profile.cep || null,
+      street: profile.street || null,
+      street_number: profile.streetNumber || null,
+      complement: profile.complement || null,
+      neighborhood: profile.neighborhood || null,
+      city: profile.city || null,
+      state: profile.state || null,
+      full_address: profile.fullAddress || null,
+    };
+
     if (existing) {
-      const patch: Record<string, unknown> = {
+      const basePatch: Record<string, unknown> = {
         full_name: profile.fullName,
         birth_date: profile.birthDate,
         age: profile.age,
@@ -164,16 +268,22 @@ async function tryUpsertProfilesTable(userId: string, profile: StoredUserProfile
         profile.cpfMasked &&
         profile.cpfMasked !== '***.***.***-**'
       ) {
-        patch.cpf_masked = profile.cpfMasked;
+        basePatch.cpf_masked = profile.cpfMasked;
       }
       if (!existing.cpf_hash && profile.cpfHash) {
-        patch.cpf_hash = profile.cpfHash;
+        basePatch.cpf_hash = profile.cpfHash;
       }
-      await supabase.from('profiles').update(patch).eq('id', userId);
+      const res = await supabase
+        .from('profiles')
+        .update({ ...basePatch, ...addressFields })
+        .eq('id', userId);
+      if (res.error && isMissingAddressColumnErr(res.error)) {
+        await supabase.from('profiles').update(basePatch).eq('id', userId);
+      }
       return;
     }
 
-    await supabase.from('profiles').insert({
+    const baseInsert: Record<string, unknown> = {
       id: userId,
       full_name: profile.fullName,
       cpf_masked: profile.cpfMasked,
@@ -186,7 +296,15 @@ async function tryUpsertProfilesTable(userId: string, profile: StoredUserProfile
       whatsapp_opt_in: profile.promoWhatsapp,
       email_opt_in: profile.promoEmail,
       updated_at: new Date().toISOString(),
+    };
+
+    const insertRes = await supabase.from('profiles').insert({
+      ...baseInsert,
+      ...addressFields,
     });
+    if (insertRes.error && isMissingAddressColumnErr(insertRes.error)) {
+      await supabase.from('profiles').insert(baseInsert);
+    }
   } catch {
     // Non-blocking if session is not yet confirmed
   }
@@ -199,12 +317,25 @@ async function fetchProfilesRow(userId: string): Promise<SupabaseProfileRow | nu
     const { data, error } = await supabase
       .from('profiles')
       .select(
-        'id, full_name, cpf_masked, cpf_hash, birth_date, age, email, ddd, phone, whatsapp_opt_in, email_opt_in, created_at'
+        'id, full_name, cpf_masked, cpf_hash, birth_date, age, email, ddd, phone, postal_code, street, street_number, complement, neighborhood, city, state, full_address, whatsapp_opt_in, email_opt_in, created_at'
       )
       .eq('id', userId)
       .maybeSingle();
-    if (error || !data) return null;
-    return data as SupabaseProfileRow;
+    if (!error) {
+      return (data as SupabaseProfileRow | null) ?? null;
+    }
+    if (isMissingAddressColumnErr(error)) {
+      const legacy = await supabase
+        .from('profiles')
+        .select(
+          'id, full_name, cpf_masked, cpf_hash, birth_date, age, email, ddd, phone, whatsapp_opt_in, email_opt_in, created_at'
+        )
+        .eq('id', userId)
+        .maybeSingle();
+      if (legacy.error || !legacy.data) return null;
+      return legacy.data as SupabaseProfileRow;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -352,7 +483,6 @@ export async function registerOrUpdateSupabaseProfile(
             emailConfirmed: Boolean(signInAttempt.data.user.email_confirmed_at),
           };
           await tryUpsertProfilesTable(signInAttempt.data.user.id, finalProfile);
-          await claimActiveServerSession({ forceNew: true }).catch(() => false);
           saveProfile(finalProfile);
           return {
             ok: true,
@@ -417,7 +547,7 @@ export async function registerOrUpdateSupabaseProfile(
       };
       if (hasSession) {
         await tryUpsertProfilesTable(user.id, finalProfile);
-        await claimActiveServerSession({ forceNew: true }).catch(() => false);
+        await claimActiveServerSession().catch(() => false);
       }
       saveProfile(finalProfile);
       return {
@@ -494,7 +624,7 @@ export async function signInSupabaseAccount(
       await tryUpsertProfilesTable(data.user.id, mapped);
     }
 
-    await claimActiveServerSession({ forceNew: true }).catch(() => false);
+    await claimActiveServerSession().catch(() => false);
     saveProfile(mapped);
     return { ok: true, profile: mapped };
   } catch {
@@ -576,7 +706,7 @@ export async function verifySupabaseSignupCode(
     if (!dbRow) {
       await tryUpsertProfilesTable(data.user.id, mapped);
     }
-    await claimActiveServerSession({ forceNew: true }).catch(() => false);
+    await claimActiveServerSession().catch(() => false);
     saveProfile(mapped);
     return { ok: true, profile: mapped };
   } catch {

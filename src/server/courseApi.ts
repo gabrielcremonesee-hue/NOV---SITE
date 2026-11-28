@@ -16,7 +16,11 @@ import {
   getProtectedCourseContent,
   getSanitizedAssessmentQuestions,
 } from './courseContentService.ts';
-import { getServerSupabaseEnv, resolveAuthenticatedSupabaseUser } from '../utils/supabase/server.ts';
+import {
+  getServerSupabaseEnv,
+  getServiceRoleSupabaseClient,
+  resolveAuthenticatedSupabaseUser,
+} from '../utils/supabase/server.ts';
 import {
   OFFICIAL_ADMIN_AGE,
   OFFICIAL_ADMIN_BIRTH_DATE,
@@ -32,7 +36,7 @@ import {
   isCoursePriceConfirmedForProduction,
 } from './coursePricing.ts';
 import { financialGuard } from './financialGuard.ts';
-import { singleSessionManager, type VerifySessionOptions } from './singleSession.ts';
+import { singleSessionManager } from './singleSession.ts';
 import { SUPPLIER_IDENTITY, getLegalDocumentVersions, maskCpfForLogs } from '../config/legalConfig.ts';
 import { calculateAge } from '../utils/profile.ts';
 
@@ -40,6 +44,10 @@ const DEFAULT_COURSE_SLUG = 'massas-italianas';
 const CERTIFICATES_STORAGE_BUCKET = 'certificates';
 const inFlightCertificateIssues = new Map<string, Promise<{ certificate: CertificateRow | null; alreadyIssued: boolean; error?: string }>>();
 const inFlightWithdrawals = new Set<string>();
+
+function getAdminOrUserClient(fallbackClient: SupabaseClient): SupabaseClient {
+  return getServiceRoleSupabaseClient() ?? fallbackClient;
+}
 
 const MODULE_LIMITS: Record<string, { steps: number; mise: number }> = {
   carbonara: { steps: 6, mise: 7 },
@@ -94,6 +102,14 @@ interface ProfileRow {
   email: string;
   ddd?: string | null;
   phone?: string | null;
+  postal_code?: string | null;
+  street?: string | null;
+  street_number?: string | null;
+  complement?: string | null;
+  neighborhood?: string | null;
+  city?: string | null;
+  state?: string | null;
+  full_address?: string | null;
   whatsapp_opt_in?: boolean | null;
   email_opt_in?: boolean | null;
 }
@@ -153,6 +169,10 @@ function isMissingVersioningColumnError(err: { code?: string; message?: string }
     msg.includes('question_snapshots') ||
     msg.includes('protocol_code') ||
     msg.includes('refund_provider_') ||
+    msg.includes('postal_code') ||
+    msg.includes('street') ||
+    msg.includes('neighborhood') ||
+    msg.includes('full_address') ||
     msg.includes('schema cache')
   );
 }
@@ -291,13 +311,24 @@ async function ensureUserProfileRow(
   const email = (user.email || '').trim().toLowerCase();
   const isOfficialPrimaryAdmin = email === OFFICIAL_PRIMARY_ADMIN_EMAIL;
 
-  const { data: existing } = await supabase
+  let { data: existing, error: existingErr } = await supabase
     .from('profiles')
     .select(
-      'id, full_name, cpf_masked, cpf_hash, birth_date, age, email, ddd, phone, whatsapp_opt_in, email_opt_in'
+      'id, full_name, cpf_masked, cpf_hash, birth_date, age, email, ddd, phone, postal_code, street, street_number, complement, neighborhood, city, state, full_address, whatsapp_opt_in, email_opt_in'
     )
     .eq('id', user.id)
     .maybeSingle();
+
+  if (existingErr && isMissingVersioningColumnError(existingErr)) {
+    const legacy = await supabase
+      .from('profiles')
+      .select(
+        'id, full_name, cpf_masked, cpf_hash, birth_date, age, email, ddd, phone, whatsapp_opt_in, email_opt_in'
+      )
+      .eq('id', user.id)
+      .maybeSingle();
+    existing = legacy.data as typeof existing;
+  }
 
   if (existing) {
     const existingRow = existing as ProfileRow;
@@ -332,12 +363,27 @@ async function ensureUserProfileRow(
       isOfficialPrimaryAdmin &&
       (existingRow.email || '').trim().toLowerCase() !== OFFICIAL_PRIMARY_ADMIN_EMAIL;
 
+    const metaPostalCode = typeof meta.postal_code === 'string' ? meta.postal_code.trim() : '';
+    const metaStreet = typeof meta.street === 'string' ? meta.street.trim() : '';
+    const metaStreetNumber = typeof meta.street_number === 'string' ? meta.street_number.trim() : '';
+    const metaComplement = typeof meta.complement === 'string' ? meta.complement.trim() : '';
+    const metaNeighborhood = typeof meta.neighborhood === 'string' ? meta.neighborhood.trim() : '';
+    const metaCity = typeof meta.city === 'string' ? meta.city.trim() : '';
+    const metaState = typeof meta.state === 'string' ? meta.state.trim().toUpperCase() : '';
+    const metaFullAddress = typeof meta.full_address === 'string' ? meta.full_address.trim() : '';
+
+    const needsAddressBackfill =
+      (!existingRow.postal_code && Boolean(metaPostalCode)) ||
+      (!existingRow.street && Boolean(metaStreet)) ||
+      (!existingRow.city && Boolean(metaCity));
+
     if (
       needsCpfBackfill ||
       needsHashBackfill ||
       needsAdminBirthDateBackfill ||
       needsAdminAgeBackfill ||
-      needsAdminEmailBackfill
+      needsAdminEmailBackfill ||
+      needsAddressBackfill
     ) {
       const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
       if (needsCpfBackfill) {
@@ -360,7 +406,55 @@ async function ensureUserProfileRow(
         patch.email = OFFICIAL_PRIMARY_ADMIN_EMAIL;
         existingRow.email = OFFICIAL_PRIMARY_ADMIN_EMAIL;
       }
-      await supabase.from('profiles').update(patch).eq('id', user.id);
+      if (needsAddressBackfill) {
+        if (!existingRow.postal_code && metaPostalCode) {
+          patch.postal_code = metaPostalCode;
+          existingRow.postal_code = metaPostalCode;
+        }
+        if (!existingRow.street && metaStreet) {
+          patch.street = metaStreet;
+          existingRow.street = metaStreet;
+        }
+        if (!existingRow.street_number && metaStreetNumber) {
+          patch.street_number = metaStreetNumber;
+          existingRow.street_number = metaStreetNumber;
+        }
+        if (!existingRow.complement && metaComplement) {
+          patch.complement = metaComplement;
+          existingRow.complement = metaComplement;
+        }
+        if (!existingRow.neighborhood && metaNeighborhood) {
+          patch.neighborhood = metaNeighborhood;
+          existingRow.neighborhood = metaNeighborhood;
+        }
+        if (!existingRow.city && metaCity) {
+          patch.city = metaCity;
+          existingRow.city = metaCity;
+        }
+        if (!existingRow.state && metaState) {
+          patch.state = metaState;
+          existingRow.state = metaState;
+        }
+        if (!existingRow.full_address && metaFullAddress) {
+          patch.full_address = metaFullAddress;
+          existingRow.full_address = metaFullAddress;
+        }
+      }
+      const updateRes = await supabase.from('profiles').update(patch).eq('id', user.id);
+      if (updateRes.error && isMissingVersioningColumnError(updateRes.error)) {
+        const corePatch = { ...patch };
+        delete corePatch.postal_code;
+        delete corePatch.street;
+        delete corePatch.street_number;
+        delete corePatch.complement;
+        delete corePatch.neighborhood;
+        delete corePatch.city;
+        delete corePatch.state;
+        delete corePatch.full_address;
+        if (Object.keys(corePatch).length > 1) {
+          await supabase.from('profiles').update(corePatch).eq('id', user.id);
+        }
+      }
     }
 
     return { profile: existingRow, existedInDb: true };
@@ -382,7 +476,7 @@ async function ensureUserProfileRow(
         : null;
   const age = isOfficialPrimaryAdmin ? OFFICIAL_ADMIN_AGE : validMetaAge;
 
-  const payload = {
+  const basePayload = {
     id: user.id,
     full_name: fullName,
     cpf_masked: isOfficialPrimaryAdmin
@@ -407,15 +501,40 @@ async function ensureUserProfileRow(
     updated_at: new Date().toISOString(),
   };
 
-  const { data: inserted } = await supabase
+  const fullPayload = {
+    ...basePayload,
+    postal_code: typeof meta.postal_code === 'string' && meta.postal_code.trim() ? meta.postal_code.trim() : null,
+    street: typeof meta.street === 'string' && meta.street.trim() ? meta.street.trim() : null,
+    street_number:
+      typeof meta.street_number === 'string' && meta.street_number.trim() ? meta.street_number.trim() : null,
+    complement: typeof meta.complement === 'string' && meta.complement.trim() ? meta.complement.trim() : null,
+    neighborhood:
+      typeof meta.neighborhood === 'string' && meta.neighborhood.trim() ? meta.neighborhood.trim() : null,
+    city: typeof meta.city === 'string' && meta.city.trim() ? meta.city.trim() : null,
+    state: typeof meta.state === 'string' && meta.state.trim() ? meta.state.trim().toUpperCase() : null,
+    full_address: typeof meta.full_address === 'string' && meta.full_address.trim() ? meta.full_address.trim() : null,
+  };
+
+  let { data: inserted, error: insertErr } = await supabase
     .from('profiles')
-    .upsert(payload, { onConflict: 'id' })
+    .upsert(fullPayload, { onConflict: 'id' })
     .select(
-      'id, full_name, cpf_masked, cpf_hash, birth_date, age, email, ddd, phone, whatsapp_opt_in, email_opt_in'
+      'id, full_name, cpf_masked, cpf_hash, birth_date, age, email, ddd, phone, postal_code, street, street_number, complement, neighborhood, city, state, full_address, whatsapp_opt_in, email_opt_in'
     )
     .single();
 
-  return { profile: (inserted || payload) as ProfileRow, existedInDb: false };
+  if (insertErr && isMissingVersioningColumnError(insertErr)) {
+    const legacyInsert = await supabase
+      .from('profiles')
+      .upsert(basePayload, { onConflict: 'id' })
+      .select(
+        'id, full_name, cpf_masked, cpf_hash, birth_date, age, email, ddd, phone, whatsapp_opt_in, email_opt_in'
+      )
+      .single();
+    inserted = legacyInsert.data as typeof inserted;
+  }
+
+  return { profile: (inserted || fullPayload) as ProfileRow, existedInDb: false };
 }
 
 function isEnrollmentActive(enrollment: EnrollmentRow | null, isDevAdmin = false): boolean {
@@ -431,7 +550,8 @@ async function checkOrProvisionCommercialEnrollment(
   courseId: string,
   isDevAdmin = false
 ): Promise<EnrollmentRow | null> {
-  const { data: existing } = await supabase
+  const dbClient = getAdminOrUserClient(supabase);
+  const { data: existing } = await dbClient
     .from('student_enrollments')
     .select('id, user_id, course_id, status, last_module_key, enrolled_at, completed_at, updated_at')
     .eq('user_id', userId)
@@ -440,7 +560,7 @@ async function checkOrProvisionCommercialEnrollment(
     .limit(1)
     .maybeSingle();
 
-  const { data: paidOrder } = await supabase
+  const { data: paidOrder } = await dbClient
     .from('orders')
     .select('id, status')
     .eq('user_id', userId)
@@ -454,7 +574,7 @@ async function checkOrProvisionCommercialEnrollment(
   if (existing) {
     const existingRow = existing as EnrollmentRow;
     if (existingRow.status === 'canceled' && hasCommercialRight) {
-      const { data: reactivated } = await supabase
+      const { data: reactivated } = await dbClient
         .from('student_enrollments')
         .update({ status: 'in_progress', updated_at: new Date().toISOString() })
         .eq('id', existingRow.id)
@@ -470,7 +590,7 @@ async function checkOrProvisionCommercialEnrollment(
     return null;
   }
 
-  const { data: inserted } = await supabase
+  const { data: inserted } = await dbClient
     .from('student_enrollments')
     .insert({
       user_id: userId,
@@ -486,77 +606,72 @@ async function checkOrProvisionCommercialEnrollment(
 
 const DUMMY_SESSION_IDS = new Set(['server-session', 'browser-session', 'guest', 'undefined', 'null']);
 
-export async function enforceClaimedSession(
+async function enforceClaimedSession(
   req: Request,
   res: Response,
   supabase: SupabaseClient,
   userId: string
 ): Promise<boolean> {
   const rawSid = req.headers['x-fervec-session-id'];
-  const sessionId = typeof rawSid === 'string' ? rawSid.trim() : '';
-  if (!sessionId || sessionId.length < 8 || DUMMY_SESSION_IDS.has(sessionId.toLowerCase())) {
-    res.status(401).json({
-      ok: false,
-      code: 'SESSION_REQUIRED',
-      error: 'Identificador de sessão ativa obrigatório. Faça login novamente para continuar.',
-    });
+  const presented = typeof rawSid === 'string' ? rawSid.trim() : '';
+  const parsed = singleSessionManager.extractRawSessionId(userId, presented);
+
+  if (!parsed.ok || DUMMY_SESSION_IDS.has(parsed.sessionId.toLowerCase())) {
+    const code = parsed.errorCode || 'SESSION_REQUIRED';
+    const message =
+      code === 'SESSION_EXPIRED'
+        ? 'Sua sessão expirou por segurança. Faça login novamente para continuar.'
+        : code === 'INVALID_SIGNATURE'
+          ? 'Token de sessão inválido. Faça login novamente para continuar.'
+          : 'Identificador de sessão ativa obrigatório. Faça login novamente para continuar.';
+    res.status(401).json({ ok: false, code, error: message });
     return false;
   }
 
-  // Validação criptográfica e de expiração vinculada à identidade antes de consultar persistência
-  const sigCheck = singleSessionManager.verifySignedTokenForUser(userId, sessionId);
-  if (!sigCheck.valid) {
-    res.status(401).json({
-      ok: false,
-      code: sigCheck.reason,
-      error:
-        sigCheck.reason === 'SESSION_EXPIRED'
-          ? 'Sua sessão expirou. Faça login novamente para continuar.'
-          : 'Identificador de sessão inválido ou adulterado.',
-    });
-    return false;
-  }
+  const sessionId = parsed.sessionId;
 
-  // Consulta user_active_sessions no banco para resistir a cold-start / múltiplas instâncias sem nunca auto-vincular token desconhecido
-  let verifyOpts: VerifySessionOptions | undefined;
+  // Verifica primeiro a tabela user_active_sessions no banco para resistir a cold-start / múltiplas instâncias
   try {
-    let dbRes = await supabase
+    const dbClient = getAdminOrUserClient(supabase);
+    const { data, error } = await dbClient
       .from('user_active_sessions')
-      .select('session_id, expires_at, device_hint')
+      .select('session_id, expires_at')
       .eq('user_id', userId)
       .maybeSingle();
 
-    if (dbRes.error && /column|expires_at|device_hint/i.test(String(dbRes.error.message || ''))) {
-      dbRes = await supabase
-        .from('user_active_sessions')
-        .select('session_id')
-        .eq('user_id', userId)
-        .maybeSingle();
-    }
-
-    if (!dbRes.error) {
-      const dbRow = dbRes.data as { session_id?: string; expires_at?: string | null; device_hint?: string | null } | null;
-      verifyOpts = {
-        activeRecordFromDb:
-          dbRow && typeof dbRow.session_id === 'string'
-            ? {
-                sessionId: dbRow.session_id,
-                expiresAt: dbRow.expires_at ?? null,
-                deviceLabel: dbRow.device_hint ?? null,
-              }
-            : null,
-      };
+    if (!error && data && typeof data.session_id === 'string') {
+      if (data.session_id !== sessionId) {
+        singleSessionManager.claimSession(userId, data.session_id);
+        res.status(409).json({
+          ok: false,
+          code: 'SESSION_REPLACED_OTHER_DEVICE',
+          error: 'Sua sessão foi encerrada porque a conta entrou em outro dispositivo ou navegador.',
+        });
+        return false;
+      }
+      if (typeof data.expires_at === 'string' && Date.parse(data.expires_at) <= Date.now()) {
+        singleSessionManager.clearSession(userId, sessionId);
+        res.status(401).json({
+          ok: false,
+          code: 'SESSION_EXPIRED',
+          error: 'Sua sessão expirou por segurança. Faça login novamente para continuar.',
+        });
+        return false;
+      }
     }
   } catch {
     // Tabela opcional em bancos antigos/mocks sem user_active_sessions
   }
 
-  const memCheck = singleSessionManager.verifySession(userId, sessionId, verifyOpts);
+  const memCheck = singleSessionManager.verifyOrBindSession(userId, presented);
   if (!memCheck.ok) {
-    const isSuperseded = memCheck.code === 'SESSION_SUPERSEDED';
-    res.status(isSuperseded ? 409 : 401).json({
+    const isUnauthorized =
+      memCheck.code === 'SESSION_REQUIRED' ||
+      memCheck.code === 'SESSION_EXPIRED' ||
+      memCheck.code === 'INVALID_SIGNATURE';
+    res.status(isUnauthorized ? 401 : 409).json({
       ok: false,
-      code: isSuperseded ? 'SESSION_REPLACED_OTHER_DEVICE' : memCheck.code,
+      code: memCheck.code === 'SESSION_SUPERSEDED' ? 'SESSION_REPLACED_OTHER_DEVICE' : memCheck.code,
       error: memCheck.message,
     });
     return false;
@@ -602,7 +717,7 @@ async function getPassingExamAttempts(
 }
 
 async function hasVerifiedCourseCompletion(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   params: {
     userId: string;
     courseId: string;
@@ -611,36 +726,25 @@ async function hasVerifiedCourseCompletion(
     progressRows?: ModuleProgressRow[];
   }
 ): Promise<{ completed: boolean; effectiveCompletedAt: string | null }> {
-  if (params.passingExams.length > 0) {
+  const verifiedPassingExam = params.passingExams.find(
+    (att) =>
+      att.attempt_type === 'exam' &&
+      att.passed === true &&
+      (typeof att.score !== 'number' || att.score >= PASSING_SCORE_PERCENT)
+  );
+  if (verifiedPassingExam) {
     return {
       completed: true,
       effectiveCompletedAt:
-        params.enrollment?.completed_at || params.passingExams[0]?.attempted_at || null,
+        params.enrollment?.completed_at || verifiedPassingExam.attempted_at || null,
     };
   }
 
-  if (params.enrollment?.status === 'completed' || Boolean(params.enrollment?.completed_at)) {
+  // Only authoritative service-role-managed enrollment completion counts without a live exam row
+  if (params.enrollment?.status === 'completed') {
     return {
       completed: true,
-      effectiveCompletedAt: params.enrollment?.completed_at || params.enrollment?.updated_at || null,
-    };
-  }
-
-  let rows = params.progressRows;
-  if (!rows) {
-    const { data } = await supabase
-      .from('module_progress')
-      .select('id, exam_status, updated_at')
-      .eq('user_id', params.userId)
-      .eq('course_id', params.courseId);
-    rows = (data || []) as ModuleProgressRow[];
-  }
-
-  const passedModule = rows.find((m) => m.exam_status === 'passed');
-  if (passedModule) {
-    return {
-      completed: true,
-      effectiveCompletedAt: passedModule.updated_at || null,
+      effectiveCompletedAt: params.enrollment.completed_at || params.enrollment.updated_at || null,
     };
   }
 
@@ -655,7 +759,8 @@ async function tryUploadCertificatePdfToStorage(
     pdfBytes: Uint8Array;
   }
 ): Promise<string | null> {
-  const storage = (supabase as unknown as { storage?: SupabaseClient['storage'] }).storage;
+  const storageClient = getAdminOrUserClient(supabase);
+  const storage = (storageClient as unknown as { storage?: SupabaseClient['storage'] }).storage;
   if (!storage || typeof storage.from !== 'function') return null;
 
   const objectPath = `${params.userId}/${params.certificateCode}.pdf`;
@@ -692,18 +797,19 @@ async function idempotentIssueCertificate(
       : result;
   }
 
+  const writer = getAdminOrUserClient(supabase);
   const runIssue = async (): Promise<{
     certificate: CertificateRow | null;
     alreadyIssued: boolean;
     error?: string;
   }> => {
-    const existing = await findExistingCertificate(supabase, params.userId, params.course.id);
+    const existing = await findExistingCertificate(writer, params.userId, params.course.id);
     if (existing) {
       return { certificate: existing, alreadyIssued: true };
     }
 
     const code = generateCertificateCode();
-    const { data: inserted, error } = await supabase
+    const { data: inserted, error } = await writer
       .from('certificates')
       .insert({
         user_id: params.userId,
@@ -721,7 +827,7 @@ async function idempotentIssueCertificate(
 
     if (error || !inserted) {
       // Re-check in case a concurrent request inserted first (e.g. unique index violation 23505)
-      const retryExisting = await findExistingCertificate(supabase, params.userId, params.course.id);
+      const retryExisting = await findExistingCertificate(writer, params.userId, params.course.id);
       if (retryExisting) {
         return { certificate: retryExisting, alreadyIssued: true };
       }
@@ -765,7 +871,7 @@ async function listEnrichedUserCertificates(
     coursesById?: Map<string, CourseRow & { estimatedMinutes: number; workloadLabel: string }>;
   }
 ): Promise<EnrichedCertificateRecord[]> {
-  const [{ data: certsData }, coursesBundle, enrollmentsRes, passingAttemptsRes, moduleProgRes] = await Promise.all([
+  const [{ data: certsData }, coursesBundle, enrollmentsRes, passingAttemptsRes] = await Promise.all([
     supabase
       .from('certificates')
       .select(
@@ -782,16 +888,11 @@ async function listEnrichedUserCertificates(
       .eq('user_id', params.userId),
     supabase
       .from('assessment_attempts')
-      .select('id, course_id, attempt_type, passed, attempted_at')
+      .select('id, course_id, attempt_type, score, passed, attempted_at')
       .eq('user_id', params.userId)
       .eq('attempt_type', 'exam')
       .eq('passed', true)
       .order('attempted_at', { ascending: true }),
-    supabase
-      .from('module_progress')
-      .select('course_id, exam_status, updated_at')
-      .eq('user_id', params.userId)
-      .eq('exam_status', 'passed'),
   ]);
 
   const rawCerts = (certsData || []) as CertificateRow[];
@@ -804,15 +905,11 @@ async function listEnrichedUserCertificates(
 
   const earliestPassByCourse = new Map<string, string>();
   for (const att of (passingAttemptsRes.data || []) as AssessmentAttemptRow[]) {
-    if (!earliestPassByCourse.has(att.course_id)) {
+    if (
+      (typeof att.score !== 'number' || att.score >= PASSING_SCORE_PERCENT) &&
+      !earliestPassByCourse.has(att.course_id)
+    ) {
       earliestPassByCourse.set(att.course_id, att.attempted_at);
-    }
-  }
-
-  const passedModuleByCourse = new Map<string, string>();
-  for (const mp of (moduleProgRes.data || []) as Array<{ course_id: string; exam_status: string; updated_at?: string }>) {
-    if (mp.exam_status === 'passed' && !passedModuleByCourse.has(mp.course_id)) {
-      passedModuleByCourse.set(mp.course_id, mp.updated_at || '');
     }
   }
 
@@ -821,18 +918,13 @@ async function listEnrichedUserCertificates(
     const courseMeta = coursesBundle.byId.get(cert.course_id);
     const enr = enrollmentsByCourse.get(cert.course_id);
     const passIso = earliestPassByCourse.get(cert.course_id);
-    const modPassIso = passedModuleByCourse.get(cert.course_id);
-    const isCompletedInDb =
-      Boolean(passIso) ||
-      enr?.status === 'completed' ||
-      Boolean(enr?.completed_at) ||
-      passedModuleByCourse.has(cert.course_id);
+    const isCompletedInDb = Boolean(passIso) || enr?.status === 'completed';
 
     if (!params.canBypassExamForCertificates && !isCompletedInDb) {
       continue;
     }
 
-    const completionIso = enr?.completed_at || passIso || modPassIso || cert.issued_at;
+    const completionIso = enr?.completed_at || passIso || cert.issued_at;
     const workloadMinutes = courseMeta?.estimatedMinutes ?? 240;
     const workloadLabel = courseMeta?.workloadLabel ?? '4 horas';
     const studentName = params.profile.full_name || cert.student_name_snapshot;
@@ -861,12 +953,22 @@ export function registerCourseApiRoutes(
   deps?: {
     resolveAuth?: typeof resolveAuthenticatedSupabaseUser;
     runAsaasAudit?: typeof runAsaasConnectionAudit;
-    fetchFn?: typeof fetch;
+    getPublicOrServiceClient?: () => SupabaseClient | null;
   }
 ): void {
   const resolveAuth = deps?.resolveAuth ?? resolveAuthenticatedSupabaseUser;
   const runAsaasAudit = deps?.runAsaasAudit ?? runAsaasConnectionAudit;
-  const fetchFn = deps?.fetchFn ?? fetch;
+  const resolveVerifyClient =
+    deps?.getPublicOrServiceClient ??
+    (() => {
+      const serviceClient = getServiceRoleSupabaseClient();
+      if (serviceClient) return serviceClient;
+      const publicEnv = getServerSupabaseEnv();
+      if (!publicEnv) return null;
+      return createSupabaseJsClient(publicEnv.url, publicEnv.key, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+    });
 
   // Hydrate authenticated student workspace (profile, course, modules, enrollment, progress, attempts, certificate)
   app.get('/api/workspace/state', async (req: Request, res: Response) => {
@@ -1101,9 +1203,10 @@ export function registerCourseApiRoutes(
     const reviewDone = Boolean(body.reviewDone);
     const workFinished = Boolean(body.workFinished);
 
-    const { data: existingProg, error: readProgErr } = await supabase
+    const dbWriter = getAdminOrUserClient(supabase);
+    const { data: existingProg, error: readProgErr } = await dbWriter
       .from('module_progress')
-      .select('id, exam_status')
+      .select('id, exam_status, work_finished')
       .eq('user_id', user.id)
       .eq('course_id', courseCtx.course.id)
       .eq('module_key', moduleKey)
@@ -1115,10 +1218,11 @@ export function registerCourseApiRoutes(
     }
 
     const preservedExamStatus = existingProg?.exam_status || 'intro';
+    const nextWorkFinished = Boolean(existingProg?.work_finished) || workFinished;
     const nowIso = new Date().toISOString();
 
     if (existingProg?.id) {
-      const { error: updateErr } = await supabase
+      const { error: updateErr } = await dbWriter
         .from('module_progress')
         .update({
           current_stage: currentStage,
@@ -1126,7 +1230,7 @@ export function registerCourseApiRoutes(
           mise_checks: cleanMise,
           review_done: reviewDone,
           lesson_finished: lessonFinished,
-          work_finished: workFinished,
+          work_finished: nextWorkFinished,
           exam_status: preservedExamStatus,
           updated_at: nowIso,
         })
@@ -1137,7 +1241,7 @@ export function registerCourseApiRoutes(
         return;
       }
     } else {
-      const { error: insertErr } = await supabase.from('module_progress').insert({
+      const { error: insertErr } = await dbWriter.from('module_progress').insert({
         user_id: user.id,
         course_id: courseCtx.course.id,
         module_key: moduleKey,
@@ -1146,7 +1250,7 @@ export function registerCourseApiRoutes(
         mise_checks: cleanMise,
         review_done: reviewDone,
         lesson_finished: lessonFinished,
-        work_finished: workFinished,
+        work_finished: nextWorkFinished,
         exam_status: 'intro',
         updated_at: nowIso,
       });
@@ -1155,16 +1259,16 @@ export function registerCourseApiRoutes(
         const isUniqueConflict =
           insertErr.code === '23505' || /duplicate key/i.test(insertErr.message || '');
         if (isUniqueConflict) {
-          const { data: racedProg } = await supabase
+          const { data: racedProg } = await dbWriter
             .from('module_progress')
-            .select('id, exam_status')
+            .select('id, exam_status, work_finished')
             .eq('user_id', user.id)
             .eq('course_id', courseCtx.course.id)
             .eq('module_key', moduleKey)
             .maybeSingle();
 
           if (racedProg?.id) {
-            const { error: retryUpdateErr } = await supabase
+            const { error: retryUpdateErr } = await dbWriter
               .from('module_progress')
               .update({
                 current_stage: currentStage,
@@ -1172,7 +1276,7 @@ export function registerCourseApiRoutes(
                 mise_checks: cleanMise,
                 review_done: reviewDone,
                 lesson_finished: lessonFinished,
-                work_finished: workFinished,
+                work_finished: Boolean(racedProg.work_finished) || workFinished,
                 exam_status: racedProg.exam_status || 'intro',
                 updated_at: nowIso,
               })
@@ -1182,7 +1286,7 @@ export function registerCourseApiRoutes(
               // Saved cleanly after resolving concurrent insert
               const lastModRaw = normalizeModuleKeyInput(body.lastModuleKey);
               const lastMod = isValidModuleKey(lastModRaw) ? lastModRaw : moduleKey;
-              await supabase
+              await getAdminOrUserClient(supabase)
                 .from('student_enrollments')
                 .update({ last_module_key: lastMod, updated_at: nowIso })
                 .eq('user_id', user.id)
@@ -1200,7 +1304,7 @@ export function registerCourseApiRoutes(
 
     const lastModRaw = normalizeModuleKeyInput(body.lastModuleKey);
     const lastMod = isValidModuleKey(lastModRaw) ? lastModRaw : moduleKey;
-    await supabase
+    await getAdminOrUserClient(supabase)
       .from('student_enrollments')
       .update({
         last_module_key: lastMod,
@@ -1547,8 +1651,9 @@ export function registerCourseApiRoutes(
 
     let insertedAttempt: AssessmentAttemptRow | null = null;
     let attemptErr: { code?: string; message?: string } | null = null;
+    const dbWriter = getAdminOrUserClient(supabase);
 
-    const versionedInsertRes = await supabase
+    const versionedInsertRes = await dbWriter
       .from('assessment_attempts')
       .insert(versionedAttemptInsert)
       .select(
@@ -1560,7 +1665,7 @@ export function registerCourseApiRoutes(
       versionedInsertRes.error &&
       isMissingVersioningColumnError(versionedInsertRes.error)
     ) {
-      const fallbackInsertRes = await supabase
+      const fallbackInsertRes = await dbWriter
         .from('assessment_attempts')
         .insert(baseAttemptInsert)
         .select('id, user_id, course_id, module_key, attempt_type, score, passed, answers, attempted_at')
@@ -1580,14 +1685,14 @@ export function registerCourseApiRoutes(
     }
 
     if (attemptType === 'work') {
-      await supabase
+      await dbWriter
         .from('module_progress')
         .update({ work_finished: true, updated_at: nowIso })
         .eq('user_id', user.id)
         .eq('course_id', courseCtx.course.id)
         .eq('module_key', moduleKey);
     } else {
-      await supabase
+      await dbWriter
         .from('module_progress')
         .update({
           exam_status: graded.passed ? 'passed' : 'failed',
@@ -1604,7 +1709,7 @@ export function registerCourseApiRoutes(
     if (attemptType === 'exam' && graded.passed) {
       completionIso = enrollment?.completed_at || nowIso;
       if (enrollment) {
-        await supabase
+        await getAdminOrUserClient(supabase)
           .from('student_enrollments')
           .update({
             status: 'completed',
@@ -1870,7 +1975,7 @@ export function registerCourseApiRoutes(
     ) {
       const effectiveCompletedAt =
         completionCheck.effectiveCompletedAt || passingExams[0]?.attempted_at || new Date().toISOString();
-      await supabase
+      await getAdminOrUserClient(supabase)
         .from('student_enrollments')
         .update({
           status: 'completed',
@@ -1949,6 +2054,75 @@ export function registerCourseApiRoutes(
       certificate: enrichedIssued,
       certificates: allCertificates,
     });
+  });
+
+  // Public authenticity check by certificate code (never exposes full/masked CPF, email, address, or user_id)
+  app.get('/api/certificates/verify/:code', async (req: Request, res: Response) => {
+    const code = String(req.params.code || '').trim();
+    if (!code || code.length < 4 || code.length > 64 || !/^[A-Za-z0-9-]+$/.test(code)) {
+      res.status(400).json({
+        ok: false,
+        valid: false,
+        error: 'Código de certificado inválido.',
+      });
+      return;
+    }
+
+    const dbClient = resolveVerifyClient();
+    if (!dbClient) {
+      res.status(503).json({
+        ok: false,
+        valid: false,
+        error: 'Serviço de verificação de certificados indisponível sem configuração do Supabase.',
+      });
+      return;
+    }
+
+    try {
+      const { data: certRow, error } = await dbClient
+        .from('certificates')
+        .select('certificate_code, status, student_name_snapshot, course_title_snapshot, course_id, issued_at')
+        .eq('certificate_code', code)
+        .maybeSingle();
+
+      if (error || !certRow) {
+        res.status(404).json({
+          ok: false,
+          valid: false,
+          error: 'Certificado não encontrado.',
+        });
+        return;
+      }
+
+      const cert = certRow as Pick<
+        CertificateRow,
+        'certificate_code' | 'status' | 'student_name_snapshot' | 'course_title_snapshot' | 'course_id' | 'issued_at'
+      >;
+      const courseCtx = cert.course_id
+        ? await ensureCourseContextById(dbClient, cert.course_id).catch(() => null)
+        : null;
+      const isIssued = String(cert.status || '').toLowerCase() === 'issued';
+
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({
+        ok: true,
+        valid: isIssued,
+        certificateCode: cert.certificate_code,
+        status: cert.status,
+        studentName: cert.student_name_snapshot,
+        courseTitle: courseCtx?.course.title || cert.course_title_snapshot,
+        courseSlug: courseCtx?.course.slug || null,
+        workloadLabel: courseCtx?.workloadLabel || '4 horas',
+        issuedAt: cert.issued_at,
+        issuedDate: formatBrDate(cert.issued_at),
+      });
+    } catch {
+      res.status(500).json({
+        ok: false,
+        valid: false,
+        error: 'Erro interno ao consultar a autenticidade do certificado.',
+      });
+    }
   });
 
   // Authenticated, ownership-verified PDF certificate download (blocks non-owners & unapproved non-dev students)
@@ -2094,9 +2268,6 @@ export function registerCourseApiRoutes(
     const referenceTitle = courseSlug === 'massas-italianas' ? 'Curso de Massas' : 'Curso FerveC Gastronomia';
 
     const auth = await resolveAuth(req, res).catch(() => null);
-    if (auth?.user) {
-      if (!(await enforceClaimedSession(req, res, auth.supabase, auth.user.id))) return;
-    }
     let queryClient: SupabaseClient | null = auth?.supabase ?? null;
     if (!queryClient) {
       const publicEnv = getServerSupabaseEnv();
@@ -2121,6 +2292,13 @@ export function registerCourseApiRoutes(
       email: string;
       ddd: string;
       phone: string;
+      cep?: string;
+      street?: string;
+      streetNumber?: string;
+      complement?: string;
+      neighborhood?: string;
+      city?: string;
+      state?: string;
     } | null = null;
 
     if (queryClient) {
@@ -2147,11 +2325,22 @@ export function registerCourseApiRoutes(
       }
 
       if (auth?.user) {
-        const { data: profileRow } = await queryClient
+        let { data: profileRow, error: profileErr } = await queryClient
           .from('profiles')
-          .select('full_name, email, ddd, phone, asaas_customer_id')
+          .select(
+            'full_name, email, ddd, phone, asaas_customer_id, postal_code, street, street_number, complement, neighborhood, city, state'
+          )
           .eq('id', auth.user.id)
           .maybeSingle();
+
+        if (profileErr && isMissingVersioningColumnError(profileErr)) {
+          const legacyProf = await queryClient
+            .from('profiles')
+            .select('full_name, email, ddd, phone, asaas_customer_id')
+            .eq('id', auth.user.id)
+            .maybeSingle();
+          profileRow = legacyProf.data as typeof profileRow;
+        }
 
         const profRec = (profileRow || {}) as Record<string, unknown>;
         const rawCustomerId = typeof profRec.asaas_customer_id === 'string' ? profRec.asaas_customer_id.trim() : '';
@@ -2163,6 +2352,27 @@ export function registerCourseApiRoutes(
             (auth.user.email || '').trim().toLowerCase(),
           ddd: typeof profRec.ddd === 'string' ? profRec.ddd.trim() : '',
           phone: typeof profRec.phone === 'string' ? profRec.phone.trim() : '',
+          ...(typeof profRec.postal_code === 'string' && profRec.postal_code.trim()
+            ? { cep: profRec.postal_code.trim() }
+            : {}),
+          ...(typeof profRec.street === 'string' && profRec.street.trim()
+            ? { street: profRec.street.trim() }
+            : {}),
+          ...(typeof profRec.street_number === 'string' && profRec.street_number.trim()
+            ? { streetNumber: profRec.street_number.trim() }
+            : {}),
+          ...(typeof profRec.complement === 'string' && profRec.complement.trim()
+            ? { complement: profRec.complement.trim() }
+            : {}),
+          ...(typeof profRec.neighborhood === 'string' && profRec.neighborhood.trim()
+            ? { neighborhood: profRec.neighborhood.trim() }
+            : {}),
+          ...(typeof profRec.city === 'string' && profRec.city.trim()
+            ? { city: profRec.city.trim() }
+            : {}),
+          ...(typeof profRec.state === 'string' && profRec.state.trim()
+            ? { state: profRec.state.trim().toUpperCase() }
+            : {}),
         };
       }
 
@@ -2232,6 +2442,7 @@ export function registerCourseApiRoutes(
         ? 'production'
         : 'sandbox';
     const priceConfirm = isCoursePriceConfirmedForProduction();
+    const launchLock = evaluateProductionLaunchLock();
     const legalVersions = getLegalDocumentVersions();
 
     res.setHeader('Cache-Control', 'no-store');
@@ -2246,6 +2457,7 @@ export function registerCourseApiRoutes(
       priceFormatted,
       priceSource,
       priceConfirmedForProduction: priceConfirm.confirmed,
+      launchLock,
       legalVersions,
       supplier: {
         commercialName: SUPPLIER_IDENTITY.commercialName,
@@ -2283,7 +2495,8 @@ export function registerCourseApiRoutes(
 
     const { supabase, user } = auth;
     if (!(await enforceClaimedSession(req, res, supabase, user.id))) return;
-    const { data: orderRow } = await supabase
+    const dbClient = getAdminOrUserClient(supabase);
+    const { data: orderRow } = await dbClient
       .from('orders')
       .select('id, course_id, status, amount_cents, asaas_payment_id, paid_at')
       .eq('id', orderId)
@@ -2295,8 +2508,8 @@ export function registerCourseApiRoutes(
       return;
     }
 
-    const [{ data: paymentRow }, { data: enrollmentRow }, withdrawalQuery] = await Promise.all([
-      supabase
+    const [{ data: paymentRow }, { data: enrollmentRow }, { data: withdrawalRow }] = await Promise.all([
+      dbClient
         .from('payments')
         .select('asaas_payment_id, status, billing_type, value_cents, due_date, invoice_url, bank_slip_url')
         .eq('order_id', orderRow.id)
@@ -2304,166 +2517,21 @@ export function registerCourseApiRoutes(
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle(),
-      supabase
+      dbClient
         .from('student_enrollments')
         .select('status')
         .eq('user_id', user.id)
         .eq('course_id', orderRow.course_id)
         .maybeSingle(),
-      supabase
+      dbClient
         .from('withdrawal_requests')
-        .select('id, status, protocol_code, refund_provider_status, last_refund_error, processed_at')
+        .select('status, protocol_code, refund_provider_status, requested_at, processed_at')
         .eq('order_id', orderRow.id)
         .eq('user_id', user.id)
         .maybeSingle(),
     ]);
 
-    let withdrawalRow = withdrawalQuery.data as {
-      id?: string;
-      status?: string | null;
-      protocol_code?: string | null;
-      refund_provider_status?: string | null;
-      last_refund_error?: string | null;
-      processed_at?: string | null;
-    } | null;
-
-    if (
-      withdrawalQuery.error &&
-      /column|last_refund_error/i.test(String(withdrawalQuery.error.message || ''))
-    ) {
-      const fallbackWq = await supabase
-        .from('withdrawal_requests')
-        .select('id, status, protocol_code, refund_provider_status, processed_at')
-        .eq('order_id', orderRow.id)
-        .eq('user_id', user.id)
-        .maybeSingle();
-      withdrawalRow = (fallbackWq.data as typeof withdrawalRow) || null;
-    }
-
-    let currentOrderStatus = String(orderRow.status || 'pending');
-    let currentWithdrawalStatus = withdrawalRow?.status ? String(withdrawalRow.status) : null;
-    let currentRefundProviderStatus = withdrawalRow?.refund_provider_status
-      ? String(withdrawalRow.refund_provider_status)
-      : null;
-    let currentRefundError = withdrawalRow?.last_refund_error
-      ? String(withdrawalRow.last_refund_error)
-      : null;
-    let currentRefundProcessedAt = withdrawalRow?.processed_at
-      ? String(withdrawalRow.processed_at)
-      : null;
-
-    // Consulta segura somente leitura ao Asaas quando o pedido está com estorno em processamento
-    const asaasEnv =
-      String(process.env.ASAAS_ENVIRONMENT || '').trim().toLowerCase() === 'production'
-        ? 'production'
-        : 'sandbox';
-    const asaasKey =
-      asaasEnv === 'production'
-        ? process.env.ASAAS_API_KEY?.trim()
-        : process.env.ASAAS_SANDBOX_API_KEY?.trim() || process.env.ASAAS_API_KEY?.trim();
-
-    if (
-      currentOrderStatus === 'refund_requested' &&
-      asaasKey &&
-      orderRow.asaas_payment_id
-    ) {
-      const baseUrl =
-        asaasEnv === 'production'
-          ? (process.env.ASAAS_API_URL || 'https://api.asaas.com/v3').replace(/\/+$/, '')
-          : (process.env.ASAAS_SANDBOX_URL || 'https://api-sandbox.asaas.com/v3').replace(/\/+$/, '');
-      try {
-        const checkRes = await fetchFn(
-          `${baseUrl}/payments/${encodeURIComponent(String(orderRow.asaas_payment_id))}`,
-          {
-            method: 'GET',
-            headers: {
-              Accept: 'application/json',
-              access_token: asaasKey,
-            },
-            signal: AbortSignal.timeout(5000),
-          }
-        );
-        if (checkRes.ok) {
-          const payJson = (await checkRes.json().catch(() => ({}))) as { status?: string };
-          const providerSt = String(payJson.status || '').trim().toUpperCase();
-          const nowIso = new Date().toISOString();
-          if (providerSt === 'REFUNDED') {
-            currentOrderStatus = 'refunded';
-            currentWithdrawalStatus = 'refunded';
-            currentRefundProviderStatus = 'REFUNDED';
-            currentRefundError = null;
-            currentRefundProcessedAt = nowIso;
-
-            await supabase
-              .from('orders')
-              .update({ status: 'refunded', updated_at: nowIso })
-              .eq('id', orderRow.id)
-              .eq('user_id', user.id);
-
-            if (withdrawalRow?.id) {
-              const wrUpd = await supabase
-                .from('withdrawal_requests')
-                .update({
-                  status: 'refunded',
-                  refund_provider_status: 'REFUNDED',
-                  last_refund_error: null,
-                  processed_at: nowIso,
-                  updated_at: nowIso,
-                })
-                .eq('id', withdrawalRow.id);
-              if (wrUpd.error && isMissingVersioningColumnError(wrUpd.error)) {
-                await supabase
-                  .from('withdrawal_requests')
-                  .update({
-                    status: 'refunded',
-                    refund_provider_status: 'REFUNDED',
-                    processed_at: nowIso,
-                    updated_at: nowIso,
-                  })
-                  .eq('id', withdrawalRow.id);
-              }
-            }
-
-            const { data: otherPaid } = await supabase
-              .from('orders')
-              .select('id')
-              .eq('user_id', user.id)
-              .eq('course_id', orderRow.course_id)
-              .eq('status', 'paid')
-              .neq('id', orderRow.id)
-              .limit(1);
-            if (!Array.isArray(otherPaid) || otherPaid.length === 0) {
-              await supabase
-                .from('student_enrollments')
-                .update({ status: 'canceled', updated_at: nowIso })
-                .eq('user_id', user.id)
-                .eq('course_id', orderRow.course_id);
-            }
-          } else if (providerSt === 'REFUND_FAILED' || providerSt === 'REFUND_DENIED') {
-            currentWithdrawalStatus = 'refund_failed';
-            currentRefundProviderStatus = providerSt;
-            currentRefundError = `Estorno recusado pelo gateway Asaas (${providerSt}).`;
-            if (withdrawalRow?.id) {
-              await supabase
-                .from('withdrawal_requests')
-                .update({
-                  status: 'refund_failed',
-                  refund_provider_status: providerSt,
-                  last_refund_error: currentRefundError,
-                  updated_at: nowIso,
-                })
-                .eq('id', withdrawalRow.id);
-            }
-          } else if (providerSt) {
-            currentRefundProviderStatus = providerSt;
-          }
-        }
-      } catch {
-        // Falha transitória de rede na consulta não altera estado persistido
-      }
-    }
-
-    const paidViaOrder = currentOrderStatus === 'paid';
+    const paidViaOrder = orderRow.status === 'paid';
     const enrStatus = String(enrollmentRow?.status || '').toLowerCase();
     const isEnrolled =
       paidViaOrder ||
@@ -2475,13 +2543,17 @@ export function registerCourseApiRoutes(
     res.json({
       ok: true,
       orderId: orderRow.id,
-      orderStatus: currentOrderStatus,
+      orderStatus: orderRow.status,
       isEnrolled,
-      withdrawalStatus: currentWithdrawalStatus,
-      protocolCode: withdrawalRow?.protocol_code || null,
-      refundProviderStatus: currentRefundProviderStatus,
-      refundError: currentRefundError,
-      refundProcessedAt: currentRefundProcessedAt,
+      withdrawal: withdrawalRow
+        ? {
+            status: withdrawalRow.status,
+            protocolCode: withdrawalRow.protocol_code ?? null,
+            providerStatus: withdrawalRow.refund_provider_status ?? null,
+            requestedAt: withdrawalRow.requested_at ?? null,
+            processedAt: withdrawalRow.processed_at ?? null,
+          }
+        : null,
       payment: paymentRow
         ? {
             id: paymentRow.asaas_payment_id,
@@ -2533,7 +2605,7 @@ export function registerCourseApiRoutes(
     res.json(report);
   });
 
-  // Single-session claim & logout (server-issued HMAC token bound to authenticated user)
+  // Single-session claim & logout
   app.post('/api/session/claim', async (req: Request, res: Response) => {
     const auth = await resolveAuth(req, res);
     if (!auth) {
@@ -2541,106 +2613,67 @@ export function registerCourseApiRoutes(
       return;
     }
     const { supabase, user } = auth;
-    const body = (req.body || {}) as {
-      sessionId?: string;
-      deviceLabel?: string;
-      preserveIfValid?: boolean;
-      ttlSeconds?: number;
-    };
+    const body = (req.body || {}) as { sessionId?: string; deviceLabel?: string };
     const headerSid =
-      typeof req.headers['x-fervec-session-id'] === 'string'
-        ? req.headers['x-fervec-session-id'].trim()
-        : '';
-    const candidateSid =
-      headerSid || (typeof body.sessionId === 'string' ? body.sessionId.trim() : '');
-
-    let existingDbSession: {
-      sessionId: string;
-      expiresAt?: string | null;
-      deviceLabel?: string | null;
-    } | null = null;
-    if (body.preserveIfValid && candidateSid) {
-      try {
-        let dbRes = await supabase
-          .from('user_active_sessions')
-          .select('session_id, expires_at, device_hint')
-          .eq('user_id', user.id)
-          .maybeSingle();
-        if (dbRes.error && /column|expires_at|device_hint/i.test(String(dbRes.error.message || ''))) {
-          dbRes = await supabase
-            .from('user_active_sessions')
-            .select('session_id')
-            .eq('user_id', user.id)
-            .maybeSingle();
+      typeof req.headers['x-fervec-session-id'] === 'string' ? req.headers['x-fervec-session-id'].trim() : '';
+    const rawCandidate = (typeof body.sessionId === 'string' && body.sessionId.trim()) || headerSid;
+    const parsedCandidate = singleSessionManager.extractRawSessionId(user.id, rawCandidate);
+    const sid =
+      parsedCandidate.ok && !DUMMY_SESSION_IDS.has(parsedCandidate.sessionId.toLowerCase())
+        ? parsedCandidate.sessionId
+        : crypto.randomUUID();
+    const record = singleSessionManager.claimSession(user.id, sid, body.deviceLabel || '');
+    let persisted = false;
+    try {
+      const rpcRes = await supabase.rpc('claim_active_session', {
+        p_session_id: record.sessionId,
+        p_device_hint: body.deviceLabel || null,
+      });
+      persisted = !rpcRes?.error;
+    } catch {
+      // RPC opcional quando SQL migration ainda não foi aplicada
+    }
+    if (!persisted) {
+      const serviceClient = getServiceRoleSupabaseClient();
+      if (serviceClient) {
+        try {
+          await serviceClient.from('user_active_sessions').upsert(
+            {
+              user_id: user.id,
+              session_id: record.sessionId,
+              device_hint: (body.deviceLabel || '').slice(0, 120) || null,
+              updated_at: record.claimedAt,
+              last_seen_at: record.lastSeenAt,
+              expires_at: record.expiresAt,
+            },
+            { onConflict: 'user_id' }
+          );
+        } catch {
+          // ignore fallback error
         }
-        const row = dbRes.data as { session_id?: string; expires_at?: string | null; device_hint?: string | null } | null;
-        if (!dbRes.error && row && typeof row.session_id === 'string') {
-          existingDbSession = {
-            sessionId: row.session_id,
-            expiresAt: row.expires_at ?? null,
-            deviceLabel: row.device_hint ?? null,
-          };
-        }
-      } catch {
-        existingDbSession = null;
       }
     }
-
-    const ttlMs =
-      typeof body.ttlSeconds === 'number' && Number.isFinite(body.ttlSeconds) && body.ttlSeconds >= 1
-        ? body.ttlSeconds * 1000
-        : undefined;
-
-    const record = singleSessionManager.claimSession(
-      user.id,
-      body.preserveIfValid ? candidateSid : undefined,
-      body.deviceLabel || '',
-      {
-        preserveExistingIfValid: Boolean(body.preserveIfValid),
-        existingDbSession,
-        ttlMs,
-      }
-    );
-
-    if (!record.preserved) {
-      try {
-        const rpcRes = await supabase.rpc('claim_active_session', {
-          p_session_id: record.sessionId,
-          p_device_hint: body.deviceLabel || null,
-          p_expires_at: record.expiresAt,
-        });
-        if (rpcRes?.error && /function|argument|p_expires_at/i.test(String(rpcRes.error.message || ''))) {
-          await supabase.rpc('claim_active_session', {
-            p_session_id: record.sessionId,
-            p_device_hint: body.deviceLabel || null,
-          });
-        }
-      } catch {
-        // RPC opcional quando SQL migration ainda não foi aplicada
-      }
-    }
-
-    res.setHeader('Cache-Control', 'no-store');
     res.json({
       ok: true,
       sessionId: record.sessionId,
-      claimedAt: record.claimedAt,
+      signedToken: record.signedToken,
       expiresAt: record.expiresAt,
-      preserved: Boolean(record.preserved),
+      claimedAt: record.claimedAt,
     });
   });
 
   app.post('/api/session/logout', async (req: Request, res: Response) => {
     const auth = await resolveAuth(req, res).catch(() => null);
     if (!auth) {
-      res.json({ ok: true, cleared: false });
+      res.json({ ok: true });
       return;
     }
     const rawSid = req.headers['x-fervec-session-id'];
-    const sid = typeof rawSid === 'string' ? rawSid.trim() : '';
-    let cleared = false;
+    const presented = typeof rawSid === 'string' ? rawSid.trim() : '';
+    const parsed = singleSessionManager.extractRawSessionId(auth.user.id, presented);
+    const sid = parsed.ok ? parsed.sessionId : presented;
     if (sid) {
-      cleared = singleSessionManager.clearSession(auth.user.id, sid);
+      singleSessionManager.clearSession(auth.user.id, sid);
       try {
         await auth.supabase.rpc('clear_active_session', {
           p_session_id: sid,
@@ -2649,10 +2682,10 @@ export function registerCourseApiRoutes(
         // optional
       }
     }
-    res.json({ ok: true, cleared });
+    res.json({ ok: true });
   });
 
-  // Server-authoritative coupon validation
+  // Server-authoritative coupon validation (usa service_role quando disponível para contornar revoke em public.coupons)
   app.post('/api/coupons/validate', async (req: Request, res: Response) => {
     const auth = await resolveAuth(req, res);
     if (!auth) {
@@ -2668,10 +2701,12 @@ export function registerCourseApiRoutes(
       return;
     }
 
+    const dbClient = getAdminOrUserClient(auth.supabase);
+
     try {
-      const { data: couponRow, error } = await auth.supabase
+      const { data: couponRow, error } = await dbClient
         .from('coupons')
-        .select('id, code, discount_percent, course_scope, max_uses, uses_count, expires_at, active')
+        .select('code, discount_percent, course_scope, max_uses, uses_count, expires_at, active')
         .eq('code', code)
         .maybeSingle();
 
@@ -2696,7 +2731,28 @@ export function registerCourseApiRoutes(
         return;
       }
 
-      const basePrice = getAuthoritativeCoursePriceCents({ courseSlug }).priceCents;
+      const { data: priorRedemption } = await dbClient
+        .from('coupon_redemptions')
+        .select('id')
+        .eq('coupon_code', couponRow.code)
+        .eq('user_id', auth.user.id)
+        .eq('course_slug', courseSlug)
+        .maybeSingle();
+      if (priorRedemption) {
+        res.status(409).json({ ok: false, error: 'Você já utilizou este cupom neste curso.' });
+        return;
+      }
+
+      const { data: dbCourse } = await dbClient
+        .from('courses')
+        .select('price_cents')
+        .eq('slug', courseSlug)
+        .maybeSingle();
+      const basePrice = getAuthoritativeCoursePriceCents({
+        courseSlug,
+        dbPriceCents: typeof dbCourse?.price_cents === 'number' ? dbCourse.price_cents : null,
+      }).priceCents;
+
       const pct = Math.min(100, Math.max(0, Number(couponRow.discount_percent || 0)));
       const discountCents = Math.round((basePrice * pct) / 100);
       const totalCents = Math.max(0, basePrice - discountCents);
@@ -2825,20 +2881,23 @@ export function registerCourseApiRoutes(
       return;
     }
 
-    if (inFlightWithdrawals.has(orderId)) {
+    const flightKey = `${user.id}:${orderId}`;
+    if (inFlightWithdrawals.has(flightKey)) {
       res.status(409).json({
         ok: false,
         code: 'WITHDRAWAL_IN_PROGRESS',
-        error: 'Solicitação de arrependimento já está em processamento para este pedido. Aguarde alguns segundos.',
+        error: 'Solicitação de arrependimento já está em processamento para este pedido.',
       });
       return;
     }
 
-    inFlightWithdrawals.add(orderId);
+    inFlightWithdrawals.add(flightKey);
+    const dbClient = getAdminOrUserClient(supabase);
+
     try {
       const body = (req.body || {}) as { reason?: string };
 
-      const { data: orderRow } = await supabase
+      const { data: orderRow } = await dbClient
         .from('orders')
         .select('id, user_id, course_id, status, amount_cents, asaas_payment_id, paid_at, created_at')
         .eq('id', orderId)
@@ -2850,54 +2909,35 @@ export function registerCourseApiRoutes(
         return;
       }
 
-      let existingQuery = await supabase
+      const { data: existingWithdrawal } = await dbClient
         .from('withdrawal_requests')
-        .select('id, status, protocol_code, requested_at, refund_attempts')
+        .select('id, status, protocol_code, refund_provider_id, refund_provider_status, requested_at')
         .eq('order_id', orderRow.id)
         .eq('user_id', user.id)
         .maybeSingle();
 
-      if (
-        existingQuery.error &&
-        /column|refund_attempts/i.test(String(existingQuery.error.message || ''))
-      ) {
-        existingQuery = await supabase
-          .from('withdrawal_requests')
-          .select('id, status, protocol_code, requested_at')
-          .eq('order_id', orderRow.id)
-          .eq('user_id', user.id)
-          .maybeSingle();
-      }
-
-      const existingWithdrawal = existingQuery.data as {
-        id?: string;
-        status?: string;
-        protocol_code?: string | null;
-        requested_at?: string | null;
-        refund_attempts?: number | null;
-      } | null;
-
-      const isRetryAfterFailure =
-        orderRow.status === 'refund_requested' &&
-        existingWithdrawal?.status === 'refund_failed';
+      const existingStatus = String(existingWithdrawal?.status || '');
+      const canRetryFailedRefund =
+        Boolean(existingWithdrawal) &&
+        existingStatus === 'refund_failed' &&
+        orderRow.status !== 'refunded';
 
       if (
-        !isRetryAfterFailure &&
-        (existingWithdrawal ||
-          orderRow.status === 'refund_requested' ||
-          orderRow.status === 'refunded')
+        (existingWithdrawal && !canRetryFailedRefund) ||
+        orderRow.status === 'refunded' ||
+        (orderRow.status === 'refund_requested' && !canRetryFailedRefund)
       ) {
         res.status(409).json({
           ok: false,
           code: 'ALREADY_REQUESTED',
-          protocolCode: existingWithdrawal?.protocol_code || null,
+          protocolCode: (existingWithdrawal as { protocol_code?: string } | null)?.protocol_code || null,
           status: existingWithdrawal?.status || orderRow.status,
           error: 'Solicitação de arrependimento já registrada para este pedido.',
         });
         return;
       }
 
-      if (!isRetryAfterFailure && orderRow.status !== 'paid') {
+      if (orderRow.status !== 'paid' && !canRetryFailedRefund) {
         res.status(400).json({
           ok: false,
           error: 'A solicitação de arrependimento Art. 49 CDC aplica-se apenas a pedidos com pagamento confirmado.',
@@ -2907,7 +2947,7 @@ export function registerCourseApiRoutes(
 
       const paidTime = Date.parse(String(orderRow.paid_at || orderRow.created_at || ''));
       const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-      if (!isRetryAfterFailure && (!Number.isFinite(paidTime) || Date.now() - paidTime > sevenDaysMs)) {
+      if (!canRetryFailedRefund && (!Number.isFinite(paidTime) || Date.now() - paidTime > sevenDaysMs)) {
         res.status(400).json({
           ok: false,
           code: 'WITHDRAWAL_WINDOW_EXPIRED',
@@ -2918,21 +2958,18 @@ export function registerCourseApiRoutes(
 
       const nowIso = new Date().toISOString();
       const protocolCode =
-        (isRetryAfterFailure && existingWithdrawal?.protocol_code) ||
+        (existingWithdrawal as { protocol_code?: string } | null)?.protocol_code ||
         `ARR-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
       const cleanReason =
         typeof body.reason === 'string' && body.reason.trim()
           ? body.reason.trim().slice(0, 400)
           : 'Arrependimento Art. 49 CDC (7 dias)';
 
-      // Regra estrita: POST de solicitação aceita pelo Asaas NÃO marca 'refunded' imediatamente;
-      // mantém estado intermediário até confirmação definitiva por webhook autenticado ou consulta segura GET.
-      let withdrawalStatus: 'requested' | 'approved_refund_pending' | 'refund_failed' =
+      let withdrawalStatus: 'requested' | 'approved_refund_pending' | 'refunded' | 'refund_failed' =
         'approved_refund_pending';
-      const nextOrderStatus: 'refund_requested' = 'refund_requested';
+      let nextOrderStatus: 'refund_requested' | 'refunded' = 'refund_requested';
       let refundProviderId: string | null = null;
-      let refundProviderStatus: string | null = 'AWAITING_GATEWAY_CONFIRMATION';
-      let refundErrorMessage: string | null = null;
+      let refundProviderStatus: string | null = null;
 
       const asaasEnv =
         String(process.env.ASAAS_ENVIRONMENT || '').trim().toLowerCase() === 'production'
@@ -2949,7 +2986,7 @@ export function registerCourseApiRoutes(
             ? (process.env.ASAAS_API_URL || 'https://api.asaas.com/v3').replace(/\/+$/, '')
             : (process.env.ASAAS_SANDBOX_URL || 'https://api-sandbox.asaas.com/v3').replace(/\/+$/, '');
         try {
-          const refundRes = await fetchFn(
+          const refundRes = await fetch(
             `${baseUrl}/payments/${encodeURIComponent(String(orderRow.asaas_payment_id))}/refund`,
             {
               method: 'POST',
@@ -2965,92 +3002,61 @@ export function registerCourseApiRoutes(
           const refundJson = (await refundRes.json().catch(() => ({}))) as {
             id?: string;
             status?: string;
-            errors?: Array<{ description?: string; code?: string }>;
           };
           if (refundRes.ok) {
-            withdrawalStatus = 'approved_refund_pending';
+            const normalizedProviderStatus = String(refundJson.status || '').trim().toUpperCase();
             refundProviderId = refundJson.id || String(orderRow.asaas_payment_id);
-            refundProviderStatus = refundJson.status
-              ? `GATEWAY_ACCEPTED_${String(refundJson.status).toUpperCase()}`
-              : 'REFUND_IN_PROGRESS';
-            refundErrorMessage = null;
+            refundProviderStatus = normalizedProviderStatus || 'REFUND_REQUESTED';
+            if (normalizedProviderStatus === 'REFUNDED') {
+              withdrawalStatus = 'refunded';
+              nextOrderStatus = 'refunded';
+            } else {
+              withdrawalStatus = 'approved_refund_pending';
+              nextOrderStatus = 'refund_requested';
+            }
           } else {
             withdrawalStatus = 'refund_failed';
-            refundProviderStatus = `REFUND_FAILED_HTTP_${refundRes.status}`;
-            const gatewayDesc = refundJson.errors?.[0]?.description;
-            refundErrorMessage =
-              gatewayDesc ||
-              `Gateway Asaas retornou HTTP ${refundRes.status} ao solicitar o estorno. É possível tentar novamente.`;
+            nextOrderStatus = 'refund_requested';
+            refundProviderStatus = `FAILED_HTTP_${refundRes.status}`;
           }
-        } catch (err: unknown) {
+        } catch {
           withdrawalStatus = 'refund_failed';
-          refundProviderStatus = 'REFUND_REQUEST_TIMEOUT';
-          refundErrorMessage =
-            err instanceof Error && err.message
-              ? `Falha de comunicação ao solicitar estorno no Asaas: ${err.message}`
-              : 'Tempo limite ou erro de rede ao solicitar estorno no Asaas. É possível tentar novamente.';
+          nextOrderStatus = 'refund_requested';
+          refundProviderStatus = 'FAILED_TIMEOUT';
         }
       }
 
-      const nextAttempts = Number(existingWithdrawal?.refund_attempts || 0) + 1;
-
-      if (isRetryAfterFailure && existingWithdrawal?.id) {
-        let retryRes = await supabase
+      if (canRetryFailedRefund && existingWithdrawal?.id) {
+        await dbClient
           .from('withdrawal_requests')
           .update({
             status: withdrawalStatus,
             refund_provider_id: refundProviderId,
             refund_provider_status: refundProviderStatus,
-            refund_attempts: nextAttempts,
-            last_refund_error: refundErrorMessage,
-            updated_at: nowIso,
+            processed_at: withdrawalStatus === 'refunded' ? nowIso : null,
           })
           .eq('id', existingWithdrawal.id)
           .eq('user_id', user.id);
-
-        if (retryRes.error && isMissingVersioningColumnError(retryRes.error)) {
-          retryRes = await supabase
-            .from('withdrawal_requests')
-            .update({
-              status: withdrawalStatus === 'refund_failed' ? 'approved_refund_pending' : withdrawalStatus,
-              refund_provider_id: refundProviderId,
-              refund_provider_status: refundProviderStatus,
-              updated_at: nowIso,
-            })
-            .eq('id', existingWithdrawal.id)
-            .eq('user_id', user.id);
-        }
-
-        if (retryRes.error) {
-          res.status(500).json({
-            ok: false,
-            error: 'Não foi possível atualizar a tentativa de estorno no banco de dados.',
-          });
-          return;
-        }
       } else {
         const baseWithdrawalRow = {
           user_id: user.id,
           order_id: orderRow.id,
           course_id: orderRow.course_id,
           reason: cleanReason,
-          status: withdrawalStatus === 'refund_failed' ? 'approved_refund_pending' : withdrawalStatus,
+          status: withdrawalStatus,
           requested_at: nowIso,
-          processed_at: null,
+          processed_at: withdrawalStatus === 'refunded' ? nowIso : null,
         };
 
-        let insertRes = await supabase.from('withdrawal_requests').insert({
+        let insertRes = await dbClient.from('withdrawal_requests').insert({
           ...baseWithdrawalRow,
-          status: withdrawalStatus,
           protocol_code: protocolCode,
           refund_provider_id: refundProviderId,
           refund_provider_status: refundProviderStatus,
-          refund_attempts: nextAttempts,
-          last_refund_error: refundErrorMessage,
         });
 
         if (insertRes.error && isMissingVersioningColumnError(insertRes.error)) {
-          insertRes = await supabase.from('withdrawal_requests').insert(baseWithdrawalRow);
+          insertRes = await dbClient.from('withdrawal_requests').insert(baseWithdrawalRow);
         }
 
         if (insertRes.error) {
@@ -3072,7 +3078,7 @@ export function registerCourseApiRoutes(
         }
       }
 
-      const { error: orderUpdateErr } = await supabase
+      const { error: orderUpdateErr } = await dbClient
         .from('orders')
         .update({ status: nextOrderStatus, updated_at: nowIso })
         .eq('id', orderRow.id)
@@ -3086,31 +3092,25 @@ export function registerCourseApiRoutes(
         return;
       }
 
-      // Revoga matrícula comercial mantendo intactos assessment_attempts, module_progress e certificates,
-      // desde que não exista outro pedido 'paid' válido para o mesmo (user_id, course_id).
-      let enrollmentRevoked = false;
-      const { data: otherPaidOrders } = await supabase
+      // Verifica se existe outro pedido 'paid' para o mesmo curso antes de revogar matrícula
+      const { data: otherPaidOrders } = await dbClient
         .from('orders')
-        .select('id')
+        .select('id, status')
         .eq('user_id', user.id)
         .eq('course_id', orderRow.course_id)
-        .eq('status', 'paid')
-        .neq('id', orderRow.id)
-        .limit(1);
+        .eq('status', 'paid');
 
-      if (!Array.isArray(otherPaidOrders) || otherPaidOrders.length === 0) {
-        await supabase
+      const hasAnotherPaidOrder = Array.isArray(otherPaidOrders)
+        ? otherPaidOrders.some((o) => o && o.id !== orderRow.id && o.status === 'paid')
+        : false;
+
+      if (!hasAnotherPaidOrder) {
+        await dbClient
           .from('student_enrollments')
           .update({ status: 'canceled', updated_at: nowIso })
           .eq('user_id', user.id)
           .eq('course_id', orderRow.course_id);
-        enrollmentRevoked = true;
       }
-
-      const message =
-        withdrawalStatus === 'refund_failed'
-          ? `Protocolo ${protocolCode} registrado e acesso revogado, porém o gateway Asaas falhou ao iniciar o estorno (${refundErrorMessage || 'erro externo'}). Você pode tentar reenviar ou contatar fervecrgastronomia@gmail.com.`
-          : `Solicitação de arrependimento (Art. 49 do CDC) registrada sob protocolo ${protocolCode}. O estorno está em processamento aguardando confirmação definitiva do Asaas; dúvidas: fervecrgastronomia@gmail.com.`;
 
       res.json({
         ok: true,
@@ -3119,12 +3119,13 @@ export function registerCourseApiRoutes(
         status: nextOrderStatus,
         withdrawalStatus,
         refundProviderStatus,
-        refundError: refundErrorMessage,
-        enrollmentRevoked,
-        message,
+        message:
+          withdrawalStatus === 'refund_failed'
+            ? `Protocolo ${protocolCode} registrado e acesso suspenso. A API do provedor falhou momentaneamente ao iniciar o estorno automático; você pode tentar novamente ou acionar fervecrgastronomia@gmail.com.`
+            : `Solicitação de arrependimento (Art. 49 do CDC) registrada sob protocolo ${protocolCode}. O acesso ao curso foi revogado e o estorno segue pelo meio de pagamento original; dúvidas: fervecrgastronomia@gmail.com.`,
       });
     } finally {
-      inFlightWithdrawals.delete(orderId);
+      inFlightWithdrawals.delete(flightKey);
     }
   });
 

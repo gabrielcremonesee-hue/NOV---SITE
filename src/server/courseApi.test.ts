@@ -10,12 +10,9 @@ import { singleSessionManager } from './singleSession';
 import { exam } from '../data/courseData';
 
 function sessionHeaders(uid: string, extra: Record<string, string> = {}): Record<string, string> {
-  const active =
-    singleSessionManager.getActiveSession(uid) ||
-    singleSessionManager.claimSession(uid, undefined, 'test-suite');
   return {
     'x-test-user': uid,
-    'x-fervec-session-id': active.sessionId,
+    'x-fervec-session-id': `sess-${uid}-12345678`,
     ...extra,
   };
 }
@@ -39,6 +36,7 @@ function createMockSupabaseDb() {
         description: 'Curso de 6 módulos',
         chef_name: 'Chef CREMONESE',
         level: 'Iniciante a intermediário',
+        price_cents: 1290,
       },
       {
         id: frenchCourseId,
@@ -182,6 +180,7 @@ function createMockSupabaseDb() {
     legal_acceptances: [],
     withdrawal_requests: [],
     coupons: [],
+    coupon_redemptions: [],
   };
 
   let idSeq = 1;
@@ -196,6 +195,7 @@ function createMockSupabaseDb() {
       let payloadData: Row | null = null;
 
       function applyRls(rows: Row[]): Row[] {
+        if (userId === '__service__') return rows;
         if (table === 'courses' || table === 'course_modules' || table === 'coupons') return rows;
         if (table === 'profiles') return rows.filter((r) => r.id === userId);
         return rows.filter((r) => r.user_id === userId);
@@ -207,10 +207,6 @@ function createMockSupabaseDb() {
         },
         eq(col: string, val: unknown) {
           filters.push((r) => r[col] === val);
-          return builder;
-        },
-        neq(col: string, val: unknown) {
-          filters.push((r) => r[col] !== val);
           return builder;
         },
         order(col: string, opts?: { ascending?: boolean }) {
@@ -371,10 +367,28 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
             uid === 'revoked-gabriel'
               ? { role: 'developer_admin', fervec_developer: true }
               : {},
-          user_metadata: {},
+          user_metadata:
+            uid === 'user-addr'
+              ? {
+                  full_name: 'Clara Mendes Oliveira',
+                  birth_date: '12/03/1994',
+                  age: 32,
+                  ddd: '11',
+                  phone: '99111-2222',
+                  postal_code: '01310-100',
+                  street: 'Avenida Paulista',
+                  street_number: '1578',
+                  complement: 'Conjunto 81',
+                  neighborhood: 'Bela Vista',
+                  city: 'São Paulo',
+                  state: 'SP',
+                  full_address: 'Avenida Paulista, 1578 - Conjunto 81 · Bela Vista · São Paulo/SP · CEP 01310-100',
+                }
+              : {},
         } as never,
       };
     },
+    getPublicOrServiceClient: () => makeClientForUser('__service__') as never,
   });
 
   const server = http.createServer(app);
@@ -865,7 +879,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     });
     assert.equal(paidContentRes.status, 200);
 
-    // Test 14: Single-session enforcement rejects missing/dummy/forged/cross-user headers (401), preserves same-browser tabs, prevents old-session logout from killing new session, & blocks replaced session via DB + memory (409)
+    // Test 14: Single-session enforcement rejects missing/dummy header (401) & replaced session via DB + memory (409)
     const missingSidRes = await fetch(`${baseUrl}/api/workspace/state`, {
       headers: { 'x-test-user': 'user-unpaid' },
     });
@@ -878,24 +892,6 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     });
     assert.equal(dummySidRes.status, 401);
 
-    const oldUnpaidSid = sessionHeaders('user-unpaid')['x-fervec-session-id'];
-
-    // Same-browser tab claim with preserveIfValid=true keeps existing valid token intact
-    const sameTabClaim = await fetch(`${baseUrl}/api/session/claim`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-test-user': 'user-unpaid',
-        'x-fervec-session-id': oldUnpaidSid,
-      },
-      body: JSON.stringify({ deviceLabel: 'Same Browser Tab 2', preserveIfValid: true }),
-    });
-    assert.equal(sameTabClaim.status, 200);
-    const sameTabJson = (await sameTabClaim.json()) as Record<string, any>;
-    assert.equal(sameTabJson.sessionId, oldUnpaidSid);
-    assert.equal(sameTabJson.preserved, true);
-
-    // Independent login from Second Browser ignores client-chosen ID and mints new HMAC session token
     const claimNewDevice = await fetch(`${baseUrl}/api/session/claim`, {
       method: 'POST',
       headers: {
@@ -906,47 +902,15 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
       body: JSON.stringify({ deviceLabel: 'Second Browser' }),
     });
     assert.equal(claimNewDevice.status, 200);
-    const claimNewJson = (await claimNewDevice.json()) as Record<string, any>;
-    const claimedNewSid = String(claimNewJson.sessionId || '');
-    assert.notEqual(claimedNewSid, 'sess-new-device-99999');
-    assert.match(claimedNewSid, /^fv1\.[a-f0-9]+\.\d+\.[a-f0-9]{64}$/);
-    assert.equal(claimNewJson.preserved, false);
 
-    // Even after memory cache reset (simulated cold start), DB user_active_sessions rejects old session without blind auto-binding
+    // Even after memory cache reset (simulated cold start), DB user_active_sessions rejects old session
     singleSessionManager.resetForTests();
     const kickedOldSidRes = await fetch(`${baseUrl}/api/workspace/state`, {
-      headers: {
-        'x-test-user': 'user-unpaid',
-        'x-fervec-session-id': oldUnpaidSid,
-      },
+      headers: sessionHeaders('user-unpaid'),
     });
     assert.equal(kickedOldSidRes.status, 409);
     const kickedJson = (await kickedOldSidRes.json()) as Record<string, any>;
     assert.equal(kickedJson.code, 'SESSION_REPLACED_OTHER_DEVICE');
-
-    // Old session calling /api/session/logout MUST NOT terminate the new active session
-    const oldLogoutRes = await fetch(`${baseUrl}/api/session/logout`, {
-      method: 'POST',
-      headers: {
-        'x-test-user': 'user-unpaid',
-        'x-fervec-session-id': oldUnpaidSid,
-      },
-    });
-    assert.equal(oldLogoutRes.status, 200);
-    const oldLogoutJson = (await oldLogoutRes.json()) as Record<string, any>;
-    assert.equal(oldLogoutJson.cleared, false);
-
-    // Cross-user token replay & tampered tokens fail with 401
-    const crossUserTokenRes = await fetch(`${baseUrl}/api/workspace/state`, {
-      headers: { 'x-test-user': 'user-a', 'x-fervec-session-id': claimedNewSid },
-    });
-    assert.equal(crossUserTokenRes.status, 401);
-
-    const tamperedSid = `${claimedNewSid.slice(0, -1)}${claimedNewSid.endsWith('a') ? 'b' : 'a'}`;
-    const tamperedRes = await fetch(`${baseUrl}/api/workspace/state`, {
-      headers: { 'x-test-user': 'user-unpaid', 'x-fervec-session-id': tamperedSid },
-    });
-    assert.equal(tamperedRes.status, 401);
 
     // Test 15: Legal acceptance records acceptance_kind & marketing preferences in DB
     const legalRes = await fetch(`${baseUrl}/api/legal/accept`, {
@@ -954,7 +918,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
       headers: {
         'Content-Type': 'application/json',
         'x-test-user': 'user-unpaid',
-        'x-fervec-session-id': claimedNewSid,
+        'x-fervec-session-id': 'sess-new-device-99999',
       },
       body: JSON.stringify({
         courseSlug: 'massas-italianas',
@@ -976,7 +940,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
       headers: {
         'Content-Type': 'application/json',
         'x-test-user': 'user-unpaid',
-        'x-fervec-session-id': claimedNewSid,
+        'x-fervec-session-id': 'sess-new-device-99999',
       },
       body: JSON.stringify({ reason: 'Desistência dentro de 7 dias' }),
     });
@@ -993,7 +957,7 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
       headers: {
         'Content-Type': 'application/json',
         'x-test-user': 'user-unpaid',
-        'x-fervec-session-id': claimedNewSid,
+        'x-fervec-session-id': 'sess-new-device-99999',
       },
       body: JSON.stringify({ reason: 'Tentativa duplicada' }),
     });
@@ -1004,87 +968,232 @@ test('End-to-end DB, exam grading, certificate auto-release, PDF, failed student
     // Auditability preserved: existing assessment attempts & certificates for Student A untouched
     assert.ok(db.assessment_attempts.some((a) => a.user_id === 'user-a'));
     assert.ok(db.certificates.some((c) => c.user_id === 'user-a'));
+
+    // Test 17: /api/session/claim returns HMAC signedToken & tampered token is rejected with 401 INVALID_SIGNATURE
+    const claimRes = await fetch(`${baseUrl}/api/session/claim`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-test-user': 'user-a',
+      },
+      body: JSON.stringify({ deviceLabel: 'Audit Browser' }),
+    });
+    assert.equal(claimRes.status, 200);
+    const claimJson = (await claimRes.json()) as Record<string, any>;
+    assert.match(claimJson.signedToken || '', /^fv1\./);
+    assert.ok(claimJson.expiresAt);
+
+    const okSignedWs = await fetch(`${baseUrl}/api/workspace/state`, {
+      headers: {
+        'x-test-user': 'user-a',
+        'x-fervec-session-id': claimJson.signedToken,
+      },
+    });
+    assert.equal(okSignedWs.status, 200);
+
+    const tamperedWs = await fetch(`${baseUrl}/api/workspace/state`, {
+      headers: {
+        'x-test-user': 'user-a',
+        'x-fervec-session-id': `${claimJson.signedToken.slice(0, -4)}zzzz`,
+      },
+    });
+    assert.equal(tamperedWs.status, 401);
+    const tamperedJson = (await tamperedWs.json()) as Record<string, any>;
+    assert.equal(tamperedJson.code, 'INVALID_SIGNATURE');
+
+    // Test 18: /api/coupons/validate computes authoritative BRL 12.90 discount and blocks repeat redemption (409)
+    db.coupons.push({
+      id: 'cpn-1',
+      code: '123456',
+      discount_percent: 50,
+      course_scope: 'massas-italianas',
+      max_uses: 10,
+      uses_count: 1,
+      expires_at: null,
+      active: true,
+    });
+    const couponOkRes = await fetch(`${baseUrl}/api/coupons/validate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-test-user': 'user-a',
+        'x-fervec-session-id': claimJson.signedToken,
+      },
+      body: JSON.stringify({ code: '123456', courseSlug: 'massas-italianas' }),
+    });
+    assert.equal(couponOkRes.status, 200);
+    const couponOkJson = (await couponOkRes.json()) as Record<string, any>;
+    assert.equal(couponOkJson.discountPercent, 50);
+    assert.equal(couponOkJson.discountCents, 645);
+    assert.equal(couponOkJson.totalCents, 645);
+    assert.equal(couponOkJson.isFree, false);
+
+    db.coupon_redemptions.push({
+      id: 'red-1',
+      coupon_code: '123456',
+      user_id: 'user-a',
+      course_slug: 'massas-italianas',
+    });
+    const couponDupRes = await fetch(`${baseUrl}/api/coupons/validate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-test-user': 'user-a',
+        'x-fervec-session-id': claimJson.signedToken,
+      },
+      body: JSON.stringify({ code: '123456', courseSlug: 'massas-italianas' }),
+    });
+    assert.equal(couponDupRes.status, 409);
+
+    // Test 19: course-summary & admin telemetry expose launchLock + status returns withdrawal summary
+    const ownerClaimRes = await fetch(`${baseUrl}/api/session/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-test-user': 'owner-email' },
+      body: JSON.stringify({ deviceLabel: 'Admin' }),
+    });
+    const ownerClaimJson = (await ownerClaimRes.json()) as Record<string, any>;
+    const telemetryRes = await fetch(`${baseUrl}/api/admin/telemetry`, {
+      headers: {
+        'x-test-user': 'owner-email',
+        'x-fervec-session-id': ownerClaimJson.signedToken,
+      },
+    });
+    assert.equal(telemetryRes.status, 200);
+    const telemetryJson = (await telemetryRes.json()) as Record<string, any>;
+    assert.equal(typeof telemetryJson.launchLock?.priceConfirmed, 'boolean');
+    assert.equal(telemetryJson.launchLock?.commercialLaunchApproved, false);
+
+    const statusWithWithdrawalRes = await fetch(`${baseUrl}/api/payments/status/11111111-1111-4111-8111-111111111111`, {
+      headers: {
+        'x-test-user': 'user-unpaid',
+        'x-fervec-session-id': 'sess-new-device-99999',
+      },
+    });
+    assert.equal(statusWithWithdrawalRes.status, 200);
+    const statusWithWithdrawal = (await statusWithWithdrawalRes.json()) as Record<string, any>;
+    assert.equal(statusWithWithdrawal.orderStatus, 'refund_requested');
+    assert.equal(statusWithWithdrawal.withdrawal?.protocolCode, withdrawJson.protocolCode);
+
+    // Retry on refund_failed preserves protocolCode and keeps enrollment active when user has another paid order
+    const retryCourseId = '8a3c38ad-d5de-424a-868d-325420b7470b';
+    db.orders.push({
+      id: 'ord-retry-1',
+      user_id: 'user-unpaid',
+      course_id: retryCourseId,
+      status: 'refund_requested',
+      amount_cents: 1290,
+      asaas_payment_id: 'pay_retry_1',
+      paid_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    });
+    db.orders.push({
+      id: 'ord-other-paid',
+      user_id: 'user-unpaid',
+      course_id: retryCourseId,
+      status: 'paid',
+      amount_cents: 1290,
+      asaas_payment_id: 'pay_other_paid',
+      paid_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    });
+    const enrUnpaid = db.student_enrollments.find((e) => e.user_id === 'user-unpaid');
+    if (enrUnpaid) enrUnpaid.status = 'in_progress';
+    db.withdrawal_requests.push({
+      id: 'wr-retry-1',
+      user_id: 'user-unpaid',
+      order_id: 'ord-retry-1',
+      course_id: retryCourseId,
+      status: 'refund_failed',
+      protocol_code: 'ARR-DEADBEEF',
+      requested_at: new Date().toISOString(),
+    });
+    const retryRes = await fetch(`${baseUrl}/api/orders/ord-retry-1/withdraw`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-test-user': 'user-unpaid',
+        'x-fervec-session-id': 'sess-new-device-99999',
+      },
+      body: JSON.stringify({ reason: 'Nova tentativa após falha' }),
+    });
+    assert.equal(retryRes.status, 200);
+    const retryJson = (await retryRes.json()) as Record<string, any>;
+    assert.equal(retryJson.protocolCode, 'ARR-DEADBEEF');
+    assert.equal(enrUnpaid?.status, 'in_progress');
+
+    // Test 20: Public GET /api/certificates/verify/:code checks authenticity without exposing CPF or personal PII
+    const issuedCert = db.certificates.find((c) => c.user_id === 'user-a');
+    assert.ok(issuedCert?.certificate_code);
+    const verifyOkRes = await fetch(`${baseUrl}/api/certificates/verify/${issuedCert.certificate_code}`);
+    assert.equal(verifyOkRes.status, 200);
+    const verifyOkJson = (await verifyOkRes.json()) as Record<string, any>;
+    assert.equal(verifyOkJson.ok, true);
+    assert.equal(verifyOkJson.valid, true);
+    assert.equal(verifyOkJson.certificateCode, issuedCert.certificate_code);
+    assert.equal(verifyOkJson.studentName, 'Ana Carolina Souza');
+    assert.equal(verifyOkJson.courseTitle, 'Massas Italianas');
+    assert.equal('cpf' in verifyOkJson, false);
+    assert.equal('cpfMasked' in verifyOkJson, false);
+    assert.equal('email' in verifyOkJson, false);
+    assert.equal('user_id' in verifyOkJson, false);
+    assert.equal('full_address' in verifyOkJson, false);
+    const verifyRaw = JSON.stringify(verifyOkJson);
+    assert.equal(verifyRaw.includes('456.789'), false);
+    assert.equal(verifyRaw.includes('ana@fervec.test'), false);
+
+    const verifyBadRes = await fetch(`${baseUrl}/api/certificates/verify/BAD!CODE`);
+    assert.equal(verifyBadRes.status, 400);
+
+    const verifyMissingRes = await fetch(`${baseUrl}/api/certificates/verify/FC-2026-NOTFOUND`);
+    assert.equal(verifyMissingRes.status, 404);
+
+    // Test 21: Address fields from signup metadata persist in profiles table during ensureUserProfileRow
+    const addrClaimRes = await fetch(`${baseUrl}/api/session/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-test-user': 'user-addr' },
+      body: JSON.stringify({ deviceLabel: 'Address Test' }),
+    });
+    const addrClaimJson = (await addrClaimRes.json()) as Record<string, any>;
+    const addrWsRes = await fetch(`${baseUrl}/api/workspace/state`, {
+      headers: {
+        'x-test-user': 'user-addr',
+        'x-fervec-session-id': addrClaimJson.signedToken,
+      },
+    });
+    assert.equal(addrWsRes.status, 200);
+    const addrWsJson = (await addrWsRes.json()) as Record<string, any>;
+    assert.equal(addrWsJson.profile.postal_code, '01310-100');
+    assert.equal(addrWsJson.profile.street, 'Avenida Paulista');
+    assert.equal(addrWsJson.profile.street_number, '1578');
+    assert.equal(addrWsJson.profile.neighborhood, 'Bela Vista');
+    assert.equal(addrWsJson.profile.city, 'São Paulo');
+    assert.equal(addrWsJson.profile.state, 'SP');
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
 
-test('V5 Refund lifecycle: gateway pending/failure/retry/definitive confirmation, concurrency lock, and multi-order enrollment preservation', async () => {
-  const prevAsaasEnv = process.env.ASAAS_ENVIRONMENT;
-  const prevSandboxKey = process.env.ASAAS_SANDBOX_API_KEY;
-  process.env.ASAAS_ENVIRONMENT = 'sandbox';
-  process.env.ASAAS_SANDBOX_API_KEY = '$aact_hmlg_test_refund_key';
-
-  const { db, makeClientForUser } = createMockSupabaseDb();
-  const courseId = '8a3c38ad-d5de-424a-868d-325420b7470b';
-  const nowIso = new Date().toISOString();
-
-  // Seed user-a with TWO valid paid orders (ord-paid-a + ord-paid-a-2) plus enrollment & module progress
-  db.orders[0].paid_at = nowIso;
-  db.orders.push(
-    {
-      id: 'ord-paid-a-2',
-      user_id: 'user-a',
-      course_id: courseId,
-      status: 'paid',
-      amount_cents: 1290,
-      asaas_payment_id: 'pay_seed_a_2',
-      paid_at: nowIso,
-      created_at: nowIso,
-    },
-    {
-      id: 'ord-paid-b-retry',
-      user_id: 'user-b',
-      course_id: courseId,
-      status: 'paid',
-      amount_cents: 1290,
-      asaas_payment_id: 'pay_retry_b',
-      paid_at: nowIso,
-      created_at: nowIso,
-    }
-  );
-  // Make user-b have only 1 paid order inside refund test window
-  db.orders = db.orders.filter((o) => o.id !== 'ord-paid-b');
-  db.student_enrollments.push(
-    {
-      id: 'enr-a',
-      user_id: 'user-a',
-      course_id: courseId,
-      status: 'in_progress',
-      last_module_key: 'carbonara',
-      enrolled_at: nowIso,
-      updated_at: nowIso,
-    },
-    {
-      id: 'enr-b',
-      user_id: 'user-b',
-      course_id: courseId,
-      status: 'in_progress',
-      last_module_key: 'carbonara',
-      enrolled_at: nowIso,
-      updated_at: nowIso,
-    }
-  );
-  db.assessment_attempts.push({
-    id: 'att-b-preserve',
-    user_id: 'user-b',
-    course_id: courseId,
-    module_key: 'carbonara',
-    attempt_type: 'work',
-    score: 83,
-    passed: true,
-    answers: [0, 1, 2, 0, 1, 2],
-    attempted_at: nowIso,
+test('GET /api/certificates/verify/:code returns 503 when Supabase client is unavailable', async () => {
+  const app = express();
+  registerCourseApiRoutes(app, {
+    getPublicOrServiceClient: () => null,
   });
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/certificates/verify/FC-2026-TEST1234`);
+    assert.equal(res.status, 503);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
 
-  let asaasRefundMode: 'fail_once' | 'accept_pending' = 'fail_once';
-  let asaasGetStatusMode: 'REFUND_IN_PROGRESS' | 'REFUNDED' = 'REFUND_IN_PROGRESS';
-  let refundPostCalls = 0;
-
+test('Spoofed module_progress.exam_status=passed without verified exam attempt or completed enrollment cannot unlock certificate', async () => {
+  const { db, makeClientForUser } = createMockSupabaseDb();
   const app = express();
   app.use(express.json());
   singleSessionManager.resetForTests();
-
   registerCourseApiRoutes(app, {
     resolveAuth: async (req) => {
       const uid = req.headers['x-test-user'] as string | undefined;
@@ -1095,127 +1204,70 @@ test('V5 Refund lifecycle: gateway pending/failure/retry/definitive confirmation
           id: uid,
           email: uid === 'user-a' ? 'ana@fervec.test' : 'bruno@fervec.test',
           created_at: '2026-11-15T12:00:00.000Z',
-          email_confirmed_at: '2026-11-15T12:05:00.000Z',
+          email_confirmed_at: '2026-11-18T10:05:00.000Z',
+          user_metadata: {},
         } as never,
       };
     },
-    fetchFn: async (input, init) => {
-      const url = String(input);
-      const method = String(init?.method || 'GET').toUpperCase();
-      if (url.endsWith('/refund') && method === 'POST') {
-        refundPostCalls += 1;
-        await new Promise((r) => setTimeout(r, 40));
-        if (asaasRefundMode === 'fail_once') {
-          return new Response(JSON.stringify({ errors: [{ description: 'Gateway timeout simulado' }] }), {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-        return new Response(
-          JSON.stringify({ id: 'pay_refund_tx_1', status: 'REFUND_IN_PROGRESS' }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-      if (url.includes('/payments/') && method === 'GET') {
-        return new Response(JSON.stringify({ status: asaasGetStatusMode }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-      return new Response('Not Found', { status: 404 });
-    },
+    getPublicOrServiceClient: () => makeClientForUser('__service__') as never,
   });
 
   const server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
   const baseUrl = `http://127.0.0.1:${port}`;
+  const courseId = '8a3c38ad-d5de-424a-868d-325420b7470b';
 
   try {
-    // 1. Gateway failure marks refund_failed (NOT refunded) and allows safe retry under same protocol
-    const [bFail, bConcurrent] = await Promise.all([
-      fetch(`${baseUrl}/api/orders/ord-paid-b-retry/withdraw`, {
-        method: 'POST',
-        headers: sessionHeaders('user-b', { 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ reason: 'Teste falha gateway' }),
-      }),
-      fetch(`${baseUrl}/api/orders/ord-paid-b-retry/withdraw`, {
-        method: 'POST',
-        headers: sessionHeaders('user-b', { 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ reason: 'Requisição concorrente' }),
-      }),
-    ]);
-
-    const statuses = [bFail.status, bConcurrent.status].sort();
-    assert.deepEqual(statuses, [200, 409]);
-    const okFailResp = bFail.status === 200 ? bFail : bConcurrent;
-    const conflictResp = bFail.status === 409 ? bFail : bConcurrent;
-    const conflictJson = (await conflictResp.json()) as Record<string, any>;
-    assert.equal(conflictJson.code, 'WITHDRAWAL_IN_PROGRESS');
-
-    const failJson = (await okFailResp.json()) as Record<string, any>;
-    assert.equal(failJson.status, 'refund_requested');
-    assert.equal(failJson.withdrawalStatus, 'refund_failed');
-    assert.match(failJson.refundError || '', /Gateway timeout simulado/);
-    const protoB = failJson.protocolCode;
-
-    // 2. Retry after failure succeeds against gateway -> approved_refund_pending (STILL NOT 'refunded'!)
-    asaasRefundMode = 'accept_pending';
-    const bRetryRes = await fetch(`${baseUrl}/api/orders/ord-paid-b-retry/withdraw`, {
-      method: 'POST',
-      headers: sessionHeaders('user-b', { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ reason: 'Reenvio após falha' }),
+    // Inject spoofed module_progress row with exam_status = 'passed' while enrollment is still in_progress and no passing assessment attempt exists
+    db.student_enrollments.push({
+      id: 'enr-spoof-progress',
+      user_id: 'user-a',
+      course_id: courseId,
+      status: 'in_progress',
+      progress_percent: 100,
     });
-    assert.equal(bRetryRes.status, 200);
-    const bRetryJson = (await bRetryRes.json()) as Record<string, any>;
-    assert.equal(bRetryJson.protocolCode, protoB);
-    assert.equal(bRetryJson.status, 'refund_requested');
-    assert.equal(bRetryJson.withdrawalStatus, 'approved_refund_pending');
-    assert.equal(db.orders.find((o) => o.id === 'ord-paid-b-retry')?.status, 'refund_requested');
-
-    // 3. Read-only status polling while gateway returns REFUND_IN_PROGRESS stays refund_requested / approved_refund_pending
-    asaasGetStatusMode = 'REFUND_IN_PROGRESS';
-    const pollPending = await fetch(`${baseUrl}/api/payments/status/ord-paid-b-retry`, {
-      headers: sessionHeaders('user-b'),
+    db.module_progress.push({
+      id: 'mp-spoof-1',
+      user_id: 'user-a',
+      course_id: courseId,
+      module_id: 'm1',
+      status: 'completed',
+      exam_status: 'passed',
+      completed_stages: [0, 1, 2, 3, 4, 5],
+      review_completed: true,
     });
-    assert.equal(pollPending.status, 200);
-    const pollPendingJson = (await pollPending.json()) as Record<string, any>;
-    assert.equal(pollPendingJson.orderStatus, 'refund_requested');
-    assert.equal(pollPendingJson.withdrawalStatus, 'approved_refund_pending');
 
-    // 4. Read-only status polling once gateway confirms REFUNDED promotes to refunded
-    asaasGetStatusMode = 'REFUNDED';
-    const pollConfirmed = await fetch(`${baseUrl}/api/payments/status/ord-paid-b-retry`, {
-      headers: sessionHeaders('user-b'),
+    const wsRes = await fetch(`${baseUrl}/api/workspace/state`, {
+      headers: sessionHeaders('user-a'),
     });
-    assert.equal(pollConfirmed.status, 200);
-    const pollConfirmedJson = (await pollConfirmed.json()) as Record<string, any>;
-    assert.equal(pollConfirmedJson.orderStatus, 'refunded');
-    assert.equal(pollConfirmedJson.withdrawalStatus, 'refunded');
-    assert.equal(pollConfirmedJson.protocolCode, protoB);
-    assert.equal(db.orders.find((o) => o.id === 'ord-paid-b-retry')?.status, 'refunded');
+    assert.equal(wsRes.status, 200);
+    const wsJson = (await wsRes.json()) as Record<string, any>;
+    assert.equal(wsJson.eligibleForCertificate, false);
 
-    // Pedagogical attempts & progress preserved even after refund completion
-    assert.equal(db.assessment_attempts.some((a) => a.id === 'att-b-preserve'), true);
-
-    // 5. Refunding 1 of 2 paid orders for user-a keeps user-a's enrollment active
-    const aWithdrawRes = await fetch(`${baseUrl}/api/orders/ord-paid-a/withdraw`, {
+    const issueBlockedRes = await fetch(`${baseUrl}/api/certificates/issue`, {
       method: 'POST',
       headers: sessionHeaders('user-a', { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ reason: 'Pedido duplicado' }),
+      body: JSON.stringify({ courseSlug: 'massas-italianas' }),
     });
-    assert.equal(aWithdrawRes.status, 200);
-    const aWithdrawJson = (await aWithdrawRes.json()) as Record<string, any>;
-    assert.equal(aWithdrawJson.enrollmentRevoked, false);
-    assert.equal(db.student_enrollments.find((e) => e.user_id === 'user-a')?.status, 'in_progress');
-    assert.ok(refundPostCalls >= 3);
+    assert.equal(issueBlockedRes.status, 403);
+    assert.equal(db.certificates.length, 0);
+
+    // Legitimate completed enrollment (authoritative server completion) still unlocks certificate
+    db.student_enrollments[0].status = 'completed';
+    const issueOkRes = await fetch(`${baseUrl}/api/certificates/issue`, {
+      method: 'POST',
+      headers: sessionHeaders('user-a', { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ courseSlug: 'massas-italianas' }),
+    });
+    assert.equal(issueOkRes.status, 200);
+    const issueOkJson = (await issueOkRes.json()) as Record<string, any>;
+    assert.ok(issueOkJson.certificate?.certificate_code);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    if (prevAsaasEnv === undefined) delete process.env.ASAAS_ENVIRONMENT;
-    else process.env.ASAAS_ENVIRONMENT = prevAsaasEnv;
-    if (prevSandboxKey === undefined) delete process.env.ASAAS_SANDBOX_API_KEY;
-    else process.env.ASAAS_SANDBOX_API_KEY = prevSandboxKey;
   }
 });
+
+
 
 

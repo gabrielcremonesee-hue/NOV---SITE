@@ -6,6 +6,13 @@ export interface ProfileFormValues {
   age: string;
   ddd: string;
   phone: string;
+  cep: string;
+  street: string;
+  streetNumber: string;
+  complement: string;
+  neighborhood: string;
+  city: string;
+  state: string;
   password: string;
   confirmPassword: string;
   acceptTerms: boolean;
@@ -22,6 +29,14 @@ export interface StoredUserProfile {
   email: string;
   ddd: string;
   phone: string;
+  cep?: string;
+  street?: string;
+  streetNumber?: string;
+  complement?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+  fullAddress?: string;
   promoWhatsapp: boolean;
   promoEmail: boolean;
   createdAt: string;
@@ -33,6 +48,36 @@ export interface StoredUserProfile {
 
 export type ProfileFieldKey = keyof ProfileFormValues;
 export type ProfileValidationErrors = Partial<Record<ProfileFieldKey, string>>;
+
+export const BRAZILIAN_UFS = [
+  'AC',
+  'AL',
+  'AP',
+  'AM',
+  'BA',
+  'CE',
+  'DF',
+  'ES',
+  'GO',
+  'MA',
+  'MT',
+  'MS',
+  'MG',
+  'PA',
+  'PB',
+  'PR',
+  'PE',
+  'PI',
+  'RJ',
+  'RN',
+  'RS',
+  'RO',
+  'RR',
+  'SC',
+  'SP',
+  'SE',
+  'TO',
+] as const;
 
 const PROFILE_STORAGE_KEY = 'fervec-profile-v1';
 
@@ -152,6 +197,52 @@ export function formatPhone(raw: string): string {
   return `${d.slice(0, 5)}-${d.slice(5, 9)}`;
 }
 
+export function formatCep(raw: string): string {
+  const d = digitsOnly(raw).slice(0, 8);
+  if (d.length <= 5) return d;
+  return `${d.slice(0, 5)}-${d.slice(5, 8)}`;
+}
+
+export function formatUf(raw: string): string {
+  return String(raw || '')
+    .replace(/[^a-zA-Z]/g, '')
+    .toUpperCase()
+    .slice(0, 2);
+}
+
+export function validateCep(cep: string): boolean {
+  return digitsOnly(cep).length === 8;
+}
+
+export function validateUf(uf: string): boolean {
+  const clean = formatUf(uf);
+  return (BRAZILIAN_UFS as readonly string[]).includes(clean);
+}
+
+export function formatFullAddress(parts: {
+  street?: string | null;
+  streetNumber?: string | null;
+  complement?: string | null;
+  neighborhood?: string | null;
+  city?: string | null;
+  state?: string | null;
+  cep?: string | null;
+}): string {
+  const street = String(parts.street || '').trim().replace(/\s+/g, ' ');
+  const num = String(parts.streetNumber || '').trim().replace(/\s+/g, ' ');
+  const comp = String(parts.complement || '').trim().replace(/\s+/g, ' ');
+  const neigh = String(parts.neighborhood || '').trim().replace(/\s+/g, ' ');
+  const city = String(parts.city || '').trim().replace(/\s+/g, ' ');
+  const state = formatUf(String(parts.state || ''));
+  const cep = formatCep(String(parts.cep || ''));
+
+  const line1 = [street, num].filter(Boolean).join(', ');
+  const line2 = comp ? `${line1}${line1 ? ' - ' : ''}${comp}` : line1;
+  const cityState = [city, state].filter(Boolean).join('/');
+  const segments = [line2, neigh, cityState, cep ? `CEP ${cep}` : ''].filter(Boolean);
+  return segments.join(' · ');
+}
+
 export function validateEmail(email: string): boolean {
   const trimmed = String(email || '').trim();
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(trimmed);
@@ -204,6 +295,39 @@ export function validateProfileForm(
     errors.phone = 'Informe um telefone com 8 ou 9 dígitos.';
   }
 
+  if (!validateCep(values.cep)) {
+    errors.cep = 'Informe um CEP válido com 8 dígitos.';
+  }
+
+  const cleanStreet = String(values.street || '').trim().replace(/\s+/g, ' ');
+  if (cleanStreet.length < 2 || cleanStreet.length > 160) {
+    errors.street = 'Informe o logradouro completo (rua, avenida etc.).';
+  }
+
+  const cleanNumber = String(values.streetNumber || '').trim().replace(/\s+/g, ' ');
+  if (cleanNumber.length < 1 || cleanNumber.length > 20) {
+    errors.streetNumber = 'Informe o número (ou S/N).';
+  }
+
+  const cleanComplement = String(values.complement || '').trim().replace(/\s+/g, ' ');
+  if (cleanComplement.length > 120) {
+    errors.complement = 'O complemento deve ter no máximo 120 caracteres.';
+  }
+
+  const cleanNeighborhood = String(values.neighborhood || '').trim().replace(/\s+/g, ' ');
+  if (cleanNeighborhood.length < 2 || cleanNeighborhood.length > 100) {
+    errors.neighborhood = 'Informe o bairro.';
+  }
+
+  const cleanCity = String(values.city || '').trim().replace(/\s+/g, ' ');
+  if (cleanCity.length < 2 || cleanCity.length > 100) {
+    errors.city = 'Informe a cidade.';
+  }
+
+  if (!validateUf(values.state)) {
+    errors.state = 'Selecione uma UF válida.';
+  }
+
   if (!values.password || values.password.length < 6) {
     errors.password = 'A senha deve ter pelo menos 6 caracteres.';
   }
@@ -232,6 +356,23 @@ export function createStoredProfile(values: ProfileFormValues): StoredUserProfil
     throw new Error('A idade selecionada não confere com a data de nascimento informada.');
   }
   const age = computedAge;
+  const cep = formatCep(values.cep);
+  const street = String(values.street || '').trim().replace(/\s+/g, ' ');
+  const streetNumber = String(values.streetNumber || '').trim().replace(/\s+/g, ' ');
+  const complement = String(values.complement || '').trim().replace(/\s+/g, ' ');
+  const neighborhood = String(values.neighborhood || '').trim().replace(/\s+/g, ' ');
+  const city = String(values.city || '').trim().replace(/\s+/g, ' ');
+  const state = formatUf(values.state);
+  const fullAddress = formatFullAddress({
+    street,
+    streetNumber,
+    complement,
+    neighborhood,
+    city,
+    state,
+    cep,
+  });
+
   return {
     id: `perfil-${Date.now()}`,
     fullName: values.fullName.trim().replace(/\s+/g, ' '),
@@ -241,6 +382,14 @@ export function createStoredProfile(values: ProfileFormValues): StoredUserProfil
     email: values.email.trim().toLowerCase(),
     ddd: formatDdd(values.ddd),
     phone: formatPhone(values.phone),
+    cep,
+    street,
+    streetNumber,
+    complement,
+    neighborhood,
+    city,
+    state,
+    fullAddress,
     promoWhatsapp: !!values.promoWhatsapp,
     promoEmail: !!values.promoEmail,
     createdAt: new Date().toISOString(),

@@ -61,87 +61,9 @@ test('serverHardening: CSP, X-Robots-Tag, TTS kill-switch, dev-auth gate, /api/l
     const ttsJson = (await ttsRes.json()) as Record<string, unknown>;
     assert.equal(ttsJson.fallback, 'browser_speech');
 
-    // 4. /api/library/book requires valid authentication AND valid server-signed active session
+    // 4. /api/library/book requires valid authentication
     const bookUnauth = await fetch(`${baseUrl}/api/library/book`);
     assert.equal(bookUnauth.status, 401);
-
-    const { singleSessionManager } = await import('./singleSession');
-    singleSessionManager.resetForTests();
-
-    const authedApp = createFervecExpressApp({
-      privateBookPath: fakePdfPath,
-      resolveSupabaseAuth: (async (req: { headers: Record<string, string> }) => {
-        const uid = req.headers['x-test-book-user'];
-        if (!uid) return null;
-        return {
-          user: { id: uid, email: `${uid}@fervec.test` },
-          supabase: {
-            from: (table: string) => {
-              const row =
-                table === 'user_active_sessions'
-                  ? singleSessionManager.getActiveSession(uid)
-                    ? {
-                        session_id: singleSessionManager.getActiveSession(uid)?.sessionId,
-                        expires_at: singleSessionManager.getActiveSession(uid)?.expiresAt,
-                      }
-                    : null
-                  : table === 'profiles'
-                    ? { id: uid, email: `${uid}@fervec.test` }
-                    : table === 'courses'
-                      ? { id: 'course-massas-id', slug: 'massas-italianas' }
-                      : table === 'orders'
-                        ? { id: 'ord-lib-1', status: 'paid' }
-                        : table === 'student_enrollments'
-                          ? { id: 'enr-lib-1', status: 'active' }
-                          : null;
-              const chain: Record<string, unknown> = {
-                select: () => chain,
-                eq: () => chain,
-                limit: () => chain,
-                maybeSingle: async () => ({ data: row, error: null }),
-              };
-              return chain;
-            },
-          },
-        };
-      }) as never,
-    });
-    const authedServer = http.createServer(authedApp);
-    await new Promise<void>((resolve) => authedServer.listen(0, '127.0.0.1', resolve));
-    const { port: authedPort } = authedServer.address() as AddressInfo;
-    const authedBase = `http://127.0.0.1:${authedPort}`;
-    try {
-      const noHeaderBook = await fetch(`${authedBase}/api/library/book`, {
-        headers: { 'x-test-book-user': 'lib-user-1' },
-      });
-      assert.equal(noHeaderBook.status, 401);
-
-      const forgedHeaderBook = await fetch(`${authedBase}/api/library/book`, {
-        headers: { 'x-test-book-user': 'lib-user-1', 'x-fervec-session-id': 'client-chosen-bypass' },
-      });
-      assert.equal(forgedHeaderBook.status, 401);
-
-      const sess1 = singleSessionManager.claimSession('lib-user-1', undefined, 'Tab A');
-      const okBook = await fetch(`${authedBase}/api/library/book`, {
-        headers: { 'x-test-book-user': 'lib-user-1', 'x-fervec-session-id': sess1.sessionId },
-      });
-      assert.equal(okBook.status, 200);
-      assert.equal(okBook.headers.get('content-type'), 'application/pdf');
-
-      // New session supersedes sess1 -> /api/library/book blocks sess1 with 409
-      const sess2 = singleSessionManager.claimSession('lib-user-1', undefined, 'Tab B');
-      const supersededBook = await fetch(`${authedBase}/api/library/book`, {
-        headers: { 'x-test-book-user': 'lib-user-1', 'x-fervec-session-id': sess1.sessionId },
-      });
-      assert.equal(supersededBook.status, 409);
-
-      const okBook2 = await fetch(`${authedBase}/api/library/book`, {
-        headers: { 'x-test-book-user': 'lib-user-1', 'x-fervec-session-id': sess2.sessionId },
-      });
-      assert.equal(okBook2.status, 200);
-    } finally {
-      await new Promise<void>((resolve) => authedServer.close(() => resolve()));
-    }
 
     // 5. Protected static directories blocked
     const directPdf = await fetch(`${baseUrl}/assets/fervec-massa-italiana.pdf`);

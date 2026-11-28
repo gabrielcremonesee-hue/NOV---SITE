@@ -4,14 +4,19 @@ import {
   calculateAge,
   createStoredProfile,
   formatBirthDate,
+  formatCep,
   formatCpf,
   formatDdd,
+  formatFullAddress,
   formatPhone,
+  formatUf,
   getSaoPauloCivilDate,
   maskCpf,
+  validateCep,
   validateCpf,
   validateEmail,
   validateProfileForm,
+  validateUf,
   ProfileFormValues,
 } from './profile';
 
@@ -24,6 +29,13 @@ function makeValidForm(overrides: Partial<ProfileFormValues> = {}): ProfileFormV
     age: '30',
     ddd: '11',
     phone: '98765-4321',
+    cep: '01310-100',
+    street: 'Avenida Paulista',
+    streetNumber: '1578',
+    complement: 'Apto 42',
+    neighborhood: 'Bela Vista',
+    city: 'São Paulo',
+    state: 'SP',
     password: 'chef1234',
     confirmPassword: 'chef1234',
     acceptTerms: true,
@@ -154,4 +166,46 @@ test('validateProfileForm and createStoredProfile reject inconsistent age vs bir
     /não confere com a data de nascimento/i
   );
 });
+
+test('address helpers format, validate, and normalize student full address cleanly', () => {
+  assert.equal(formatCep('01310100'), '01310-100');
+  assert.equal(validateCep('01310-100'), true);
+  assert.equal(validateCep('01310'), false);
+  assert.equal(formatUf('sp'), 'SP');
+  assert.equal(validateUf('SP'), true);
+  assert.equal(validateUf('XX'), false);
+
+  const refDate = new Date(2026, 10, 26);
+  const badAddr = validateProfileForm(
+    makeValidForm({
+      cep: '123',
+      street: '',
+      streetNumber: '',
+      neighborhood: '',
+      city: '',
+      state: 'ZZ',
+    }),
+    refDate
+  );
+  assert.ok(badAddr.cep);
+  assert.ok(badAddr.street);
+  assert.ok(badAddr.streetNumber);
+  assert.ok(badAddr.neighborhood);
+  assert.ok(badAddr.city);
+  assert.ok(badAddr.state);
+
+  const stored = createStoredProfile(
+    makeValidForm({
+      cep: '01310100',
+      complement: '',
+      state: 'sp',
+    })
+  );
+  assert.equal(stored.cep, '01310-100');
+  assert.equal(stored.state, 'SP');
+  assert.equal(stored.fullAddress, formatFullAddress(stored));
+  assert.match(stored.fullAddress || '', /Avenida Paulista, 1578/);
+  assert.match(stored.fullAddress || '', /São Paulo\/SP/);
+});
+
 

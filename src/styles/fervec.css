@@ -38,6 +38,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   outline-offset: 3px;
 }
 img { display: block; max-width: 100%; }
+#site-root[hidden], #library-app-root[hidden] { display: none !important; }
 
 .crop-pasta-right { object-position: 82% center !important; }
 .crop-hero-chef { object-position: 78% 12% !important; }
@@ -7764,6 +7765,35 @@ body:has(.home-page) .chef-chat-root {
   gap: 0;
   padding: 2px 16px;
 }
+.cadastro-pill-labeled {
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 0;
+  padding: 2px 16px;
+}
+.cadastro-pill-cep {
+  flex: 0 0 132px;
+}
+.cadastro-pill-city {
+  flex: 1;
+}
+.cadastro-pill-uf {
+  flex: 0 0 86px;
+  padding: 2px 12px;
+}
+.cadastro-pill-street {
+  flex: 1;
+}
+.cadastro-pill-number {
+  flex: 0 0 108px;
+}
+.cadastro-pill-neighborhood {
+  flex: 1;
+}
+.cadastro-pill-complement {
+  flex: 1;
+}
 .cadastro-mini-label {
   font: 600 9.5px/1 var(--sans);
   color: #5b4534;
@@ -7776,7 +7806,9 @@ body:has(.home-page) .chef-chat-root {
   font-size: 13.5px;
   line-height: 1.1;
 }
-.cadastro-pill-phone input {
+.cadastro-pill-phone input,
+.cadastro-pill-labeled input,
+.cadastro-pill-labeled select {
   font-weight: 500;
   font-size: 13.5px;
   line-height: 1.1;
@@ -8171,6 +8203,40 @@ body:has(.home-page) .chef-chat-root {
     grid-column: 2 / -1;
     flex: none;
     min-width: 0;
+    width: 100%;
+  }
+  .cadastro-row-address-top {
+    grid-template-columns: 34px minmax(0, 1fr) 78px;
+  }
+  .cadastro-row-address-top .cadastro-pill-cep {
+    grid-column: 2 / -1;
+    width: 100%;
+  }
+  .cadastro-row-address-top .cadastro-pill-city {
+    grid-column: 2 / 3;
+    width: 100%;
+  }
+  .cadastro-row-address-top .cadastro-pill-uf {
+    grid-column: 3 / 4;
+    width: 100%;
+    padding: 2px 10px;
+  }
+  .cadastro-row-address-street {
+    grid-template-columns: 34px minmax(0, 1fr) 92px;
+  }
+  .cadastro-row-address-street .cadastro-pill-street,
+  .cadastro-row-address-street .cadastro-pill-number {
+    width: 100%;
+  }
+  .cadastro-row-address-extra {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+  .cadastro-row-address-extra .cadastro-pill-neighborhood {
+    grid-column: 2 / -1;
+    width: 100%;
+  }
+  .cadastro-row-address-extra .cadastro-pill-complement {
+    grid-column: 2 / -1;
     width: 100%;
   }
   .cadastro-field-error {

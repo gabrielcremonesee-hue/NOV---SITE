@@ -47,15 +47,70 @@ let savedSiteBodyClasses: string[] = [];
 
 const listeners = new Set<(env: ActiveEnvironment) => void>();
 
+function isStylesheetLoaded(link: HTMLLinkElement): boolean {
+  try {
+    return Boolean(link.sheet);
+  } catch {
+    return true;
+  }
+}
+
+export function getOrEnsureLibraryStylesheetLink(): HTMLLinkElement | null {
+  if (typeof document === 'undefined') return null;
+  let libraryCss = document.getElementById('fervec-library-css') as HTMLLinkElement | null;
+  if (!libraryCss) {
+    libraryCss = document.createElement('link');
+    libraryCss.id = 'fervec-library-css';
+    libraryCss.rel = 'stylesheet';
+    libraryCss.href = '/library-styles.css';
+    document.head.appendChild(libraryCss);
+  }
+  return libraryCss;
+}
+
+function waitForLibraryStylesheet(timeoutMs = 2500): Promise<void> {
+  if (typeof document === 'undefined') return Promise.resolve();
+  const libraryCss = getOrEnsureLibraryStylesheetLink();
+  if (!libraryCss) return Promise.resolve();
+
+  libraryCss.disabled = false;
+  if (isStylesheetLoaded(libraryCss)) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      libraryCss.removeEventListener('load', onLoad);
+      libraryCss.removeEventListener('error', onError);
+      window.clearTimeout(timer);
+      resolve();
+    };
+    const onLoad = () => finish();
+    const onError = () => finish();
+    libraryCss.addEventListener('load', onLoad, { once: true });
+    libraryCss.addEventListener('error', onError, { once: true });
+    const timer = window.setTimeout(() => {
+      if (!isStylesheetLoaded(libraryCss)) {
+        // Trigger clean re-validation if browser delayed stylesheet attachment
+        libraryCss.disabled = false;
+      }
+      finish();
+    }, timeoutMs);
+  });
+}
+
 function syncStylesheets(nextEnv: ActiveEnvironment): void {
   if (typeof document === 'undefined') return;
 
   const portalCss = document.getElementById('fervec-portal-css') as HTMLLinkElement | null;
   if (portalCss) {
-    portalCss.disabled = false;
+    portalCss.disabled = nextEnv !== 'portal';
   }
 
-  const libraryCss = document.getElementById('fervec-library-css') as HTMLLinkElement | null;
+  const libraryCss = getOrEnsureLibraryStylesheetLink();
   if (libraryCss) {
     libraryCss.disabled = nextEnv !== 'library';
   }
@@ -107,14 +162,37 @@ function syncBodyClasses(prevEnv: ActiveEnvironment, nextEnv: ActiveEnvironment)
 function syncContainers(nextEnv: ActiveEnvironment): void {
   if (typeof document === 'undefined') return;
   const libraryRoot = document.getElementById('library-app-root');
-  if (libraryRoot) {
-    libraryRoot.hidden = nextEnv !== 'library';
+  if (!libraryRoot) return;
+
+  if (nextEnv !== 'library') {
+    libraryRoot.hidden = true;
+    libraryRoot.style.visibility = '';
+    return;
+  }
+
+  const libraryCss = getOrEnsureLibraryStylesheetLink();
+  if (libraryCss && !libraryCss.disabled && isStylesheetLoaded(libraryCss)) {
+    libraryRoot.hidden = false;
+    libraryRoot.style.visibility = '';
+  } else {
+    libraryRoot.hidden = false;
+    libraryRoot.style.visibility = 'hidden';
   }
 }
 
 async function ensureLibraryBooted(action: EnvOptions['libraryAction'] = 'default'): Promise<void> {
   if (typeof window === 'undefined') return;
   window.__fervecPortalEmbedded = true;
+
+  await waitForLibraryStylesheet();
+  if (currentEnv !== 'library') return;
+
+  const libraryRoot = document.getElementById('library-app-root');
+  if (libraryRoot) {
+    libraryRoot.hidden = false;
+    libraryRoot.style.visibility = '';
+  }
+
   if (!libraryLoaded) {
     window.__fervecLibraryInitialAction = action;
     if (!libraryLoadingPromise) {
@@ -141,6 +219,7 @@ async function ensureLibraryBooted(action: EnvOptions['libraryAction'] = 'defaul
         });
     }
     await libraryLoadingPromise;
+    if (currentEnv !== 'library') return;
     return;
   }
 

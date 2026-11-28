@@ -7,6 +7,7 @@ import {
   requestAsaasChargeCheckout,
   resetPaymentCheckoutState,
   subscribePaymentCheckout,
+  validatePaymentCouponOnServer,
 } from './paymentCheckout';
 
 test('requestAsaasChargeCheckout toggles isProcessing while awaiting Asaas API and resets on completion', async () => {
@@ -326,4 +327,65 @@ test('fetchCoursePaymentSummary and requestAsaasChargeCheckout propagate product
   assert.equal(chargeOutcome.ok, true);
   assert.equal(chargeOutcome.environment, 'production');
 });
+
+test('requestAsaasChargeCheckout forwards couponCode + idempotencyKey, handles 100% coupon enrollment, and validates coupons on server', async () => {
+  resetPaymentCheckoutState();
+  let capturedBody: Record<string, unknown> = {};
+
+  const freeOutcome = await requestAsaasChargeCheckout(
+    {
+      courseId: 'italiana',
+      courseSlug: 'massas-italianas',
+      courseTitle: 'Massas Italianas',
+      billingType: 'PIX',
+      couponCode: '123456',
+      idempotencyKey: 'idem-abc-123',
+    },
+    {
+      initConfig: async () => true,
+      getConnectionInfo: () => ({ url: 'https://example.supabase.co', key: 'anon-key' }),
+      getAccessToken: async () => 'jwt-token',
+      fetchFn: async (_url, init) => {
+        capturedBody = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            environment: 'production',
+            orderId: 'ord-free-1',
+            freeEnrollmentByCoupon: true,
+            payment: null,
+          }),
+          { status: 201, headers: { 'Content-Type': 'application/json' } }
+        );
+      },
+    }
+  );
+
+  assert.equal(capturedBody.couponCode, '123456');
+  assert.equal(capturedBody.idempotencyKey, 'idem-abc-123');
+  assert.equal(freeOutcome.ok, true);
+  assert.equal(freeOutcome.freeEnrollmentByCoupon, true);
+  assert.equal(freeOutcome.orderId, 'ord-free-1');
+  assert.equal(freeOutcome.payment, undefined);
+
+  const validCoupon = await validatePaymentCouponOnServer('123456', 'massas-italianas', {
+    getAccessToken: async () => 'jwt-token',
+    fetchFn: async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          code: '123456',
+          discountPercent: 100,
+          discountCents: 1290,
+          totalCents: 0,
+          isFree: true,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      ),
+  });
+  assert.equal(validCoupon.ok, true);
+  assert.equal(validCoupon.isFree, true);
+  assert.equal(validCoupon.totalCents, 0);
+});
+
 

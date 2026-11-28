@@ -102,4 +102,12 @@ test('isSiteStylesheetDescriptor isolates Vite/Site CSS without disabling portal
     }),
     true
   );
+  assert.equal(
+    isSiteStylesheetDescriptor({
+      tagName: 'STYLE',
+      textContent: '@layer theme { :root { --coffee: #382F29; } }',
+    }),
+    true
+  );
 });
+

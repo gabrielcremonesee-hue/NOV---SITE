@@ -136,3 +136,39 @@ export async function resolveAuthenticatedSupabaseUser(
     return null;
   }
 }
+
+let cachedServiceRoleClient: { url: string; key: string; client: SupabaseClient } | null = null;
+
+/**
+ * Cliente Supabase com service_role estritamente server-side.
+ * Nunca utiliza variáveis VITE_* para a chave privilegiada e retorna null se não configurada.
+ */
+export function getServiceRoleSupabaseClient(): SupabaseClient | null {
+  const urlMatch = firstNonEmptyEnv(SERVER_SUPABASE_URL_KEYS);
+  const url = normalizeSupabaseProjectUrl(urlMatch?.value || '');
+  const serviceKey =
+    (typeof process.env.SUPABASE_SERVICE_ROLE_KEY === 'string' &&
+      process.env.SUPABASE_SERVICE_ROLE_KEY.trim()) ||
+    (typeof process.env.SUPABASE_SECRET_KEY === 'string' &&
+      process.env.SUPABASE_SECRET_KEY.trim()) ||
+    '';
+  if (!url || !serviceKey) return null;
+
+  if (
+    cachedServiceRoleClient &&
+    cachedServiceRoleClient.url === url &&
+    cachedServiceRoleClient.key === serviceKey
+  ) {
+    return cachedServiceRoleClient.client;
+  }
+
+  const client = createJsClient(url, serviceKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+  cachedServiceRoleClient = { url, key: serviceKey, client };
+  return client;
+}
+

@@ -1,9 +1,11 @@
 import { MEDIA } from '../data/mediaAssets';
 import {
+  BRAZILIAN_UFS,
   ProfileFieldKey,
   ProfileFormValues,
   ProfileValidationErrors,
   StoredUserProfile,
+  formatFullAddress,
 } from '../utils/profile';
 
 export interface CreateProfileRenderOptions {
@@ -43,6 +45,7 @@ const ICONS = {
   bell: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 16.5h11l-1.4-2V10a4.1 4.1 0 1 0-8.2 0v4.5l-1.4 2Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10.2 18.8a2 2 0 0 0 3.6 0M12 4.2v1.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`,
   whatsapp: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#25a244"/><path d="M16.4 14.3c-.2-.1-1.3-.7-1.5-.7-.2-.1-.4-.1-.5.1s-.6.7-.7.9c-.1.1-.3.2-.5.1-.2-.1-1-.4-1.9-1.2-.7-.6-1.2-1.4-1.3-1.6-.1-.2 0-.4.1-.5.1-.1.2-.3.4-.4.1-.1.2-.2.2-.4.1-.1 0-.3 0-.4-.1-.1-.5-1.3-.7-1.7-.2-.4-.4-.4-.5-.4h-.5c-.2 0-.4.1-.6.3-.2.2-.8.8-.8 2s.9 2.4 1 2.5c.1.2 1.7 2.6 4.1 3.6.6.2 1 .4 1.4.5.6.2 1.1.2 1.5.1.5-.1 1.3-.5 1.5-1 .2-.5.2-.9.1-1-.1-.1-.2-.1-.4-.2Z" fill="#fff"/></svg>`,
   userPlus: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9.5" cy="8.2" r="3.6" fill="currentColor"/><path d="M2.8 19.6a6.8 6.8 0 0 1 13.4 0" fill="currentColor"/><path d="M18.5 7.5v5M16 10h5" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg>`,
+  mapPin: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6-5.4-6-10.5a6 6 0 1 1 12 0C18 15.6 12 21 12 21Z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/><circle cx="12" cy="10.5" r="2.2" fill="currentColor"/></svg>`,
 };
 
 function fieldErrorHtml(field: ProfileFieldKey, errors: ProfileValidationErrors): string {
@@ -57,6 +60,15 @@ function renderAgeOptions(selectedAge: string): string {
     opts.push(
       `<option value="${val}" ${selectedAge === val ? 'selected' : ''}>${age} anos</option>`
     );
+  }
+  return opts.join('');
+}
+
+function renderUfOptions(selectedUf: string): string {
+  const normalized = String(selectedUf || '').trim().toUpperCase();
+  const opts = ['<option value="">UF</option>'];
+  for (const uf of BRAZILIAN_UFS) {
+    opts.push(`<option value="${uf}" ${normalized === uf ? 'selected' : ''}>${uf}</option>`);
   }
   return opts.join('');
 }
@@ -124,6 +136,9 @@ export function renderCreateProfilePage(opts: CreateProfileRenderOptions): strin
               <div><dt>Nascimento / Idade</dt><dd>${esc(savedProfile.birthDate)} (${savedProfile.age} anos)</dd></div>
               <div><dt>E-mail</dt><dd>${esc(savedProfile.email)}</dd></div>
               <div><dt>Telefone</dt><dd>(${esc(savedProfile.ddd)}) ${esc(savedProfile.phone)}</dd></div>
+              <div><dt>Endereço</dt><dd>${esc(
+                savedProfile.fullAddress || formatFullAddress(savedProfile) || 'Não informado'
+              )}</dd></div>
               <div><dt>Comunicações</dt><dd>${
                 savedProfile.promoWhatsapp || savedProfile.promoEmail
                   ? [
@@ -324,6 +339,127 @@ export function renderCreateProfilePage(opts: CreateProfileRenderOptions): strin
                       errors.age || errors.ddd || errors.phone || ''
                     )}</span>`
                   : '<span class="cadastro-field-error" data-error-split role="alert"></span>'
+              }
+            </div>
+
+            <div class="cadastro-field-group">
+              <div class="cadastro-row cadastro-row-split cadastro-row-address-top">
+                <span class="cadastro-icon-badge" aria-hidden="true">${ICONS.mapPin}</span>
+                <div class="cadastro-pill cadastro-pill-labeled cadastro-pill-cep ${errors.cep ? 'has-error' : ''}">
+                  <label class="cadastro-mini-label" for="cadastro-cep">CEP*</label>
+                  <input
+                    id="cadastro-cep"
+                    name="cep"
+                    type="text"
+                    inputmode="numeric"
+                    maxlength="9"
+                    value="${esc(draft.cep)}"
+                    placeholder="00000-000"
+                    autocomplete="postal-code"
+                    required
+                  />
+                </div>
+                <div class="cadastro-pill cadastro-pill-labeled cadastro-pill-city ${errors.city ? 'has-error' : ''}">
+                  <label class="cadastro-mini-label" for="cadastro-city">Cidade*</label>
+                  <input
+                    id="cadastro-city"
+                    name="city"
+                    type="text"
+                    maxlength="100"
+                    value="${esc(draft.city)}"
+                    placeholder="Sua cidade"
+                    autocomplete="address-level2"
+                    required
+                  />
+                </div>
+                <div class="cadastro-pill cadastro-pill-labeled cadastro-pill-uf ${errors.state ? 'has-error' : ''}">
+                  <label class="cadastro-mini-label" for="cadastro-state">UF*</label>
+                  <select id="cadastro-state" name="state" aria-label="UF" required>
+                    ${renderUfOptions(draft.state)}
+                  </select>
+                </div>
+              </div>
+              ${
+                errors.cep || errors.city || errors.state
+                  ? `<span class="cadastro-field-error is-visible" data-error-split-address-top role="alert">${esc(
+                      errors.cep || errors.city || errors.state || ''
+                    )}</span>`
+                  : '<span class="cadastro-field-error" data-error-split-address-top role="alert"></span>'
+              }
+            </div>
+
+            <div class="cadastro-field-group">
+              <div class="cadastro-row cadastro-row-split cadastro-row-address-street">
+                <span class="cadastro-icon-badge" aria-hidden="true">${ICONS.mapPin}</span>
+                <div class="cadastro-pill cadastro-pill-labeled cadastro-pill-street ${errors.street ? 'has-error' : ''}">
+                  <label class="cadastro-mini-label" for="cadastro-street">Logradouro*</label>
+                  <input
+                    id="cadastro-street"
+                    name="street"
+                    type="text"
+                    maxlength="160"
+                    value="${esc(draft.street)}"
+                    placeholder="Rua, Avenida, Travessa..."
+                    autocomplete="street-address"
+                    required
+                  />
+                </div>
+                <div class="cadastro-pill cadastro-pill-labeled cadastro-pill-number ${errors.streetNumber ? 'has-error' : ''}">
+                  <label class="cadastro-mini-label" for="cadastro-street-number">Número*</label>
+                  <input
+                    id="cadastro-street-number"
+                    name="streetNumber"
+                    type="text"
+                    maxlength="20"
+                    value="${esc(draft.streetNumber)}"
+                    placeholder="Nº"
+                    required
+                  />
+                </div>
+              </div>
+              ${
+                errors.street || errors.streetNumber
+                  ? `<span class="cadastro-field-error is-visible" data-error-split-address-street role="alert">${esc(
+                      errors.street || errors.streetNumber || ''
+                    )}</span>`
+                  : '<span class="cadastro-field-error" data-error-split-address-street role="alert"></span>'
+              }
+            </div>
+
+            <div class="cadastro-field-group">
+              <div class="cadastro-row cadastro-row-split cadastro-row-address-extra">
+                <span class="cadastro-icon-badge" aria-hidden="true">${ICONS.mapPin}</span>
+                <div class="cadastro-pill cadastro-pill-labeled cadastro-pill-neighborhood ${errors.neighborhood ? 'has-error' : ''}">
+                  <label class="cadastro-mini-label" for="cadastro-neighborhood">Bairro*</label>
+                  <input
+                    id="cadastro-neighborhood"
+                    name="neighborhood"
+                    type="text"
+                    maxlength="100"
+                    value="${esc(draft.neighborhood)}"
+                    placeholder="Seu bairro"
+                    required
+                  />
+                </div>
+                <div class="cadastro-pill cadastro-pill-labeled cadastro-pill-complement ${errors.complement ? 'has-error' : ''}">
+                  <label class="cadastro-mini-label" for="cadastro-complement">Complemento</label>
+                  <input
+                    id="cadastro-complement"
+                    name="complement"
+                    type="text"
+                    maxlength="120"
+                    value="${esc(draft.complement)}"
+                    placeholder="Apto, bloco (opcional)"
+                    autocomplete="address-line2"
+                  />
+                </div>
+              </div>
+              ${
+                errors.neighborhood || errors.complement
+                  ? `<span class="cadastro-field-error is-visible" data-error-split-address-extra role="alert">${esc(
+                      errors.neighborhood || errors.complement || ''
+                    )}</span>`
+                  : '<span class="cadastro-field-error" data-error-split-address-extra role="alert"></span>'
               }
             </div>
 

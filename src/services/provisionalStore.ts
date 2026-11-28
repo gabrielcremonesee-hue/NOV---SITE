@@ -25,6 +25,14 @@ export interface UnifiedAccountRecord {
   age: number;
   ddd: string;
   phone: string;
+  cep?: string;
+  street?: string;
+  streetNumber?: string;
+  complement?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+  fullAddress?: string;
   promoWhatsapp: boolean;
   promoEmail: boolean;
   passwordDigest: string;
@@ -135,6 +143,14 @@ export async function upsertUnifiedAccountFromProfile(
     age: profile.age,
     ddd: profile.ddd,
     phone: profile.phone,
+    cep: profile.cep,
+    street: profile.street,
+    streetNumber: profile.streetNumber,
+    complement: profile.complement,
+    neighborhood: profile.neighborhood,
+    city: profile.city,
+    state: profile.state,
+    fullAddress: profile.fullAddress,
     promoWhatsapp: profile.promoWhatsapp,
     promoEmail: profile.promoEmail,
     passwordDigest,

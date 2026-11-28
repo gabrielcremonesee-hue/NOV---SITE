@@ -84,7 +84,9 @@ export function isSiteStylesheetDescriptor(el: StylesheetCandidateDescriptor): b
     if (
       text.includes('--parchment-grain') ||
       text.includes('fervec') ||
-      text.includes('--tw-')
+      text.includes('--tw-') ||
+      text.includes('--coffee') ||
+      text.includes('@layer')
     ) {
       return true;
     }

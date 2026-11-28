@@ -213,7 +213,7 @@ function createSupabaseWebhookRepo(
       }
     },
 
-    async syncEnrollmentAccess({ orderId, userId, courseId, grantAccess, revokeAccess, updatedAt }) {
+    async syncEnrollmentAccess({ userId, courseId, grantAccess, revokeAccess, updatedAt }) {
       const { data: existing } = await supabase
         .from('student_enrollments')
         .select('id, status')
@@ -249,21 +249,18 @@ function createSupabaseWebhookRepo(
         return;
       }
 
-      // Reembolso/estorno/chargeback revoga a matrícula inclusive se já estiver completed (preserva histórico),
-      // desde que o aluno não possua outro pedido pago válido para o mesmo curso.
+      // Reembolso/estorno/chargeback revoga a matrícula apenas se não existir outro pedido pago ativo no mesmo curso
       if (revokeAccess && existing?.id) {
-        let otherPaidQuery = supabase
+        const { data: remainingPaid } = await supabase
           .from('orders')
           .select('id')
           .eq('user_id', userId)
           .eq('course_id', courseId)
-          .eq('status', 'paid');
-        if (orderId) {
-          otherPaidQuery = otherPaidQuery.neq('id', orderId);
-        }
-        const { data: otherPaidOrders } = await otherPaidQuery.limit(1);
-        const hasOtherPaidOrder = Array.isArray(otherPaidOrders) && otherPaidOrders.length > 0;
-        if (!hasOtherPaidOrder) {
+          .eq('status', 'paid')
+          .limit(1)
+          .maybeSingle();
+
+        if (!remainingPaid?.id) {
           await supabase
             .from('student_enrollments')
             .update({
@@ -275,45 +272,23 @@ function createSupabaseWebhookRepo(
       }
     },
 
-    async syncWithdrawalStatus({
-      orderId,
-      status,
-      refundProviderId,
-      refundProviderStatus,
-      errorMessage,
-      processedAt,
-      updatedAt,
-    }) {
-      const fullPayload: Record<string, unknown> = {
-        status,
-        refund_provider_id: refundProviderId ?? null,
-        refund_provider_status: refundProviderStatus ?? null,
-        last_refund_error: errorMessage ?? null,
-        ...(processedAt ? { processed_at: processedAt } : {}),
-        updated_at: updatedAt,
-      };
-      const { error } = await supabase
-        .from('withdrawal_requests')
-        .update(fullPayload)
-        .eq('order_id', orderId);
+    async syncWithdrawalStatus({ orderId, refundState, refundProviderId, providerStatus, updatedAt }) {
+      const targetStatus =
+        refundState === 'confirmed'
+          ? 'refunded'
+          : refundState === 'failed'
+            ? 'refund_failed'
+            : 'approved_refund_pending';
 
-      if (error) {
-        const msg = String(error.message || '').toLowerCase();
-        if (msg.includes('last_refund_error') || msg.includes('column')) {
-          await supabase
-            .from('withdrawal_requests')
-            .update({
-              status: status === 'refund_failed' ? 'approved_refund_pending' : status,
-              refund_provider_id: refundProviderId ?? null,
-              refund_provider_status: refundProviderStatus ?? null,
-              ...(processedAt ? { processed_at: processedAt } : {}),
-              updated_at: updatedAt,
-            })
-            .eq('order_id', orderId);
-        } else {
-          console.warn('Aviso ao sincronizar withdrawal_requests:', error.message);
-        }
-      }
+      await supabase
+        .from('withdrawal_requests')
+        .update({
+          status: targetStatus,
+          refund_provider_id: refundProviderId,
+          ...(providerStatus ? { refund_provider_status: providerStatus } : {}),
+          ...(refundState === 'confirmed' ? { processed_at: updatedAt } : {}),
+        })
+        .eq('order_id', orderId);
     },
 
     async notifyPaymentConfirmed({
